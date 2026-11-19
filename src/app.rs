@@ -382,7 +382,8 @@ impl TodoApp {
             ui.separator();
             self.backup_menu_items(ui);
             ui.separator();
-            let releases = format!("https://github.com/{}/releases/latest", update::REPO);
+            // The full Releases page: newest version first, with every earlier one below.
+            let releases = format!("https://github.com/{}/releases", update::REPO);
             if cfg!(target_arch = "wasm32") {
                 ui.hyperlink_to("⬇ Get the Windows & Android apps", releases);
             } else {
