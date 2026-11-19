@@ -72,3 +72,20 @@ ureq = { version = "2", optional = true }
 opt-level = 3
 lto = "thin"
 strip = true
+
+# ---------------------------------------------------------------- Linux .deb (cargo-deb)
+[package.metadata.deb]
+name = "rustdo"
+maintainer = "metman2013 <6624070+metman2013@users.noreply.github.com>"
+copyright = "2026 metman2013"
+license-file = ["LICENSE", "0"]
+extended-description = "A fast, local-first to-do app modeled on Microsoft To Do: My Day, Important, Planned, lists, steps, reminders, repeats, notes, backups and Microsoft To Do import. No account, no cloud, no telemetry."
+section = "utils"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/rustdo", "usr/bin/", "755"],
+    ["assets/rustdo.desktop", "usr/share/applications/", "644"],
+    ["assets/rustdo.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
+    ["README.md", "usr/share/doc/rustdo/", "644"],
+]

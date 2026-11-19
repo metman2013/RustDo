@@ -53,6 +53,9 @@ foreach ($d in $densities.Keys) {
     New-Icon $densities[$d] "$root\android\res\mipmap-$d\ic_launcher.png"
 }
 
+# Linux (.deb / AppImage)
+New-Icon 512 "$root\assets\rustdo.png"
+
 # Windows .ico (PNG-compressed entries, supported since Windows Vista)
 $sizes = 16, 24, 32, 48, 64, 128, 256
 $pngs = foreach ($sz in $sizes) {

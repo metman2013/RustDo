@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RustDo
+GenericName=To-do list
+Comment=A fast, private to-do app. Your tasks stay on your device.
+Exec=rustdo
+Icon=rustdo
+Terminal=false
+Categories=Office;ProjectManagement;Utility;
+Keywords=todo;tasks;reminders;my day;
+StartupWMClass=rustdo
