@@ -1,12 +1,18 @@
 # Android wrapper: packages the RustDo library as the native library of an APK.
 # Build with cargo-apk from this folder:  cargo apk build --release
+#
+# This is a separate workspace (see the empty [workspace] below) because cargo-apk
+# can't build a crate inside a workspace whose root is also a package.
 [package]
 name = "rustdo-android"
-# cargo-apk derives Android's versionCode from this, so every release installs as an update.
-version.workspace = true
+# Must match [workspace.package] version in ../Cargo.toml (CI checks this).
+# cargo-apk derives Android's versionCode from it, so every release installs as an update.
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 publish = false
+
+[workspace]
 
 [lib]
 name = "rustdo"
@@ -15,6 +21,11 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustdo = { path = ".." }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
 
 [package.metadata.android]
 package = "io.github.metman2013.rustdo"

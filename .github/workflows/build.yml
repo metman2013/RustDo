@@ -92,6 +92,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+      - name: Versions must match
+        run: |
+          A=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          B=$(grep -m1 '^version = ' android/Cargo.toml | cut -d'"' -f2)
+          if [ "$A" != "$B" ]; then
+            echo "::error::Cargo.toml ($A) and android/Cargo.toml ($B) versions differ. Run tools/set-version.ps1."; exit 1
+          fi
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
       - name: Signing key
@@ -126,7 +133,7 @@ jobs:
         run: |
           V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
           mkdir -p out
-          cp "$(find target -name '*.apk' -path '*release*' | head -1)" "out/RustDo-$V.apk"
+          cp "$(find android/target -name '*.apk' -path '*release*' | head -1)" "out/RustDo-$V.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android

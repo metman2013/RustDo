@@ -17,9 +17,10 @@ repository = "https://github.com/metman2013/RustDo"
 name = "rustdo_app"
 
 [workspace]
-members = [".", "android"]
-# Plain `cargo build` / `cargo test` only builds the desktop app.
-default-members = ["."]
+members = ["."]
+# The Android wrapper is its own workspace: cargo-apk can't build a member of a
+# workspace whose root is also a package.
+exclude = ["android"]
 
 [[bin]]
 name = "rustdo"

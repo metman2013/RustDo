@@ -2929,13 +2929,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustdo-android"
-version = "0.1.0"
-dependencies = [
- "rustdo",
-]
-
-[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"

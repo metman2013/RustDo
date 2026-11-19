@@ -113,8 +113,7 @@ Each push to `main` runs the tests and all builds, and publishes the web app.
 
 To release:
 
-1. Bump `version` under `[workspace.package]` in `Cargo.toml`. That one line is the version
-   for every platform.
+1. Set the new version for every platform: `.\tools\set-version.ps1 0.2.0`.
 2. Commit, then tag and push:
 
    ```bash
