@@ -65,6 +65,15 @@ pub fn download_text(file_name: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Web: reloads the page. The browser re-checks the service worker on navigation, so a
+/// newly published version is picked up too.
+#[cfg(target_arch = "wasm32")]
+pub fn reload_page() {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().reload();
+    }
+}
+
 /// Desktop: opens a folder in the system file manager.
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 pub fn open_folder(path: &std::path::Path) {

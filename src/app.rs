@@ -79,6 +79,12 @@ pub struct TodoApp {
     backup_pending: bool,
     backup_error_shown: bool,
     export_nag_dismissed: bool,
+    // Pull-to-refresh state.
+    pull: f32,
+    pull_active: bool,
+    refresh_requested: bool,
+    list_scroll_y: f32,
+    list_rect: Option<Rect>,
     /// The web file picker is async; the chosen file lands here and is picked up next frame.
     #[cfg(target_arch = "wasm32")]
     web_import: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
@@ -134,6 +140,11 @@ impl TodoApp {
             backup_pending: false,
             backup_error_shown: false,
             export_nag_dismissed: false,
+            pull: 0.0,
+            pull_active: false,
+            refresh_requested: false,
+            list_scroll_y: 0.0,
+            list_rect: None,
             #[cfg(target_arch = "wasm32")]
             web_import: Default::default(),
             dirty: false,
@@ -1137,12 +1148,14 @@ impl TodoApp {
                 ui.add_space(8.0);
             }
 
+            self.pull_to_refresh(ui);
+
             let store = &self.store;
             let view = self.view;
             let selected = self.selected;
             let sort = store.settings.sort;
             let show_list = searching || !matches!(view, View::List(_));
-            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+            let scroll = egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                 let row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>| {
                     task_row(ui, store, t, view, show_list, selected == Some(t.id), today, actions)
                 };
@@ -1234,9 +1247,106 @@ impl TodoApp {
                     });
                 }
             });
+            self.list_scroll_y = scroll.state.offset.y;
+            self.list_rect = Some(scroll.inner_rect);
         });
         for a in actions {
             self.apply(a, now);
+        }
+    }
+
+    /// Pull-to-refresh: dragging the task list down with a finger while it's scrolled to
+    /// the top shows a hint, and letting go past the threshold refreshes.
+    fn pull_to_refresh(&mut self, ui: &mut egui::Ui) {
+        const THRESHOLD: f32 = 80.0;
+        let (touching, down, delta, origin) = ui.input(|i| {
+            (i.any_touches(), i.pointer.primary_down(), i.pointer.delta(), i.pointer.press_origin())
+        });
+        if !self.pull_active {
+            let starts_in_list = origin.zip(self.list_rect).is_some_and(|(p, r)| r.contains(p));
+            if touching && down && starts_in_list && self.list_scroll_y <= 0.5 && delta.y > 0.0 {
+                self.pull_active = true;
+                self.pull = 0.0;
+            }
+        }
+        if !self.pull_active {
+            return;
+        }
+        if down {
+            self.pull = (self.pull + delta.y).max(0.0);
+            ui.ctx().request_repaint();
+        } else {
+            if self.pull >= THRESHOLD {
+                self.refresh_requested = true;
+            }
+            self.pull_active = false;
+            self.pull = 0.0;
+            return;
+        }
+        // The hint grows with the pull (with resistance), pushing the list down.
+        let height = (self.pull * 0.5).min(56.0);
+        if height < 2.0 {
+            return;
+        }
+        let ready = self.pull >= THRESHOLD;
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+        let progress = (self.pull / THRESHOLD).min(1.0);
+        let color = if ready { ACCENT } else { ui.visuals().weak_text_color() };
+        let center = rect.center();
+        // A ring that fills as you pull, plus a label.
+        let r = 9.0;
+        let c = Pos2::new(center.x - 70.0, center.y);
+        ui.painter().circle_stroke(c, r, Stroke::new(1.5_f32, ui.visuals().weak_text_color().gamma_multiply(0.4)));
+        let steps = (progress * 32.0).ceil() as usize;
+        let pts: Vec<Pos2> = (0..=steps)
+            .map(|k| {
+                let a = -std::f32::consts::FRAC_PI_2 + (k as f32 / 32.0) * std::f32::consts::TAU;
+                Pos2::new(c.x + r * a.cos(), c.y + r * a.sin())
+            })
+            .collect();
+        if pts.len() > 1 {
+            ui.painter().add(egui::Shape::line(pts, Stroke::new(2.0_f32, color)));
+        }
+        ui.painter().text(
+            Pos2::new(c.x + 18.0, center.y),
+            Align2::LEFT_CENTER,
+            if ready { "Release to refresh" } else { "Pull to refresh" },
+            FontId::proportional(13.0),
+            color,
+        );
+    }
+
+    /// Web: reload the page (which also picks up a newly published version).
+    /// Desktop/Android: re-read the data file (e.g. after it synced) and check for updates.
+    fn refresh(&mut self) {
+        if self.dirty {
+            self.persist();
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            platform::reload_page();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let loaded = self.storage.load();
+            match loaded.warning {
+                Some(w) => self.notify(w),
+                None => {
+                    let settings = self.store.settings.clone();
+                    self.store = loaded.store;
+                    self.store.settings = settings;
+                    if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
+                        self.selected = None;
+                    }
+                    if self.update_rx.is_none() {
+                        // Reports "up to date" or offers the update.
+                        self.update_manual = true;
+                        self.update_available = None;
+                    } else {
+                        self.notify("Refreshed.");
+                    }
+                }
+            }
         }
     }
 
@@ -1749,6 +1859,9 @@ impl eframe::App for TodoApp {
 
         if self.dirty {
             self.persist();
+        }
+        if std::mem::take(&mut self.refresh_requested) {
+            self.refresh();
         }
         self.maybe_auto_backup(today);
     }

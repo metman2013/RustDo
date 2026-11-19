@@ -7,7 +7,7 @@
 name = "rustdo-android"
 # Must match [workspace.package] version in ../Cargo.toml (CI checks this).
 # cargo-apk derives Android's versionCode from it, so every release installs as an update.
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 license = "MIT"
 publish = false

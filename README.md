@@ -76,6 +76,10 @@ export on one, restore on the other.
 Right-click a task (long-press on a phone) for quick actions: My Day, importance,
 complete, delete.
 
+On a touch screen, pull the task list down and let go to refresh. In the web app this
+reloads, which also picks up a newly published version. On Android and desktop it re-reads
+your tasks and checks for updates.
+
 Narrow windows and phones get a one-column layout: tap ☰ for your lists, tap a task for
 its details, and use **< Back** to return.
 

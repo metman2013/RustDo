@@ -13,7 +13,8 @@
   <style>
     :root { color-scheme: light dark; --bg: #f8f8f8; --fg: #555; }
     @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1b; --fg: #aaa; } }
-    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); }
+    /* overscroll-behavior: the app draws its own pull-to-refresh; stop the browser's. */
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: var(--bg); }
     canvas#rustdo_canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
     #loading {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
