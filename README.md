@@ -15,6 +15,9 @@ One codebase runs on three platforms:
 
 Each device keeps its own task list. There's no sync between devices yet.
 
+**Community:** join the RustDo Discord at **https://discord.gg/HtEFHsP4TK** for questions, ideas
+and bug reports. In the app, it's under **⚙ → Join the RustDo Discord**.
+
 ## Backups
 
 Everything is under **⚙ → Backups**.

@@ -535,6 +535,8 @@ impl TodoApp {
             } else {
                 ui.hyperlink_to("Downloads & release notes", releases);
             }
+            ui.hyperlink_to("Join the RustDo Discord", update::DISCORD)
+                .on_hover_text("Chat, ideas and help: opens in your browser");
             ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
         });
     }

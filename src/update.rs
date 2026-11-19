@@ -6,6 +6,8 @@
 use std::sync::mpsc::{channel, Receiver};
 
 pub const REPO: &str = "metman2013/RustDo";
+/// The project's community Discord (linked from the ⚙ menu).
+pub const DISCORD: &str = "https://discord.gg/HtEFHsP4TK";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, PartialEq)]
