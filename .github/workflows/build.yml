@@ -112,7 +112,16 @@ jobs:
           fi
           echo "CARGO_APK_RELEASE_KEYSTORE=$KS" >> "$GITHUB_ENV"
       - name: Build APK
-        run: cargo apk build -p rustdo-android --release
+        working-directory: android
+        run: |
+          set -o pipefail
+          cargo apk build --release 2>&1 | tee "$RUNNER_TEMP/apk.log"
+      - name: Report APK build errors
+        # Job logs need a GitHub sign-in to read; annotations are visible to everyone.
+        if: failure()
+        run: |
+          msg=$(tail -n 60 "$RUNNER_TEMP/apk.log" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=APK build failed::$msg"
       - name: Collect APK
         run: |
           V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
