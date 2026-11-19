@@ -530,7 +530,8 @@ impl TodoApp {
             // The full Releases page: newest version first, with every earlier one below.
             let releases = format!("https://github.com/{}/releases", update::REPO);
             if cfg!(target_arch = "wasm32") {
-                ui.hyperlink_to("⬇ Get the Windows & Android apps", releases);
+                ui.hyperlink_to("⬇ Get the desktop & mobile apps", releases)
+                    .on_hover_text("Windows, Linux and Android downloads");
             } else {
                 ui.hyperlink_to("Downloads & release notes", releases);
             }
