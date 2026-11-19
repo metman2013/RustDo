@@ -131,11 +131,20 @@ jobs:
         run: |
           msg=$(tail -n 60 "$RUNNER_TEMP/apk.log" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
           echo "::error title=APK build failed::$msg"
-      - name: Collect APK
+      - name: Collect and verify APK
+        # Never ship an unsigned APK: Android refuses to install it.
         run: |
           V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "::notice title=APK files built::$(find android/target -name '*.apk' | tr '\n' ' ')"
+          APK=android/target/release/apk/RustDo.apk
+          if [ ! -f "$APK" ]; then echo "::error::$APK was not produced"; exit 1; fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          if ! "$BT/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/sig.txt" 2>&1; then
+            echo "::error title=APK is not signed::$(tr '\n' ' ' < "$RUNNER_TEMP/sig.txt")"; exit 1
+          fi
+          echo "::notice title=APK signed by::$(grep -m1 'SHA-256' "$RUNNER_TEMP/sig.txt")"
           mkdir -p out
-          cp "$(find android/target -name '*.apk' -path '*release*' | head -1)" "out/RustDo-$V.apk"
+          cp "$APK" "out/RustDo-$V.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android
