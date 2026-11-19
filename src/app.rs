@@ -79,6 +79,9 @@ pub struct TodoApp {
     backup_pending: bool,
     backup_error_shown: bool,
     export_nag_dismissed: bool,
+    /// Android: space taken by the status bar, navigation bar and keyboard (points).
+    insets: [f32; 4],
+    insets_checked: Option<Instant>,
     // Pull-to-refresh state.
     pull: f32,
     pull_active: bool,
@@ -140,6 +143,8 @@ impl TodoApp {
             backup_pending: false,
             backup_error_shown: false,
             export_nag_dismissed: false,
+            insets: [0.0; 4],
+            insets_checked: None,
             pull: 0.0,
             pull_active: false,
             refresh_requested: false,
@@ -1255,6 +1260,58 @@ impl TodoApp {
         }
     }
 
+    /// Android: keeps the app clear of the status bar, navigation bar, notch and on-screen
+    /// keyboard by reserving that space with empty panels around the edges.
+    fn apply_safe_insets(&mut self, ctx: &egui::Context) {
+        if !cfg!(target_os = "android") {
+            return;
+        }
+        if self.insets_checked.is_none_or(|t| t.elapsed() >= StdDuration::from_millis(250)) {
+            let fresh = platform::safe_insets(ctx.pixels_per_point());
+            if fresh != self.insets {
+                self.insets = fresh;
+                ctx.request_repaint();
+            }
+            self.insets_checked = Some(Instant::now());
+        }
+        // The keyboard slides in and out over a few frames: keep measuring meanwhile.
+        if self.keyboard_shown || self.insets[3] > 0.0 {
+            ctx.request_repaint_after(StdDuration::from_millis(300));
+        }
+        let [left, top, right, bottom] = self.insets;
+        let frame = egui::Frame::default().fill(ctx.style().visuals.panel_fill);
+        if top > 0.5 {
+            egui::TopBottomPanel::top("safe_top")
+                .exact_height(top)
+                .frame(frame)
+                .show_separator_line(false)
+                .show(ctx, |_| {});
+        }
+        if bottom > 0.5 {
+            egui::TopBottomPanel::bottom("safe_bottom")
+                .exact_height(bottom)
+                .frame(frame)
+                .show_separator_line(false)
+                .show(ctx, |_| {});
+        }
+        if left > 0.5 {
+            egui::SidePanel::left("safe_left")
+                .exact_width(left)
+                .resizable(false)
+                .frame(frame)
+                .show_separator_line(false)
+                .show(ctx, |_| {});
+        }
+        if right > 0.5 {
+            egui::SidePanel::right("safe_right")
+                .exact_width(right)
+                .resizable(false)
+                .frame(frame)
+                .show_separator_line(false)
+                .show(ctx, |_| {});
+        }
+    }
+
     /// Pull-to-refresh: dragging the task list down with a finger while it's scrolled to
     /// the top shows a hint, and letting go past the threshold refreshes.
     fn pull_to_refresh(&mut self, ui: &mut egui::Ui) {
@@ -1823,6 +1880,9 @@ impl eframe::App for TodoApp {
         if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
             self.selected = None;
         }
+
+        // Must come before the other panels so it sits at the very edges.
+        self.apply_safe_insets(ctx);
 
         // Wide screens: lists | tasks | details side by side.
         // Phones: one screen at a time (lists, or tasks, or one task's details).

@@ -20,6 +20,62 @@ mod android {
         APP.get().and_then(|a| a.internal_data_path())
     }
 
+    /// Status bar, navigation bar, display cutout and on-screen keyboard sizes in physical
+    /// pixels: (left, top, right, bottom). Uses the Java WindowInsets API through JNI.
+    pub fn system_insets() -> Option<[i32; 4]> {
+        use jni::objects::{JObject, JValueOwned};
+        use jni::JNIEnv;
+
+        // Any Java exception must be cleared before the next JNI call.
+        fn call<'a>(env: &mut JNIEnv<'a>, obj: &JObject, name: &str, sig: &str) -> Option<JValueOwned<'a>> {
+            match env.call_method(obj, name, sig, &[]) {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    let _ = env.exception_clear();
+                    None
+                }
+            }
+        }
+
+        let ctx = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+        let mut env = vm.attach_current_thread().ok()?;
+        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+
+        let window = call(&mut env, &activity, "getWindow", "()Landroid/view/Window;")?.l().ok()?;
+        let decor = call(&mut env, &window, "getDecorView", "()Landroid/view/View;")?.l().ok()?;
+        let insets = call(&mut env, &decor, "getRootWindowInsets", "()Landroid/view/WindowInsets;")?.l().ok()?;
+        if insets.is_null() {
+            return None;
+        }
+        // getSystemWindowInset* covers the status and navigation bars, and on Android 11+
+        // also the on-screen keyboard while it's open.
+        let mut get = |name: &str| call(&mut env, &insets, name, "()I").and_then(|v| v.i().ok()).unwrap_or(0);
+        let mut out = [
+            get("getSystemWindowInsetLeft"),
+            get("getSystemWindowInsetTop"),
+            get("getSystemWindowInsetRight"),
+            get("getSystemWindowInsetBottom"),
+        ];
+        // Notches and camera holes (Android 9+), in case they reach further than the status bar.
+        if let Some(cutout) = call(&mut env, &insets, "getDisplayCutout", "()Landroid/view/DisplayCutout;")
+            .and_then(|v| v.l().ok())
+            .filter(|c| !c.is_null())
+        {
+            let mut safe = |name: &str| call(&mut env, &cutout, name, "()I").and_then(|v| v.i().ok()).unwrap_or(0);
+            let cut = [
+                safe("getSafeInsetLeft"),
+                safe("getSafeInsetTop"),
+                safe("getSafeInsetRight"),
+                safe("getSafeInsetBottom"),
+            ];
+            for i in 0..4 {
+                out[i] = out[i].max(cut[i]);
+            }
+        }
+        Some(out)
+    }
+
     pub fn show_keyboard(show: bool) {
         if let Some(app) = APP.get() {
             if show {
@@ -85,6 +141,19 @@ pub fn open_folder(path: &std::path::Path) {
         "xdg-open"
     };
     let _ = std::process::Command::new(program).arg(path).spawn();
+}
+
+/// Space taken by the phone's own UI (status bar, navigation bar, notch, on-screen
+/// keyboard), in egui points: (left, top, right, bottom). Zero except on Android.
+#[allow(unused_variables)]
+pub fn safe_insets(pixels_per_point: f32) -> [f32; 4] {
+    // Never let a JNI surprise take the app down: fall back to no padding.
+    #[cfg(target_os = "android")]
+    if let Ok(Some(px)) = std::panic::catch_unwind(android::system_insets) {
+        let ppp = pixels_per_point.max(0.1);
+        return px.map(|p| p.max(0) as f32 / ppp);
+    }
+    [0.0; 4]
 }
 
 /// Shows or hides the on-screen keyboard. Only needed on Android.

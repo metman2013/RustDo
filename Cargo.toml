@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.1.1"
+version = "0.1.2"
 
 [package]
 name = "rustdo"
@@ -63,6 +63,9 @@ web-sys = { version = "0.3", features = [
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { version = "0.30", features = ["android-native-activity"] }
 android_logger = "0.14"
+# Reading the status/navigation bar and keyboard sizes from Android's Java API.
+jni = "0.21"
+ndk-context = "0.1"
 ureq = { version = "2", optional = true }
 
 [profile.release]
