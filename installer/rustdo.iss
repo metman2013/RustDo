@@ -51,7 +51,8 @@ Source: "..\assets\rustdo.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"
+; AppUserModelID must match notify.rs (AUMID): Windows ties reminder notifications to it.
+Name: "{group}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"; AppUserModelID: "metman2013.RustDo"
 Name: "{autodesktop}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"; Tasks: desktopicon
 
 [Run]
@@ -60,4 +61,9 @@ Filename: "{app}\rustdo.exe"; Description: "{cm:LaunchProgram,RustDo}"; Flags: n
 ; In-app update (runs this installer with /VERYSILENT): reopen RustDo when done.
 Filename: "{app}\rustdo.exe"; Flags: nowait; Check: WizardSilent
 
-; Your tasks live in %APPDATA%\RustDo and are deliberately NOT removed on uninstall.
+[UninstallRun]
+; Stop the background reminder helper and remove its sign-in entry.
+Filename: "{sys}\taskkill.exe"; Parameters: "/IM rustdo.exe /F"; Flags: runhidden; RunOnceId: "StopRustDo"
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""RustDo reminders"" /f"; Flags: runhidden; RunOnceId: "RemoveReminderAutostart"
+
+; Your tasks live in Documents\RustDo and are deliberately NOT removed on uninstall.

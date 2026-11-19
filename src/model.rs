@@ -110,6 +110,9 @@ pub struct Settings {
     /// Windows: check on every launch and install a newer version straight away.
     #[serde(default = "yes")]
     pub auto_update: bool,
+    /// System notifications for reminders (Windows: even when RustDo is closed).
+    #[serde(default = "yes")]
+    pub notifications: bool,
     /// Desktop: an extra folder (e.g. in OneDrive) that also receives the daily backups.
     #[serde(default)]
     pub backup_dir: Option<String>,
@@ -129,6 +132,7 @@ impl Default for Settings {
             check_updates: true,
             last_update_check: None,
             auto_update: true,
+            notifications: true,
             backup_dir: None,
             last_export: None,
             last_export_dir: None,

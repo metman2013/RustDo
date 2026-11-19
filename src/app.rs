@@ -5,6 +5,7 @@ use crate::model::{
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
+use crate::notify;
 use crate::platform;
 use crate::storage::{self, Storage};
 use crate::update::{self, CheckResult, Release};
@@ -84,6 +85,9 @@ pub struct TodoApp {
     install_now: bool,
     /// A downloaded installer waiting to run.
     ready_installer: Option<std::path::PathBuf>,
+    /// The upcoming reminders last handed to the OS (None = not yet this session).
+    /// The reminder helper has been started (or stopped) for the current setting.
+    helper_handled: bool,
     /// A RustDo backup waiting for the user to confirm "replace all my tasks".
     pending_restore: Option<(String, Store)>,
     /// Android: the "paste a backup" box, when open.
@@ -151,6 +155,7 @@ impl TodoApp {
             auto_installing: false,
             install_now: false,
             ready_installer: None,
+            helper_handled: false,
             pending_restore: None,
             paste_restore: None,
             backup_day: None,
@@ -512,6 +517,7 @@ impl TodoApp {
                 }
             }
             ui.separator();
+            self.notification_menu_items(ui);
             self.backup_menu_items(ui);
             #[cfg(target_os = "android")]
             {
@@ -539,6 +545,63 @@ impl TodoApp {
                 .on_hover_text("Chat, ideas and help: opens in your browser");
             ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
         });
+    }
+
+    /// Windows: starts the background reminder helper shortly after launch (and again
+    /// whenever the setting changes), so reminders still pop up after RustDo is closed.
+    fn maybe_start_helper(&mut self) {
+        if self.helper_handled || self.started.elapsed() < StdDuration::from_secs(1) || !self.can_save {
+            return;
+        }
+        self.helper_handled = true;
+        // Make sure the helper reads the current setting from disk before it starts.
+        if self.dirty {
+            self.persist();
+        }
+        let enabled = self.store.settings.notifications;
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || notify::ensure_helper(enabled));
+        #[cfg(target_arch = "wasm32")]
+        let _ = enabled;
+    }
+
+    fn notification_menu_items(&mut self, ui: &mut egui::Ui) {
+        if cfg!(target_os = "android") {
+            return;
+        }
+        ui.label(RichText::new("Notifications").strong());
+        if ui
+            .checkbox(&mut self.store.settings.notifications, "Notify me about reminders")
+            .changed()
+        {
+            self.dirty = true;
+            self.helper_handled = false; // start or stop the Windows reminder helper
+        }
+        let note = if cfg!(windows) {
+            "Windows shows them at the reminder time, even after you close RustDo (a small background helper starts with Windows)."
+        } else if cfg!(target_arch = "wasm32") {
+            "Shown while this app is open (browsers can't notify a closed web page)."
+        } else {
+            "Shown while RustDo is running (minimized is fine)."
+        };
+        ui.label(RichText::new(note).weak().small());
+        if cfg!(target_arch = "wasm32") && self.store.settings.notifications {
+            match notify::web_permission() {
+                "default" => {
+                    if ui.button("Allow notifications").clicked() {
+                        notify::web_request_permission();
+                    }
+                }
+                "denied" => {
+                    ui.label(RichText::new("Notifications are blocked in this browser's site settings.").color(DANGER).small());
+                }
+                "unsupported" => {
+                    ui.label(RichText::new("This browser doesn't support notifications.").weak().small());
+                }
+                _ => {}
+            }
+        }
+        ui.separator();
     }
 
     fn backup_menu_items(&mut self, ui: &mut egui::Ui) {
@@ -2012,6 +2075,13 @@ impl eframe::App for TodoApp {
         let fired = self.store.fire_due_reminders(now);
         if !fired.is_empty() {
             for id in fired {
+                // Linux and web: a system notification now. (Windows already got a
+                // scheduled one; Android shows the in-app popup.)
+                if self.store.settings.notifications {
+                    if let Some(t) = self.store.task(id) {
+                        notify::show_now(&t.title, &notify::body_text(t.due, today));
+                    }
+                }
                 if !self.alerts.contains(&id) {
                     self.alerts.push(id);
                 }
@@ -2089,6 +2159,7 @@ impl eframe::App for TodoApp {
             self.refresh();
         }
         self.maybe_auto_backup(today);
+        self.maybe_start_helper();
     }
 }
 

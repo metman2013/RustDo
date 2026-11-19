@@ -3,6 +3,7 @@
 pub mod app;
 pub mod import;
 pub mod model;
+pub mod notify;
 pub mod platform;
 pub mod storage;
 pub mod update;

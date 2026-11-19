@@ -18,6 +18,18 @@ Each device keeps its own task list. There's no sync between devices yet.
 **Community:** join the RustDo Discord at **https://discord.gg/HtEFHsP4TK** for questions, ideas
 and bug reports. In the app, it's under **⚙ → Join the RustDo Discord**.
 
+## Notifications
+
+Give a task a reminder (🔔 **Remind me** in its details) and RustDo notifies you at that
+time. Turn them off under **⚙ → Notify me about reminders**.
+
+| Platform | When you're notified |
+|---|---|
+| **Windows** | **Always, even after you close RustDo.** A tiny background helper (`rustdo.exe --reminders`: no window, very little memory) shows a Windows notification at the reminder time. It starts with RustDo, and the installed version also starts it when you sign in to Windows. Turning notifications off stops it; uninstalling removes it. |
+| **Linux** | While RustDo is running (minimized is fine). |
+| **Web** | While the app is open, after you click **Allow notifications** in ⚙. Browsers can't notify for a closed web page. |
+| **Android** | In-app popup while the app is open. Real Android notifications are planned. |
+
 ## Backups
 
 Everything is under **⚙ → Backups**.
@@ -65,7 +77,7 @@ export on one, restore on the other.
 | Custom lists | ✅ Create, rename (double-click or right-click), delete |
 | Steps (subtasks) | ✅ Progress shows as "1 of 3" |
 | Due dates | ✅ Today / Tomorrow / Next week presets, plus a date picker. Overdue tasks show in red. |
-| Reminders | ✅ In-app popup with Complete / Open / Snooze (10 min, 1 h, tomorrow). The taskbar icon flashes. |
+| Reminders | ✅ System notifications (see [Notifications](#notifications)), plus an in-app popup with Complete / Open / Snooze (10 min, 1 h, tomorrow). |
 | Repeat | ✅ Daily, weekdays, weekly, monthly, yearly. Completing a task schedules the next one. |
 | Notes | ✅ |
 | Search | ✅ Searches titles, notes and steps |
@@ -217,8 +229,9 @@ Only run the app on one machine at a time.
 
 ## Known limitations
 
-- Reminders fire only while RustDo is open. Minimizing is fine, closing isn't. There are
-  no system notifications yet (Windows toasts or Android notifications).
+- Android reminders only show while the app is open. Real Android notifications need a
+  build-system change and are planned next. Linux and web notifications also need the app
+  running; see [Notifications](#notifications).
 - There's no sync between devices or sharing of lists with other people.
 - **Android is the least tested platform.** It's built by CI but hasn't been tried on real
   phones yet. Typing relies on the on-screen keyboard sending key events, and some keyboard

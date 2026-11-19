@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.1.7"
+version = "0.1.8"
 
 [package]
 name = "rustdo"
@@ -48,6 +48,16 @@ directories = "5"
 rfd = "0.15"
 ureq = { version = "2", optional = true }
 
+# Windows: scheduled toast notifications for reminders (same version egui already uses).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "UI_Notifications", "Data_Xml_Dom", "Foundation", "Foundation_Collections",
+] }
+
+# Linux: desktop notifications over D-Bus.
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4"
+
 # Web / PWA
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 rfd = "0.15"
@@ -57,6 +67,8 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Window", "Document", "Element", "HtmlCanvasElement", "Storage",
     "Blob", "BlobPropertyBag", "Url", "HtmlElement", "HtmlAnchorElement", "Location", "MediaQueryList",
+    "Notification", "NotificationOptions", "NotificationPermission",
+    "Navigator", "ServiceWorkerContainer", "ServiceWorkerRegistration",
 ] }
 
 # Android

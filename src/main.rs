@@ -4,6 +4,11 @@
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     use eframe::egui;
+    // Background reminder helper: no window, just notifications (see notify.rs).
+    if std::env::args().any(|a| a == "--reminders") {
+        rustdo_app::notify::run_reminder_helper();
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("RustDo")
