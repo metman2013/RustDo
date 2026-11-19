@@ -6,7 +6,7 @@ use crate::model::{
 };
 use crate::import::{self, Import};
 use crate::platform;
-use crate::storage::Storage;
+use crate::storage::{self, Storage};
 use crate::update::{self, CheckResult, Release};
 use std::sync::mpsc::Receiver;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
@@ -69,6 +69,16 @@ pub struct TodoApp {
     update_available: Option<Release>,
     update_dismissed: bool,
     install_rx: Option<Receiver<Result<std::path::PathBuf, String>>>,
+    /// A RustDo backup waiting for the user to confirm "replace all my tasks".
+    pending_restore: Option<(String, Store)>,
+    /// Android: the "paste a backup" box, when open.
+    paste_restore: Option<String>,
+    backup_day: Option<NaiveDate>,
+    last_backup: Option<Instant>,
+    /// Data changed since the last automatic backup.
+    backup_pending: bool,
+    backup_error_shown: bool,
+    export_nag_dismissed: bool,
     /// The web file picker is async; the chosen file lands here and is picked up next frame.
     #[cfg(target_arch = "wasm32")]
     web_import: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
@@ -91,8 +101,12 @@ pub struct TodoApp {
 
 impl TodoApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let storage = Storage::for_platform();
-        let loaded = storage.load();
+        let (storage, moved_notice) = Storage::for_platform();
+        let mut loaded = storage.load();
+        // A load problem is more important to show than the "moved to Documents" notice.
+        if loaded.warning.is_none() {
+            loaded.warning = moved_notice;
+        }
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         cc.egui_ctx.all_styles_mut(|s| {
             s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
@@ -113,6 +127,13 @@ impl TodoApp {
             update_available: None,
             update_dismissed: false,
             install_rx: None,
+            pending_restore: None,
+            paste_restore: None,
+            backup_day: None,
+            last_backup: None,
+            backup_pending: false,
+            backup_error_shown: false,
+            export_nag_dismissed: false,
             #[cfg(target_arch = "wasm32")]
             web_import: Default::default(),
             dirty: false,
@@ -131,6 +152,42 @@ impl TodoApp {
             focus_add: !platform::IS_MOBILE_OR_WEB,
             focus_search: false,
             pending_import: None,
+        }
+    }
+
+    /// Desktop: choose a RustDo backup to restore, starting in the Backups folder.
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn pick_restore_file(&mut self, ctx: &egui::Context) {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Restore RustDo backup")
+            .add_filter("RustDo backup", &["json"]);
+        if let Some(dir) = self.storage.folder() {
+            let backups = dir.join("Backups");
+            dialog = dialog.set_directory(if backups.is_dir() { backups } else { dir });
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.read_picked_file(&path);
+        }
+        let _ = ctx;
+    }
+
+    /// Web: the browser's file picker serves both import and restore.
+    #[cfg(target_arch = "wasm32")]
+    fn pick_restore_file(&mut self, ctx: &egui::Context) {
+        self.pick_import_file(ctx);
+    }
+
+    #[cfg(target_os = "android")]
+    fn pick_restore_file(&mut self, _ctx: &egui::Context) {}
+
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn read_picked_file(&mut self, path: &std::path::Path) {
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                self.load_import(&name, &bytes);
+            }
+            Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
         }
     }
 
@@ -173,6 +230,11 @@ impl TodoApp {
     fn pick_import_file(&mut self, _ctx: &egui::Context) {}
 
     fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
+        // A RustDo backup is restored (after confirmation) rather than merged.
+        if let Ok(store) = storage::parse_backup(bytes) {
+            self.pending_restore = Some((file_name.to_string(), store));
+            return;
+        }
         match import::parse_bytes(file_name, bytes) {
             Ok(import) => {
                 self.pending_import = Some(PendingImport {
@@ -295,6 +357,8 @@ impl TodoApp {
 
     fn settings_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("⚙", |ui| {
+            // A fixed width: wrapping text in an auto-sized menu never settles on a size.
+            ui.set_width(300.0);
             ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
             ui.separator();
             if cfg!(target_arch = "wasm32") {
@@ -316,8 +380,88 @@ impl TodoApp {
                 }
             }
             ui.separator();
+            self.backup_menu_items(ui);
+            ui.separator();
             ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
         });
+    }
+
+    fn backup_menu_items(&mut self, ui: &mut egui::Ui) {
+        let now = Local::now().naive_local();
+        ui.label(RichText::new("Backups").strong());
+        let where_text = if cfg!(target_arch = "wasm32") {
+            "A backup is saved automatically each day in this browser (last 7 days).".to_string()
+        } else if cfg!(target_os = "android") {
+            "A backup is saved automatically each day on this phone (last 14 days). Uninstalling the app removes them.".to_string()
+        } else {
+            format!(
+                "A backup is saved automatically each day in the Backups folder (last {} days).",
+                storage::KEEP_BACKUPS
+            )
+        };
+        ui.add(egui::Label::new(RichText::new(where_text).weak().small()).wrap())
+            .on_hover_text(self.storage.backups_location());
+        if let Some(last) = self.store.settings.last_export {
+            let when = relative_date(last.date(), now.date()).to_lowercase();
+            ui.label(RichText::new(format!("Last exported: {when}")).weak().small());
+        }
+
+        let export_label = if cfg!(target_os = "android") { "Copy backup to clipboard" } else { "Export backup…" };
+        if ui.button(export_label).clicked() {
+            ui.close_menu();
+            let ctx = ui.ctx().clone();
+            self.export_backup(&ctx, now);
+        }
+        if cfg!(target_os = "android") {
+            if ui.button("Restore from pasted backup…").clicked() {
+                ui.close_menu();
+                self.paste_restore = Some(String::new());
+            }
+        } else if ui.button("Restore from backup…").clicked() {
+            ui.close_menu();
+            let ctx = ui.ctx().clone();
+            self.pick_restore_file(&ctx);
+        }
+
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        {
+            if let Some(dir) = self.storage.folder() {
+                if ui
+                    .button("Open RustDo folder")
+                    .on_hover_text(format!("{}\nYour tasks (tasks.json) and the Backups folder", dir.display()))
+                    .clicked()
+                {
+                    ui.close_menu();
+                    platform::open_folder(&dir);
+                }
+            }
+            match self.store.settings.backup_dir.clone() {
+                Some(extra) => {
+                    ui.add(egui::Label::new(RichText::new(format!("Also backing up to {extra}")).small()).wrap());
+                    ui.horizontal(|ui| {
+                        if ui.small_button("Change…").clicked() {
+                            ui.close_menu();
+                            self.choose_backup_folder(now.date());
+                        }
+                        if ui.small_button("Stop").clicked() {
+                            self.store.settings.backup_dir = None;
+                            self.dirty = true;
+                            ui.close_menu();
+                        }
+                    });
+                }
+                None => {
+                    if ui
+                        .button("Also back up to a folder…")
+                        .on_hover_text("For example a OneDrive or USB folder, so a copy lives off this PC.")
+                        .clicked()
+                    {
+                        ui.close_menu();
+                        self.choose_backup_folder(now.date());
+                    }
+                }
+            }
+        }
     }
 
     /// Files dropped onto the window (desktop gives a path, the browser gives the bytes).
@@ -437,8 +581,231 @@ impl TodoApp {
         if !self.can_save {
             return;
         }
-        if let Err(e) = self.storage.save(&self.store) {
-            self.notify(format!("Couldn't save: {e}"));
+        match self.storage.save(&self.store) {
+            Ok(()) => self.backup_pending = true,
+            Err(e) => self.notify(format!("Couldn't save: {e}")),
+        }
+    }
+
+    // ------------------------------------------------------------------ backups
+
+    /// Keeps today's automatic backup current: written at startup, on the first change of
+    /// each day, and then at most every 5 minutes while you work.
+    fn maybe_auto_backup(&mut self, today: NaiveDate) {
+        if !self.can_save {
+            return;
+        }
+        let new_day = self.backup_day != Some(today);
+        let due = self.backup_pending
+            && self.last_backup.is_none_or(|t| t.elapsed() >= StdDuration::from_secs(5 * 60));
+        if !(new_day || due) {
+            return;
+        }
+        self.backup_day = Some(today);
+        self.last_backup = Some(Instant::now());
+        self.backup_pending = false;
+        if let Err(e) = self.storage.auto_backup(&self.store, today) {
+            if !self.backup_error_shown {
+                self.backup_error_shown = true;
+                self.notify(format!("Automatic backup failed: {e}"));
+            }
+        }
+    }
+
+    fn export_backup(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
+        let json = storage::export_json(&self.store);
+        let name = storage::backup_file_name(now.date());
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        {
+            let _ = ctx;
+            // Start in the folder used last time, else the RustDo folder in Documents.
+            let start_dir = self
+                .store
+                .settings
+                .last_export_dir
+                .clone()
+                .map(std::path::PathBuf::from)
+                .filter(|d| d.is_dir())
+                .or_else(|| self.storage.folder());
+            let mut dialog = rfd::FileDialog::new()
+                .set_title("Export RustDo backup")
+                .set_file_name(&name)
+                .add_filter("RustDo backup", &["json"]);
+            if let Some(dir) = start_dir {
+                dialog = dialog.set_directory(dir);
+            }
+            let Some(path) = dialog.save_file() else {
+                return;
+            };
+            match std::fs::write(&path, json) {
+                Ok(()) => {
+                    self.store.settings.last_export_dir = path.parent().map(|d| d.display().to_string());
+                    self.notify(format!("Backup saved to {}", path.display()));
+                }
+                Err(e) => {
+                    self.notify(format!("Couldn't save the backup: {e}"));
+                    return;
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            if let Err(e) = platform::download_text(&name, &json) {
+                self.notify(format!("Couldn't export: {e}"));
+                return;
+            }
+            self.notify(format!("Downloaded {name}. Keep it somewhere safe."));
+        }
+        #[cfg(target_os = "android")]
+        {
+            let _ = name;
+            ctx.copy_text(json);
+            self.notify("Backup copied. Paste it into a note or email to keep it safe.");
+        }
+        self.store.settings.last_export = Some(now);
+        self.dirty = true;
+    }
+
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    fn choose_backup_folder(&mut self, today: NaiveDate) {
+        if let Some(dir) = rfd::FileDialog::new().set_title("Also back up to this folder").pick_folder() {
+            self.store.settings.backup_dir = Some(dir.display().to_string());
+            self.dirty = true;
+            // Write a backup there straight away so the user sees it works.
+            self.backup_day = None;
+            self.backup_error_shown = false;
+            self.persist();
+            self.maybe_auto_backup(today);
+            if !self.backup_error_shown {
+                self.notify(format!("Daily backups will also go to {}", dir.display()));
+            }
+        }
+    }
+
+    fn restore_dialog(&mut self, ctx: &egui::Context) {
+        // Android: paste a backup that was exported to the clipboard.
+        if let Some(text) = &mut self.paste_restore {
+            let mut restore = false;
+            let mut cancel = false;
+            egui::Window::new("Restore from a backup")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                .show(ctx, |ui| {
+                    ui.set_max_width(420.0);
+                    ui.label("Paste the backup text you saved earlier:");
+                    egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                        ui.add(egui::TextEdit::multiline(text).desired_rows(6).desired_width(f32::INFINITY));
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.button("Continue").clicked() {
+                            restore = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            if restore {
+                let text = self.paste_restore.take().unwrap_or_default();
+                match storage::parse_backup(text.as_bytes()) {
+                    Ok(store) => self.pending_restore = Some(("pasted backup".into(), store)),
+                    Err(e) => self.notify(e),
+                }
+            } else if cancel {
+                self.paste_restore = None;
+            }
+        }
+
+        let Some((name, backup)) = &self.pending_restore else { return };
+        let mut confirm = false;
+        let mut cancel = false;
+        let open = backup.tasks.iter().filter(|t| !t.done).count();
+        let newest = backup.tasks.iter().map(|t| t.created).max();
+        egui::Window::new("Restore backup?")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(420.0);
+                ui.label(format!(
+                    "{name}: {} lists, {} tasks ({open} open).",
+                    backup.lists.len(),
+                    backup.tasks.len()
+                ));
+                if let Some(newest) = newest {
+                    ui.label(RichText::new(format!("Newest task created {}.", newest.format("%b %-d, %Y"))).weak());
+                }
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        "This replaces all your current tasks and lists with the backup. \
+                         Your current tasks are saved first, so this can be undone.",
+                    )
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::Button::new(RichText::new("Replace my tasks").color(Color32::WHITE)).fill(DANGER))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if cancel {
+            self.pending_restore = None;
+        } else if confirm {
+            let (name, mut backup) = self.pending_restore.take().unwrap();
+            if self.can_save {
+                if let Err(e) = self.storage.snapshot(&self.store, "before-restore") {
+                    self.notify(format!("Restore cancelled: couldn't save your current tasks first ({e})."));
+                    return;
+                }
+            }
+            // Keep this device's preferences (theme, update checks, backup folder).
+            backup.settings = self.store.settings.clone();
+            self.store = backup;
+            self.selected = None;
+            self.alerts.clear();
+            self.view = View::MyDay;
+            self.search.clear();
+            self.dirty = true;
+            self.notify(format!("Restored from {name}."));
+        }
+    }
+
+    /// Web only: browsers may clear stored data, so nudge towards a manual export.
+    fn export_nag(&mut self, ui: &mut egui::Ui, now: NaiveDateTime) {
+        if !cfg!(target_arch = "wasm32") || self.export_nag_dismissed || self.store.tasks.len() < 5 {
+            return;
+        }
+        let stale = self.store.settings.last_export.is_none_or(|t| now - t > Duration::days(30));
+        if !stale {
+            return;
+        }
+        let mut export = false;
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Your tasks are stored in this browser only. Keep a backup in case browser data is cleared.");
+                if ui.button("Export backup").clicked() {
+                    export = true;
+                }
+                if ui.button("Not now").clicked() {
+                    self.export_nag_dismissed = true;
+                }
+            });
+        });
+        ui.add_space(6.0);
+        if export {
+            let ctx = ui.ctx().clone();
+            self.export_backup(&ctx, now);
         }
     }
 
@@ -701,6 +1068,7 @@ impl TodoApp {
 
             ui.add_space(10.0);
             self.update_banner(ui);
+            self.export_nag(ui, now);
             ui.horizontal(|ui| {
                 if narrow
                     && ui
@@ -1369,11 +1737,13 @@ impl eframe::App for TodoApp {
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
         self.import_dialog(ctx, now);
+        self.restore_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {
             self.persist();
         }
+        self.maybe_auto_backup(today);
     }
 }
 

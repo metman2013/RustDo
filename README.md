@@ -8,11 +8,28 @@ One codebase runs on three platforms:
 
 | Platform | How to get it | Where your tasks live |
 |---|---|---|
-| **Windows** | `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `%APPDATA%\RustDo\data\tasks.json` |
+| **Windows** | `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `Documents\RustDo\tasks.json` |
 | **Android** | `RustDo-<version>.apk` from [Releases](https://github.com/metman2013/RustDo/releases). Allow "Install unknown apps" for your browser when Android asks. | The app's private storage |
 | **Web (PWA)** | Open **https://rustdo.app**, then choose **Install app** (desktop Chrome/Edge) or **Add to Home screen** (phones). It works offline. | The browser's local storage for that site |
 
 Each device keeps its own task list. There's no sync between devices yet.
+
+## Backups
+
+Everything is under **⚙ → Backups**.
+
+| | Windows | Android | Web |
+|---|---|---|---|
+| Automatic daily backup | `Documents\RustDo\Backups\RustDo-backup-<date>.json`, last 14 days | In the app's storage, last 14 days (removed if you uninstall) | In the browser, last 7 days |
+| Extra backup folder | **Also back up to a folder…** (e.g. OneDrive or a USB stick) | — | — |
+| Manual export | **Export backup…** saves a `.json` wherever you choose, and the next export starts in the same folder | **Copy backup to clipboard**, then paste it into a note or email | **Export backup…** downloads a `.json` file. After 30 days without one, a banner offers to export |
+| Restore | **Restore from backup…**, or drop the file on the window | **Restore from pasted backup…** | **Restore from backup…** |
+
+The automatic backup is written when the app starts, then at most every 5 minutes
+while you make changes. Restoring replaces all tasks and lists, after saving your
+current ones to `Backups\RustDo-before-restore-<time>.json`. A backup file is the same
+JSON as `tasks.json`, so it also works as a way to move your tasks to another device:
+export on one, restore on the other.
 
 ## Updates
 
@@ -90,7 +107,7 @@ phone if you need your tasks there.
 - Your built-in "Tasks" list goes into RustDo's Tasks list. Lists with the same name are merged.
 - Completed tasks are left out unless you tick the box.
 - Importing the same file again skips tasks you already imported. This is safe to repeat.
-- Your current data is backed up to `tasks.before-import-<timestamp>.json` first.
+- Your current data is backed up to `Backups\RustDo-before-import-<time>.json` first.
 - Reminders that are already in the past won't pop up.
 
 **Other import sources:**
@@ -175,9 +192,9 @@ By default Rust embeds source paths that include your Windows user folder in bin
 
 | | |
 |---|---|
-| Location | `%APPDATA%\RustDo\data\tasks.json` (Linux: `~/.local/share/rustdo/`, macOS: `~/Library/Application Support/RustDo/`). Uninstalling doesn't delete it. |
+| Location | `Documents\RustDo\tasks.json` on Windows (`~/Documents/RustDo/` on macOS and Linux). If Documents is synced to OneDrive, so is RustDo. Uninstalling doesn't delete it. Version 0.1 used `%APPDATA%\RustDo\data`; that data is moved automatically, and the old file is kept as `tasks.json.moved-to-Documents`. |
 | Override | Set the `RUSTDO_DATA` environment variable to a file path |
-| Backup | `tasks.json.bak` holds the last copy that loaded successfully |
+| Backup | `tasks.json.bak` holds the last copy that loaded successfully. See [Backups](#backups) for the daily backups. |
 | Safety | Saves are atomic (write to a temp file, then rename). If the file is damaged, it's renamed to `tasks.corrupt-<timestamp>.json` and never overwritten. |
 
 To sync between PCs, point `RUSTDO_DATA` at a file in OneDrive, Dropbox or Syncthing.

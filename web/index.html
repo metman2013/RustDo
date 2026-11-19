@@ -31,6 +31,11 @@
       document.getElementById('loading').textContent = 'RustDo couldn’t start: ' + e;
     });
 
+    // Ask the browser not to clear RustDo's stored tasks when space runs low.
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
+
     if ('serviceWorker' in navigator) {
       // When a new version is published, the new service worker takes over and we reload once.
       let reloaded = false;

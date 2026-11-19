@@ -2915,6 +2915,7 @@ dependencies = [
  "directories",
  "eframe",
  "egui_extras",
+ "js-sys",
  "log",
  "rfd",
  "serde",

@@ -34,14 +34,46 @@ pub enum Storage {
 }
 
 impl Storage {
-    pub fn for_platform() -> Self {
+    /// The storage for this platform, plus a message to show if data was moved.
+    pub fn for_platform() -> (Self, Option<String>) {
         #[cfg(target_arch = "wasm32")]
         {
-            Storage::Browser
+            (Storage::Browser, None)
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
         {
-            Storage::File(data_path())
+            let path = data_path();
+            if std::env::var_os("RUSTDO_DATA").is_some() {
+                return (Storage::File(path), None);
+            }
+            match legacy_data_path() {
+                Some(old) => match migrate(&old, &path) {
+                    Ok(true) => (
+                        Storage::File(path.clone()),
+                        Some(format!("Your tasks now live in {} so they're easy to find.", path.parent().unwrap_or(&path).display())),
+                    ),
+                    Ok(false) => (Storage::File(path), None),
+                    // Couldn't move: keep using the old location rather than starting empty.
+                    Err(e) => (
+                        Storage::File(old.clone()),
+                        Some(format!("Couldn't move your tasks to Documents ({e}); still using {}.", old.display())),
+                    ),
+                },
+                None => (Storage::File(path), None),
+            }
+        }
+        #[cfg(target_os = "android")]
+        {
+            (Storage::File(data_path()), None)
+        }
+    }
+
+    /// The folder holding the data file (desktop and Android).
+    pub fn folder(&self) -> Option<PathBuf> {
+        match self {
+            Storage::File(path) => path.parent().map(Path::to_path_buf),
+            #[cfg(target_arch = "wasm32")]
+            Storage::Browser => None,
         }
     }
 
@@ -61,6 +93,33 @@ impl Storage {
         }
     }
 
+    /// Writes today's automatic backup (replacing today's earlier one) and prunes old ones.
+    /// Desktop/Android: `backups/` next to the data file, plus the user's extra backup folder
+    /// if set. Web: browser storage.
+    pub fn auto_backup(&self, store: &Store, today: chrono::NaiveDate) -> Result<(), String> {
+        match self {
+            Storage::File(path) => {
+                write_daily_backup(&backups_dir(path), store, today, KEEP_BACKUPS).map_err(|e| e.to_string())?;
+                if let Some(extra) = store.settings.backup_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+                    write_daily_backup(Path::new(extra), store, today, KEEP_BACKUPS)
+                        .map_err(|e| format!("couldn't write to your backup folder {extra}: {e}"))?;
+                }
+                Ok(())
+            }
+            #[cfg(target_arch = "wasm32")]
+            Storage::Browser => browser::auto_backup(store, today),
+        }
+    }
+
+    /// Where the automatic backups go, for showing to the user.
+    pub fn backups_location(&self) -> String {
+        match self {
+            Storage::File(path) => backups_dir(path).display().to_string(),
+            #[cfg(target_arch = "wasm32")]
+            Storage::Browser => "this browser's storage (last 7 days)".into(),
+        }
+    }
+
     /// Keeps a copy of `store` (e.g. before an import). Does nothing if there's no data yet.
     pub fn snapshot(&self, store: &Store, label: &str) -> Result<(), String> {
         match self {
@@ -76,10 +135,57 @@ impl Storage {
     }
 }
 
+// ---------------------------------------------------------------- backups
+
+/// How many daily backup files to keep.
+pub const KEEP_BACKUPS: usize = 14;
+const BACKUP_PREFIX: &str = "RustDo-backup-";
+
+pub fn backup_file_name(date: chrono::NaiveDate) -> String {
+    format!("{BACKUP_PREFIX}{}.json", date.format("%Y-%m-%d"))
+}
+
+/// The full data as pretty JSON: the export format, identical to the data file.
+pub fn export_json(store: &Store) -> String {
+    serde_json::to_string_pretty(store).unwrap_or_default()
+}
+
+/// Reads a RustDo backup/export (or a copy of tasks.json).
+pub fn parse_backup(bytes: &[u8]) -> Result<Store, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    if !trimmed.starts_with('{') || !trimmed.contains("\"default_list\"") {
+        return Err("This isn't a RustDo backup.".into());
+    }
+    parse(trimmed).map_err(|e| format!("This backup is damaged ({e})."))
+}
+
+/// Writes `RustDo-backup-<today>.json` into `dir` and deletes all but the newest `keep`.
+pub fn write_daily_backup(dir: &Path, store: &Store, today: chrono::NaiveDate, keep: usize) -> io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(backup_file_name(today));
+    save(&path, store)?;
+    // Names sort by date, so the newest come last.
+    let mut backups: Vec<PathBuf> = fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(BACKUP_PREFIX) && n.ends_with(".json"))
+        })
+        .collect();
+    backups.sort();
+    let excess = backups.len().saturating_sub(keep);
+    for old in &backups[..excess] {
+        let _ = fs::remove_file(old);
+    }
+    Ok(path)
+}
+
 // ---------------------------------------------------------------- files (desktop, Android)
 
-/// Desktop: `%APPDATA%\RustDo\data\tasks.json` on Windows (platform equivalent elsewhere).
-/// Android: the app's private internal storage. Override with `RUSTDO_DATA`.
+/// Desktop: `Documents\RustDo\tasks.json` (following a Documents folder redirected to
+/// OneDrive). Android: the app's private internal storage. Override with `RUSTDO_DATA`.
 pub fn data_path() -> PathBuf {
     if let Some(p) = std::env::var_os("RUSTDO_DATA") {
         return PathBuf::from(p);
@@ -92,14 +198,49 @@ pub fn data_path() -> PathBuf {
     }
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     {
-        directories::ProjectDirs::from("", "", "RustDo")
-            .map(|d| d.data_dir().join("tasks.json"))
+        directories::UserDirs::new()
+            .and_then(|u| u.document_dir().map(|d| d.join("RustDo").join("tasks.json")))
+            .or_else(legacy_data_path)
             .unwrap_or_else(|| PathBuf::from("tasks.json"))
     }
     #[cfg(target_arch = "wasm32")]
     {
         PathBuf::from("tasks.json")
     }
+}
+
+/// Where version 0.1 kept the data: `%APPDATA%\RustDo\data\tasks.json` on Windows.
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+fn legacy_data_path() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "", "RustDo").map(|d| d.data_dir().join("tasks.json"))
+}
+
+/// Daily backups and safety copies live in `Backups` next to the data file.
+pub fn backups_dir(data_file: &Path) -> PathBuf {
+    data_file.parent().unwrap_or(Path::new(".")).join("Backups")
+}
+
+/// Moves data from `old` to `new` if `new` doesn't exist yet. Copies first, then renames
+/// the old file (never deletes it). Returns whether anything was moved.
+pub fn migrate(old: &Path, new: &Path) -> io::Result<bool> {
+    if old == new || new.exists() || !old.exists() {
+        return Ok(false);
+    }
+    if let Some(dir) = new.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::copy(old, new)?;
+    let old_bak = old.with_extension("json.bak");
+    if old_bak.exists() {
+        let _ = fs::copy(&old_bak, new.with_extension("json.bak"));
+    }
+    // Make sure the copy is readable before retiring the original.
+    if parse(&fs::read_to_string(new)?).is_err() {
+        let _ = fs::remove_file(new);
+        return Err(io::Error::other("the copied file couldn't be read back"));
+    }
+    let _ = fs::rename(old, old.with_extension("json.moved-to-Documents"));
+    Ok(true)
 }
 
 pub fn load(path: &Path) -> Loaded {
@@ -137,9 +278,9 @@ fn set_aside(path: &Path, reason: String) -> Loaded {
     }
 }
 
-/// Saves a timestamped copy of `store` next to the data file and returns its path.
+/// Saves a timestamped copy of `store` in the Backups folder and returns its path.
 pub fn snapshot(path: &Path, store: &Store, label: &str) -> io::Result<PathBuf> {
-    let copy = path.with_extension(format!("{label}-{}.json", stamp()));
+    let copy = backups_dir(path).join(format!("RustDo-{label}-{}.json", stamp()));
     save(&copy, store)?;
     Ok(copy)
 }
@@ -212,6 +353,24 @@ mod browser {
     pub fn snapshot(store: &Store, label: &str) -> Result<(), String> {
         put(&format!("{KEY}.{label}"), store)
     }
+
+    const BACKUP_KEY: &str = "rustdo.backup.";
+    const KEEP: usize = 7;
+
+    pub fn auto_backup(store: &Store, today: chrono::NaiveDate) -> Result<(), String> {
+        put(&format!("{BACKUP_KEY}{}", today.format("%Y-%m-%d")), store)?;
+        let ls = local_storage().ok_or("browser storage is unavailable")?;
+        let mut keys: Vec<String> = (0..ls.length().unwrap_or(0))
+            .filter_map(|i| ls.key(i).ok().flatten())
+            .filter(|k| k.starts_with(BACKUP_KEY))
+            .collect();
+        keys.sort();
+        let excess = keys.len().saturating_sub(KEEP);
+        for k in &keys[..excess] {
+            let _ = ls.remove_item(k);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -265,6 +424,72 @@ mod tests {
             .filter_map(|e| e.ok())
             .any(|e| e.file_name().to_string_lossy().contains("corrupt"));
         assert!(kept);
+        fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn daily_backups_rotate() {
+        let dir = std::env::temp_dir().join(format!("rustdo-test-{}", uuid::Uuid::new_v4()));
+        let store = Store::new();
+        let day = |d: u32| chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+        for d in 1..=5 {
+            write_daily_backup(&dir, &store, day(d), 3).unwrap();
+        }
+        // Writing the same day twice replaces that day's file.
+        write_daily_backup(&dir, &store, day(5), 3).unwrap();
+        fs::write(dir.join("unrelated.txt"), "keep me").unwrap();
+        let mut names: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                "RustDo-backup-2026-11-03.json",
+                "RustDo-backup-2026-11-04.json",
+                "RustDo-backup-2026-11-05.json",
+                "unrelated.txt"
+            ]
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn export_and_restore_round_trip() {
+        let mut store = Store::new();
+        store.add_task("Backed up", View::All, chrono::Local::now().naive_local());
+        let json = export_json(&store);
+        let back = parse_backup(format!("\u{feff}{json}").as_bytes()).unwrap();
+        assert_eq!(back.tasks, store.tasks);
+        assert!(parse_backup(br#"{"lists":[]}"#).is_err(), "Microsoft To Do exports aren't backups");
+        assert!(parse_backup(b"not json").is_err());
+    }
+
+    #[test]
+    fn migrates_old_location_without_deleting() {
+        let base = std::env::temp_dir().join(format!("rustdo-test-{}", uuid::Uuid::new_v4()));
+        let old = base.join("AppData").join("tasks.json");
+        let new = base.join("Documents").join("RustDo").join("tasks.json");
+        let mut store = Store::new();
+        store.add_task("Move me", View::All, chrono::Local::now().naive_local());
+        save(&old, &store).unwrap();
+
+        assert!(migrate(&old, &new).unwrap());
+        assert_eq!(load(&new).store.tasks, store.tasks);
+        assert!(!old.exists());
+        assert!(old.with_extension("json.moved-to-Documents").exists(), "original kept, renamed");
+        // Second start: nothing to do.
+        assert!(!migrate(&old, &new).unwrap());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn snapshots_go_to_backups_folder() {
+        let path = temp_file();
+        save(&path, &Store::new()).unwrap();
+        let copy = snapshot(&path, &Store::new(), "before-import").unwrap();
+        assert_eq!(copy.parent().unwrap(), backups_dir(&path));
         fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
