@@ -37,10 +37,13 @@ mod android {
             }
         }
 
-        let ctx = ndk_context::android_context();
-        let vm = unsafe { jni::JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+        // Note: ndk_context's context is the *Application*, which has no window; the
+        // Activity handle has to come from android-activity itself.
+        let app = APP.get()?;
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }.ok()?;
         let mut env = vm.attach_current_thread().ok()?;
-        let activity = unsafe { JObject::from_raw(ctx.context().cast()) };
+        // A global reference owned by android-activity: wrap it, never delete it.
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
 
         let window = call(&mut env, &activity, "getWindow", "()Landroid/view/Window;")?.l().ok()?;
         let decor = call(&mut env, &window, "getDecorView", "()Landroid/view/View;")?.l().ok()?;
@@ -74,6 +77,18 @@ mod android {
             }
         }
         Some(out)
+    }
+
+    /// Insets implied by the content rectangle Android reports for the window (no JNI).
+    pub fn content_rect_insets() -> Option<[i32; 4]> {
+        let app = APP.get()?;
+        let window = app.native_window()?;
+        let (w, h) = (window.width(), window.height());
+        let r = app.content_rect();
+        if r.right <= r.left || r.bottom <= r.top || w <= 0 || h <= 0 {
+            return None;
+        }
+        Some([r.left, r.top, (w - r.right).max(0), (h - r.bottom).max(0)])
     }
 
     pub fn show_keyboard(show: bool) {
@@ -147,13 +162,31 @@ pub fn open_folder(path: &std::path::Path) {
 /// keyboard), in egui points: (left, top, right, bottom). Zero except on Android.
 #[allow(unused_variables)]
 pub fn safe_insets(pixels_per_point: f32) -> [f32; 4] {
-    // Never let a JNI surprise take the app down: fall back to no padding.
     #[cfg(target_os = "android")]
-    if let Ok(Some(px)) = std::panic::catch_unwind(android::system_insets) {
+    {
+        let (jni, content) = android_inset_sources();
+        // Take whichever source reports more space on each edge.
+        let mut px = [0i32; 4];
+        for source in [jni, content].into_iter().flatten() {
+            for i in 0..4 {
+                px[i] = px[i].max(source[i]);
+            }
+        }
         let ppp = pixels_per_point.max(0.1);
-        return px.map(|p| p.max(0) as f32 / ppp);
+        return px.map(|p| p as f32 / ppp);
     }
+    #[allow(unreachable_code)]
     [0.0; 4]
+}
+
+/// Android: the raw inset readings in pixels, (WindowInsets via JNI, content rectangle),
+/// shown in the ⚙ menu to help diagnose layout problems on specific phones.
+#[cfg(target_os = "android")]
+pub fn android_inset_sources() -> (Option<[i32; 4]>, Option<[i32; 4]>) {
+    // Never let a JNI surprise take the app down: a failed reading counts as none.
+    let jni = std::panic::catch_unwind(android::system_insets).ok().flatten();
+    let content = std::panic::catch_unwind(android::content_rect_insets).ok().flatten();
+    (jni, content)
 }
 
 /// Shows or hides the on-screen keyboard. Only needed on Android.

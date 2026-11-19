@@ -397,6 +397,19 @@ impl TodoApp {
             }
             ui.separator();
             self.backup_menu_items(ui);
+            #[cfg(target_os = "android")]
+            {
+                ui.separator();
+                let (jni, content) = platform::android_inset_sources();
+                let fmt = |v: Option<[i32; 4]>| {
+                    v.map_or("none".to_string(), |[l, t, r, b]| format!("{t} top, {b} bottom, {l}/{r} sides"))
+                };
+                ui.label(
+                    RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
+                        .weak()
+                        .small(),
+                );
+            }
             ui.separator();
             // The full Releases page: newest version first, with every earlier one below.
             let releases = format!("https://github.com/{}/releases", update::REPO);
