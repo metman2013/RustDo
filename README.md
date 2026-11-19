@@ -10,7 +10,7 @@ One codebase runs on three platforms:
 |---|---|---|
 | **Windows** | `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `%APPDATA%\RustDo\data\tasks.json` |
 | **Android** | `RustDo-<version>.apk` from [Releases](https://github.com/metman2013/RustDo/releases). Allow "Install unknown apps" for your browser when Android asks. | The app's private storage |
-| **Web (PWA)** | Open the site, then choose **Install app** (desktop Chrome/Edge) or **Add to Home screen** (phones). It works offline. | The browser's local storage for that site |
+| **Web (PWA)** | Open **https://rustdo.app**, then choose **Install app** (desktop Chrome/Edge) or **Add to Home screen** (phones). It works offline. | The browser's local storage for that site |
 
 Each device keeps its own task list. There's no sync between devices yet.
 
@@ -130,10 +130,9 @@ Release. Installed copies pick it up through their update check.
 
 ### One-time setup
 
-- **Web hosting:** in the repo's *Settings → Pages*, set **Source** to **GitHub Actions**.
-  The app is then served at `https://metman2013.github.io/RustDo/`. To use your own domain
-  later, add it under *Settings → Pages → Custom domain*, and add a `CNAME` file with the
-  domain to the `web/` folder.
+- **Web hosting:** the app is served from GitHub Pages at **https://rustdo.app**. The
+  domain's DNS is at Cloudflare. See [docs/hosting.md](docs/hosting.md) for the exact
+  settings.
 - **Android signing:** Android only installs an update if it's signed with the same key as
   the installed app. Create a key once, and keep the file and password somewhere safe. If
   you lose them, users must uninstall before the next update.

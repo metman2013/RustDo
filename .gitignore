@@ -4,4 +4,6 @@
 /.claude
 *.jks
 *.keystore
+*.p12
+*.pem
 *.json.tmp
