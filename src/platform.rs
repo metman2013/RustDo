@@ -165,15 +165,13 @@ pub fn safe_insets(pixels_per_point: f32) -> [f32; 4] {
     #[cfg(target_os = "android")]
     {
         let (jni, content) = android_inset_sources();
-        // Take whichever source reports more space on each edge.
-        let mut px = [0i32; 4];
-        for source in [jni, content].into_iter().flatten() {
-            for i in 0..4 {
-                px[i] = px[i].max(source[i]);
-            }
-        }
+        // WindowInsets measure exactly how far the system bars overlap *this window*, so
+        // they're authoritative. The content rectangle can include offsets the window
+        // already accounts for (v0.1.3 padded far too much by mixing the two), so it's
+        // only a fallback for when the JNI reading isn't available.
+        let px = jni.or(content).unwrap_or([0; 4]);
         let ppp = pixels_per_point.max(0.1);
-        return px.map(|p| p as f32 / ppp);
+        return px.map(|p| p.max(0) as f32 / ppp);
     }
     #[allow(unreachable_code)]
     [0.0; 4]
@@ -187,6 +185,27 @@ pub fn android_inset_sources() -> (Option<[i32; 4]>, Option<[i32; 4]>) {
     let jni = std::panic::catch_unwind(android::system_insets).ok().flatten();
     let content = std::panic::catch_unwind(android::content_rect_insets).ok().flatten();
     (jni, content)
+}
+
+/// Whether to start in touch mode: always on Android; in the browser when the main
+/// pointer is a finger (phones, tablets). Any touch later switches it on too.
+pub fn prefers_touch() -> bool {
+    #[cfg(target_os = "android")]
+    {
+        true
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.match_media("(pointer: coarse)").ok().flatten())
+            .is_some_and(|m| m.matches())
+    }
+    // Desktop: off unless forced (RUSTDO_TOUCH=1, handy for testing); a touch screen
+    // switches it on at the first touch anyway.
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    {
+        std::env::var_os("RUSTDO_TOUCH").is_some_and(|v| v == "1")
+    }
 }
 
 /// Shows or hides the on-screen keyboard. Only needed on Android.

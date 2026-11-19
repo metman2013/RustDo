@@ -57,6 +57,8 @@ struct Toast {
 }
 
 pub struct TodoApp {
+    /// Bigger, finger-friendly layout (phones, tablets, touch screens).
+    touch_mode: bool,
     store: Store,
     storage: Storage,
     can_save: bool,
@@ -117,15 +119,10 @@ impl TodoApp {
             loaded.warning = moved_notice;
         }
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
-        cc.egui_ctx.all_styles_mut(|s| {
-            s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
-            s.text_styles.insert(TextStyle::Button, FontId::proportional(14.0));
-            s.text_styles.insert(TextStyle::Small, FontId::proportional(11.5));
-            s.text_styles.insert(TextStyle::Heading, FontId::proportional(22.0));
-            s.spacing.item_spacing = Vec2::new(8.0, 6.0);
-            s.spacing.button_padding = Vec2::new(8.0, 4.0);
-        });
+        let touch_mode = platform::prefers_touch();
+        apply_style(&cc.egui_ctx, touch_mode);
         Self {
+            touch_mode,
             store: loaded.store,
             storage,
             can_save: loaded.can_save,
@@ -304,7 +301,11 @@ impl TodoApp {
             if let Ok(result) = rx.try_recv() {
                 self.install_rx = None;
                 match result {
-                    Ok(installer) => match std::process::Command::new(&installer).spawn() {
+                    // Silent update: no wizard; the installer reopens RustDo when it's done.
+                    Ok(installer) => match std::process::Command::new(&installer)
+                        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
+                        .spawn()
+                    {
                         Ok(_) => {
                             // The installer replaces this program, so get out of its way.
                             self.persist();
@@ -351,7 +352,13 @@ impl TodoApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("RustDo {} is available.", release.version)).strong());
                     let busy = self.install_rx.is_some();
-                    let label = if busy { "Downloading…" } else { "Update now" };
+                    let label = if busy {
+                        "Downloading…"
+                    } else if cfg!(windows) {
+                        "Update & restart"
+                    } else {
+                        "Update now"
+                    };
                     if ui
                         .add_enabled(!busy, egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(ACCENT))
                         .clicked()
@@ -475,11 +482,11 @@ impl TodoApp {
                 Some(extra) => {
                     ui.add(egui::Label::new(RichText::new(format!("Also backing up to {extra}")).small()).wrap());
                     ui.horizontal(|ui| {
-                        if ui.small_button("Change…").clicked() {
+                        if small_btn(ui, "Change…").clicked() {
                             ui.close_menu();
                             self.choose_backup_folder(now.date());
                         }
-                        if ui.small_button("Stop").clicked() {
+                        if small_btn(ui, "Stop").clicked() {
                             self.store.settings.backup_dir = None;
                             self.dirty = true;
                             ui.close_menu();
@@ -931,8 +938,11 @@ impl TodoApp {
     fn sidebar(&mut self, ctx: &egui::Context, today: NaiveDate, narrow: bool) {
         let body = |ui: &mut egui::Ui| {
                 ui.add_space(10.0);
+                let touch = is_touch(ui);
                 ui.horizontal(|ui| {
-                    if narrow && ui.add(egui::Button::new(RichText::new("<").size(18.0)).frame(false)).clicked() {
+                    let back = egui::Button::new(RichText::new("<").size(if touch { 26.0 } else { 18.0 })).frame(false);
+                    let back = if touch { back.min_size(Vec2::splat(44.0)) } else { back };
+                    if narrow && ui.add(back).clicked() {
                         self.show_nav = false;
                     }
                     ui.label(RichText::new("✔ RustDo").size(20.0).strong().color(ACCENT));
@@ -953,9 +963,12 @@ impl TodoApp {
                 });
                 ui.add_space(6.0);
 
+                let min = field_height(ui);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search)
-                        .hint_text("🔍 Search  (Ctrl+F)")
+                        .hint_text(if touch { "🔍 Search" } else { "🔍 Search  (Ctrl+F)" })
+                        .min_size(min)
+                        .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
                 );
                 if self.focus_search {
@@ -993,8 +1006,15 @@ impl TodoApp {
 
                 let lists: Vec<(Uuid, String)> =
                     self.store.lists.iter().map(|l| (l.id, l.name.clone())).collect();
-                let reserved = if CAN_IMPORT { 86.0 } else { 52.0 };
-                let max_h = (ui.available_height() - reserved).max(60.0);
+                // Room below the lists for "+ New list" (and Import), sized for the layout.
+                let reserved = match (CAN_IMPORT, touch) {
+                    (true, true) => 140.0,
+                    (false, true) => 80.0,
+                    (true, false) => 86.0,
+                    (false, false) => 52.0,
+                };
+                // Phone layout: the whole screen scrolls as one page, so show every list.
+                let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([false, true])
@@ -1044,9 +1064,12 @@ impl TodoApp {
                     });
 
                 ui.separator();
+                let min = field_height(ui);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.new_list)
                         .hint_text("+ New list")
+                        .min_size(min)
+                        .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
                 );
                 if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -1071,7 +1094,12 @@ impl TodoApp {
                 }
         };
         if narrow {
-            egui::CentralPanel::default().show(ctx, body);
+            egui::CentralPanel::default().show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("lists_page")
+                    .auto_shrink([false; 2])
+                    .show(ui, body);
+            });
         } else {
             egui::SidePanel::left("sidebar")
                 .resizable(true)
@@ -1105,13 +1133,11 @@ impl TodoApp {
             ui.add_space(10.0);
             self.update_banner(ui);
             self.export_nag(ui, now);
+            let touch = is_touch(ui);
             ui.horizontal(|ui| {
-                if narrow
-                    && ui
-                        .add(egui::Button::new(RichText::new("☰").size(20.0)).frame(false))
-                        .on_hover_text("Lists")
-                        .clicked()
-                {
+                let menu = egui::Button::new(RichText::new("☰").size(if touch { 26.0 } else { 20.0 })).frame(false);
+                let menu = if touch { menu.min_size(Vec2::splat(44.0)) } else { menu };
+                if narrow && ui.add(menu).on_hover_text("Lists").clicked() {
                     self.show_nav = true;
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
@@ -1142,14 +1168,17 @@ impl TodoApp {
             ui.add_space(8.0);
 
             if !searching && self.view != View::Completed {
+                let min = field_height(ui);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.new_task)
-                        .hint_text(if platform::IS_MOBILE_OR_WEB || narrow {
+                        .hint_text(if platform::IS_MOBILE_OR_WEB || narrow || touch {
                             "+  Add a task"
                         } else {
                             "+  Add a task   (Enter to save, Ctrl+N)"
                         })
-                        .font(FontId::proportional(15.0))
+                        .font(FontId::proportional(if touch { 17.0 } else { 15.0 }))
+                        .min_size(min)
+                        .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
                 );
                 if self.focus_add {
@@ -1217,6 +1246,7 @@ impl TodoApp {
 
                 if open.is_empty() && done.is_empty() {
                     let (icon, msg) = match view {
+                        View::MyDay if touch => ("☀", "Focus on your day. Add a task, or long-press any task and choose “Add to My Day”."),
                         View::MyDay => ("☀", "Focus on your day. Add a task, or right-click any task and choose “Add to My Day”."),
                         View::Important => ("★", "Star tasks to see them here."),
                         View::Planned => ("📅", "Tasks with due dates or reminders show up here."),
@@ -1440,7 +1470,9 @@ impl TodoApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if narrow {
-                        if ui.add(egui::Button::new(RichText::new("<  Back").size(16.0)).frame(false)).clicked() {
+                        let size = if is_touch(ui) { 20.0 } else { 16.0 };
+                        let back = egui::Button::new(RichText::new("<  Back").size(size)).frame(false).min_size(Vec2::new(0.0, 44.0));
+                        if ui.add(back).clicked() {
                             close = true;
                         }
                         return;
@@ -1483,7 +1515,7 @@ impl TodoApp {
                                     changed = true;
                                 }
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if ui.small_button("✖").on_hover_text("Delete step").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text("Delete step").clicked() {
                                         remove = Some(i);
                                     }
                                     let r = ui.add(
@@ -1522,7 +1554,9 @@ impl TodoApp {
                     // My Day
                     card(ui, |ui| {
                         let in_day = task.in_my_day(today);
-                        let (text, color) = if in_day {
+                        let (text, color) = if in_day && is_touch(ui) {
+                            ("☀   Added to My Day  (tap to remove)", ACCENT)
+                        } else if in_day {
                             ("☀   Added to My Day  (click to remove)", ACCENT)
                         } else {
                             ("☀   Add to My Day", ui.visuals().text_color())
@@ -1552,7 +1586,7 @@ impl TodoApp {
                                         task.reminder_fired = new_r <= now;
                                         changed = true;
                                     }
-                                    if ui.small_button("✖").on_hover_text("Remove reminder").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text("Remove reminder").clicked() {
                                         task.reminder = None;
                                         task.reminder_fired = false;
                                         changed = true;
@@ -1588,7 +1622,7 @@ impl TodoApp {
                                     }
                                     let color = if task.is_overdue(today) { DANGER } else { ui.visuals().weak_text_color() };
                                     ui.label(RichText::new(relative_date(date, today)).color(color));
-                                    if ui.small_button("✖").on_hover_text("Remove due date").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text("Remove due date").clicked() {
                                         task.due = None;
                                         changed = true;
                                     }
@@ -1751,7 +1785,7 @@ impl TodoApp {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new("Snooze:").weak());
                         for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
-                            if ui.small_button(label).clicked() {
+                            if small_btn(ui, label).clicked() {
                                 acted.push((*id, AlertAction::Snooze(mins)));
                             }
                         }
@@ -1839,7 +1873,7 @@ impl TodoApp {
                         if toast.undo.is_some() && ui.button("Undo").clicked() {
                             undo = true;
                         }
-                        if ui.small_button("✖").clicked() {
+                        if small_btn(ui, "✖").clicked() {
                             close = true;
                         }
                     });
@@ -1894,6 +1928,12 @@ impl eframe::App for TodoApp {
             self.selected = None;
         }
 
+        // The first touch anywhere switches to the finger-friendly layout.
+        if !self.touch_mode && ctx.input(|i| i.any_touches()) {
+            self.touch_mode = true;
+            apply_style(ctx, true);
+        }
+
         // Must come before the other panels so it sits at the very edges.
         self.apply_safe_insets(ctx);
 
@@ -1942,6 +1982,41 @@ impl eframe::App for TodoApp {
 
 // ---------------------------------------------------------------------- widgets
 
+const TOUCH_ID: &str = "rustdo_touch_mode";
+
+/// Whether the finger-friendly layout is on (readable from any drawing function).
+fn is_touch(ui: &egui::Ui) -> bool {
+    ui.ctx().data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
+}
+
+/// Text sizes and spacing. Touch mode follows the ~48dp tap-target guideline: bigger
+/// text, taller buttons and fields, more room between things.
+fn apply_style(ctx: &egui::Context, touch: bool) {
+    ctx.data_mut(|d| d.insert_temp(Id::new(TOUCH_ID), touch));
+    ctx.all_styles_mut(|s| {
+        let (body, small, heading) = if touch { (16.0, 13.0, 24.0) } else { (14.0, 11.5, 22.0) };
+        s.text_styles.insert(TextStyle::Body, FontId::proportional(body));
+        s.text_styles.insert(TextStyle::Button, FontId::proportional(body));
+        s.text_styles.insert(TextStyle::Small, FontId::proportional(small));
+        s.text_styles.insert(TextStyle::Heading, FontId::proportional(heading));
+        if touch {
+            s.spacing.item_spacing = Vec2::new(10.0, 10.0);
+            s.spacing.button_padding = Vec2::new(14.0, 10.0);
+            s.spacing.interact_size = Vec2::new(48.0, 44.0);
+            s.spacing.icon_width = 22.0;
+            s.spacing.icon_width_inner = 12.0;
+            s.spacing.icon_spacing = 8.0;
+            s.spacing.combo_width = 120.0;
+            s.spacing.scroll.bar_width = 6.0;
+        } else {
+            let default = egui::style::Spacing::default();
+            s.spacing = default;
+            s.spacing.item_spacing = Vec2::new(8.0, 6.0);
+            s.spacing.button_padding = Vec2::new(8.0, 4.0);
+        }
+    });
+}
+
 fn apply_theme(ctx: &egui::Context, theme: ThemeChoice) {
     ctx.set_theme(match theme {
         ThemeChoice::System => egui::ThemePreference::System,
@@ -1969,7 +2044,9 @@ fn reminder_presets(now: NaiveDateTime) -> Vec<(&'static str, NaiveDateTime)> {
 }
 
 fn nav_row(ui: &mut egui::Ui, selected: bool, icon: &str, name: &str, count: usize) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+    let touch = is_touch(ui);
+    let (height, font, gap) = if touch { (48.0, 17.0, 40.0) } else { (30.0, 14.0, 34.0) };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
     let vis = ui.visuals();
     if selected {
         ui.painter().rect_filled(rect, 6.0, vis.selection.bg_fill.gamma_multiply(0.45));
@@ -1979,10 +2056,10 @@ fn nav_row(ui: &mut egui::Ui, selected: bool, icon: &str, name: &str, count: usi
     let color = if selected { vis.strong_text_color() } else { vis.text_color() };
     let icon_color = if selected { ACCENT } else { vis.weak_text_color() };
     let p = ui.painter();
-    p.text(rect.left_center() + Vec2::new(10.0, 0.0), Align2::LEFT_CENTER, icon, FontId::proportional(14.0), icon_color);
-    p.text(rect.left_center() + Vec2::new(34.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(14.0), color);
+    p.text(rect.left_center() + Vec2::new(12.0, 0.0), Align2::LEFT_CENTER, icon, FontId::proportional(font), icon_color);
+    p.text(rect.left_center() + Vec2::new(gap, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(font), color);
     if count > 0 {
-        p.text(rect.right_center() - Vec2::new(10.0, 0.0), Align2::RIGHT_CENTER, count.to_string(), FontId::proportional(12.0), vis.weak_text_color());
+        p.text(rect.right_center() - Vec2::new(12.0, 0.0), Align2::RIGHT_CENTER, count.to_string(), FontId::proportional(font - 2.0), vis.weak_text_color());
     }
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
@@ -2010,8 +2087,10 @@ fn paint_check(painter: &egui::Painter, center: Pos2, radius: f32, done: bool, h
 }
 
 fn check_button(ui: &mut egui::Ui, done: bool, size: f32) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-    paint_check(ui.painter(), rect.center(), size * 0.42, done, resp.hovered(), ui.visuals());
+    // In touch mode the tap area grows to 44pt; the circle grows a little.
+    let (hit, radius) = if is_touch(ui) { (size.max(44.0), size * 0.5) } else { (size, size * 0.42) };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(hit), Sense::click());
+    paint_check(ui.painter(), rect.center(), radius, done, resp.hovered(), ui.visuals());
     resp.on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(if done { "Mark as not completed" } else { "Mark as completed" })
 }
@@ -2024,14 +2103,30 @@ fn paint_star(ui: &egui::Ui, center: Pos2, important: bool, hovered: bool) {
     } else {
         ("☆", ui.visuals().weak_text_color())
     };
-    ui.painter().text(center, Align2::CENTER_CENTER, glyph, FontId::proportional(18.0), color);
+    let size = if is_touch(ui) { 24.0 } else { 18.0 };
+    ui.painter().text(center, Align2::CENTER_CENTER, glyph, FontId::proportional(size), color);
 }
 
 fn star_button(ui: &mut egui::Ui, important: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+    let hit = if is_touch(ui) { 44.0 } else { 24.0 };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(hit), Sense::click());
     paint_star(ui, rect.center(), important, resp.hovered());
     resp.on_hover_cursor(CursorIcon::PointingHand)
         .on_hover_text(if important { "Remove importance" } else { "Mark as important" })
+}
+
+/// A compact button with a mouse; a full-size, finger-friendly one in touch mode.
+fn small_btn(ui: &mut egui::Ui, text: impl Into<egui::WidgetText>) -> egui::Response {
+    if is_touch(ui) {
+        ui.button(text)
+    } else {
+        ui.small_button(text)
+    }
+}
+
+/// Minimum height for text boxes: comfortable to tap in touch mode.
+fn field_height(ui: &egui::Ui) -> Vec2 {
+    Vec2::new(0.0, if is_touch(ui) { 44.0 } else { 0.0 })
 }
 
 fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
@@ -2107,7 +2202,14 @@ fn task_row(
         meta.push(("📝 Note".into(), weak));
     }
 
-    let height = if meta.is_empty() { 42.0 } else { 52.0 };
+    // Touch mode: taller rows, bigger text, and 48pt tap areas for the circle and star.
+    let touch = is_touch(ui);
+    let (h_one, h_two, title_size, meta_size, hit, radius, inset, text_gap) = if touch {
+        (56.0, 66.0, 17.0, 13.5, 48.0, 12.0, 28.0, 56.0)
+    } else {
+        (42.0, 52.0, 14.5, 11.5, 24.0, 9.5, 22.0, 44.0)
+    };
+    let height = if meta.is_empty() { h_one } else { h_two };
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
     let bg = if selected {
         vis.selection.bg_fill.gamma_multiply(0.35)
@@ -2119,21 +2221,21 @@ fn task_row(
     ui.painter().rect_filled(rect, 6.0, bg);
 
     // Interactive sub-areas registered after the row so they take priority over it.
-    let check_rect = Rect::from_center_size(Pos2::new(rect.left() + 22.0, rect.center().y), Vec2::splat(24.0));
+    let check_rect = Rect::from_center_size(Pos2::new(rect.left() + inset, rect.center().y), Vec2::splat(hit));
     let check = ui.interact(check_rect, Id::new(("check", t.id)), Sense::click());
-    let star_rect = Rect::from_center_size(Pos2::new(rect.right() - 22.0, rect.center().y), Vec2::splat(26.0));
+    let star_rect = Rect::from_center_size(Pos2::new(rect.right() - inset, rect.center().y), Vec2::splat(hit));
     let star = ui.interact(star_rect, Id::new(("star", t.id)), Sense::click());
 
-    paint_check(ui.painter(), check_rect.center(), 9.5, t.done, check.hovered(), &vis);
+    paint_check(ui.painter(), check_rect.center(), radius, t.done, check.hovered(), &vis);
     paint_star(ui, star_rect.center(), t.important, star.hovered());
 
-    let text_left = rect.left() + 44.0;
+    let text_left = rect.left() + text_gap;
     let text_width = (star_rect.left() - 8.0 - text_left).max(10.0);
 
     let mut title_job = LayoutJob::single_section(
         t.title.clone(),
         TextFormat {
-            font_id: FontId::proportional(14.5),
+            font_id: FontId::proportional(title_size),
             color: if t.done { weak } else { vis.text_color() },
             strikethrough: if t.done { Stroke::new(1.0_f32, weak) } else { Stroke::NONE },
             ..Default::default()
@@ -2149,9 +2251,9 @@ fn task_row(
         let mut job = LayoutJob::default();
         for (i, (text, color)) in meta.into_iter().enumerate() {
             if i > 0 {
-                job.append("  ·  ", 0.0, TextFormat { font_id: FontId::proportional(11.5), color: weak, ..Default::default() });
+                job.append("  ·  ", 0.0, TextFormat { font_id: FontId::proportional(meta_size), color: weak, ..Default::default() });
             }
-            job.append(&text, 0.0, TextFormat { font_id: FontId::proportional(11.5), color, ..Default::default() });
+            job.append(&text, 0.0, TextFormat { font_id: FontId::proportional(meta_size), color, ..Default::default() });
         }
         job.wrap = TextWrapping::truncate_at_width(text_width);
         let meta_galley = ui.fonts(|f| f.layout_job(job));

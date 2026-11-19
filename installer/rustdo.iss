@@ -55,6 +55,9 @@ Name: "{group}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustd
 Name: "{autodesktop}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"; Tasks: desktopicon
 
 [Run]
+; Normal install: offer "Launch RustDo" on the last page.
 Filename: "{app}\rustdo.exe"; Description: "{cm:LaunchProgram,RustDo}"; Flags: nowait postinstall skipifsilent
+; In-app update (runs this installer with /VERYSILENT): reopen RustDo when done.
+Filename: "{app}\rustdo.exe"; Flags: nowait; Check: WizardSilent
 
 ; Your tasks live in %APPDATA%\RustDo and are deliberately NOT removed on uninstall.
