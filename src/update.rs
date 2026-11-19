@@ -42,6 +42,15 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
+/// True when running from the Windows installer's copy (Inno Setup puts its uninstaller
+/// next to the exe), as opposed to the portable exe, which should never update itself.
+pub fn is_installed_copy() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("unins000.exe")))
+        .is_some_and(|uninstaller| uninstaller.exists())
+}
+
 /// Which release asset this platform installs.
 fn wanted_asset(name: &str) -> bool {
     let n = name.to_lowercase();

@@ -38,6 +38,11 @@ export on one, restore on the other.
   - **Windows**: **Update & restart** downloads the new installer and runs it silently, with no
     wizard and no clicks. RustDo closes, updates and reopens on its own in a few seconds.
     Your tasks are kept. The setup wizard is only used for the first install.
+  - **Windows auto-update** (installed version, on by default): each time RustDo opens it
+    checks for a new version and, if there is one, updates itself the same silent way. It
+    waits if you've started typing a new task, and only acts right after launch; otherwise you
+    get the banner. Turn it off under **⚙ → Install updates automatically**. The portable exe
+    never updates itself.
   - **Android** opens the new APK download. Install it over the old version.
 - To turn the check off, or check right away, use the **⚙** menu. The check is an anonymous
   request to GitHub's public API and is the only network request RustDo makes. No task data

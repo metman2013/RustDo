@@ -19,6 +19,10 @@ use uuid::Uuid;
 // std::time::Instant panics in the browser; web-time works everywhere.
 use web_time::Instant;
 
+/// An update found at launch is installed automatically only within this time, so a slow
+/// download never restarts the app in the middle of someone's work.
+const AUTO_UPDATE_WINDOW: StdDuration = StdDuration::from_secs(120);
+
 /// Below this width (in points) the app switches to the one-panel phone layout.
 const NARROW_WIDTH: f32 = 700.0;
 
@@ -71,6 +75,15 @@ pub struct TodoApp {
     update_available: Option<Release>,
     update_dismissed: bool,
     install_rx: Option<Receiver<Result<std::path::PathBuf, String>>>,
+    started: Instant,
+    /// The launch-time update check has run (Windows auto-update).
+    startup_checked: bool,
+    /// The current download was started automatically at launch.
+    auto_installing: bool,
+    /// The user asked to install as soon as the download is ready.
+    install_now: bool,
+    /// A downloaded installer waiting to run.
+    ready_installer: Option<std::path::PathBuf>,
     /// A RustDo backup waiting for the user to confirm "replace all my tasks".
     pending_restore: Option<(String, Store)>,
     /// Android: the "paste a backup" box, when open.
@@ -133,6 +146,11 @@ impl TodoApp {
             update_available: None,
             update_dismissed: false,
             install_rx: None,
+            started: Instant::now(),
+            startup_checked: false,
+            auto_installing: false,
+            install_now: false,
+            ready_installer: None,
             pending_restore: None,
             paste_restore: None,
             backup_day: None,
@@ -262,17 +280,26 @@ impl TodoApp {
 
     // ------------------------------------------------------------------ updates
 
-    /// Starts the daily background check (desktop and Android; the web app updates itself).
+    /// Whether this copy can update itself silently at startup: the installed Windows app
+    /// (a portable exe is left alone; it only shows the banner).
+    fn can_auto_update(&self) -> bool {
+        cfg!(all(windows, feature = "updates")) && self.store.settings.auto_update && update::is_installed_copy()
+    }
+
+    /// Starts an update check: at launch when auto-update is on (Windows), otherwise at
+    /// most once a day (desktop and Android; the web app updates itself).
     fn maybe_check_updates(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
         if cfg!(target_arch = "wasm32") || self.update_rx.is_some() || self.update_available.is_some() {
             return;
         }
+        let at_launch = self.can_auto_update() && !self.startup_checked;
         let due = self
             .store
             .settings
             .last_update_check
             .is_none_or(|last| now - last >= Duration::hours(24) || last > now);
-        if self.update_manual || (self.store.settings.check_updates && due) {
+        if self.update_manual || at_launch || (self.store.settings.check_updates && due) {
+            self.startup_checked = true;
             self.store.settings.last_update_check = Some(now);
             self.dirty = true;
             self.update_rx = Some(update::check_in_background(ctx.clone()));
@@ -287,7 +314,17 @@ impl TodoApp {
                 match result {
                     CheckResult::Available(release) => {
                         self.update_dismissed = false;
+                        // Found right after launch: update straight away, no questions.
+                        let auto = self.can_auto_update()
+                            && self.started.elapsed() < AUTO_UPDATE_WINDOW
+                            && release.download_url.is_some();
+                        let version = release.version.clone();
                         self.update_available = Some(release);
+                        if auto {
+                            self.auto_installing = true;
+                            self.install_update(ctx);
+                            self.notify(format!("Updating RustDo to {version}… it will reopen in a moment."));
+                        }
                     }
                     CheckResult::UpToDate if manual => {
                         self.notify(format!("You're up to date (RustDo {}).", update::CURRENT_VERSION))
@@ -301,25 +338,77 @@ impl TodoApp {
             if let Ok(result) = rx.try_recv() {
                 self.install_rx = None;
                 match result {
-                    // Silent update: no wizard; the installer reopens RustDo when it's done.
-                    Ok(installer) => match std::process::Command::new(&installer)
-                        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
-                        .spawn()
-                    {
-                        Ok(_) => {
-                            // The installer replaces this program, so get out of its way.
-                            self.persist();
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    Ok(installer) => {
+                        self.ready_installer = Some(installer);
+                        // An automatic update that took too long to download becomes a
+                        // "Restart to update" banner instead of restarting out of the blue.
+                        if self.auto_installing && self.started.elapsed() >= AUTO_UPDATE_WINDOW {
+                            self.auto_installing = false;
+                            self.update_dismissed = false;
                         }
-                        Err(e) => self.notify(format!("Couldn't start the installer: {e}")),
-                    },
-                    Err(e) => self.notify(format!("Couldn't download the update: {e}")),
+                    }
+                    Err(e) => {
+                        self.auto_installing = false;
+                        self.notify(format!("Couldn't download the update: {e}"));
+                    }
                 }
+            }
+        }
+        // Manual "Update & restart": install now. Automatic: wait until you're not typing.
+        if self.ready_installer.is_some() && !self.auto_installing_waiting(ctx) && (self.auto_installing || self.install_now) {
+            self.launch_installer(ctx);
+        }
+    }
+
+    /// An automatic update holds off while there's half-typed text that isn't saved yet
+    /// (edits to existing tasks save instantly) or a dialog is open.
+    fn auto_installing_waiting(&self, _ctx: &egui::Context) -> bool {
+        self.auto_installing
+            && (!self.new_task.trim().is_empty()
+                || !self.new_step.trim().is_empty()
+                || !self.new_list.trim().is_empty()
+                || self.renaming_list.is_some()
+                || self.paste_restore.is_some()
+                || self.pending_import.is_some()
+                || self.pending_restore.is_some()
+                || self.confirm_delete_list.is_some())
+    }
+
+    /// Runs the downloaded installer silently (no wizard; it reopens RustDo when done).
+    fn launch_installer(&mut self, ctx: &egui::Context) {
+        let Some(installer) = self.ready_installer.take() else { return };
+        self.install_now = false;
+        // Test hook (debug builds only): stop right before installing.
+        if cfg!(debug_assertions) && std::env::var_os("RUSTDO_TEST_NO_INSTALL").is_some() {
+            self.auto_installing = false;
+            self.notify(format!("TEST: would now run {} silently", installer.display()));
+            return;
+        }
+        match std::process::Command::new(&installer)
+            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
+            .spawn()
+        {
+            Ok(_) => {
+                // The installer replaces this program, so get out of its way.
+                self.persist();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Err(e) => {
+                self.auto_installing = false;
+                self.notify(format!("Couldn't start the installer: {e}"));
             }
         }
     }
 
     fn install_update(&mut self, ctx: &egui::Context) {
+        // Already downloaded (e.g. "Restart to update"): install it right away.
+        if self.ready_installer.is_some() {
+            self.install_now = true;
+            return;
+        }
+        if !self.auto_installing {
+            self.install_now = true;
+        }
         let Some(release) = self.update_available.clone() else { return };
         #[cfg(all(windows, feature = "updates"))]
         if let (Some(url), Some(name)) = (release.download_url.clone(), release.download_name.clone()) {
@@ -351,9 +440,13 @@ impl TodoApp {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(format!("RustDo {} is available.", release.version)).strong());
-                    let busy = self.install_rx.is_some();
-                    let label = if busy {
+                    let busy = self.install_rx.is_some() || (self.auto_installing && self.ready_installer.is_some());
+                    let label = if self.auto_installing && self.ready_installer.is_some() {
+                        "Updating when you finish typing…"
+                    } else if busy {
                         "Downloading…"
+                    } else if self.ready_installer.is_some() {
+                        "Restart to update"
                     } else if cfg!(windows) {
                         "Update & restart"
                     } else {
@@ -389,6 +482,22 @@ impl TodoApp {
             } else {
                 if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
                     self.dirty = true;
+                }
+                if cfg!(windows) {
+                    let installed = update::is_installed_copy();
+                    let r = ui.add_enabled(
+                        installed,
+                        egui::Checkbox::new(&mut self.store.settings.auto_update, "Install updates automatically"),
+                    );
+                    if r.changed() {
+                        self.dirty = true;
+                    }
+                    let note = if installed {
+                        "Checks each time RustDo opens and updates itself silently, then reopens."
+                    } else {
+                        "Only for the installed version (this is the portable exe)."
+                    };
+                    ui.label(RichText::new(note).weak().small());
                 }
                 ui.label(
                     RichText::new("Asks GitHub for the latest version. No task data is sent.")
