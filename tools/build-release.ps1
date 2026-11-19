@@ -10,11 +10,12 @@
 #>
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE '.cargo' }
+$homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $homeDir '.cargo' }
 
 # rustc applies the LAST matching rule, so list the most general prefix first.
 $env:RUSTFLAGS = @(
-    "--remap-path-prefix=$env:USERPROFILE=home",
+    "--remap-path-prefix=$homeDir=home",
     "--remap-path-prefix=$cargoHome=cargo",
     "--remap-path-prefix=$root=rustdo"
 ) -join ' '
@@ -27,10 +28,13 @@ try {
     $ErrorActionPreference = 'Stop'
     if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 
-    $exe = Join-Path $root 'target\release\rustdo.exe'
+    $exe = Join-Path $root 'target/release/rustdo.exe'
     $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($exe))
-    $leaks = @($env:USERNAME, $env:USERPROFILE, $root, (Split-Path -Leaf $root)) | Where-Object { $_ -and $text.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
-    if ($leaks) { throw "Personal paths still found in $exe" }
+    $leaf = Split-Path -Leaf $root
+    $needles = @($homeDir, $root, "\$leaf\", "/$leaf/")
+    if ($env:USERNAME) { $needles += "\$($env:USERNAME)\" }
+    $leaks = $needles | Where-Object { $_ -and $text.IndexOf($_, [StringComparison]::OrdinalIgnoreCase) -ge 0 }
+    if ($leaks) { throw "Personal paths still found in ${exe}: $($leaks -join ', ')" }
     Write-Host "OK: $exe contains no user name or local paths."
 }
 finally {

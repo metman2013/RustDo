@@ -5,15 +5,25 @@ use crate::model::{
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
-use crate::storage;
+use crate::platform;
+use crate::storage::Storage;
+use crate::update::{self, CheckResult, Release};
+use std::sync::mpsc::Receiver;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use eframe::egui::{
     self, text::LayoutJob, text::TextWrapping, Align, Align2, Color32, CursorIcon, FontId, Id,
     Key, Layout, Modifiers, Pos2, Rect, RichText, Sense, Stroke, TextFormat, TextStyle, Vec2,
 };
-use std::path::{Path, PathBuf};
-use std::time::{Duration as StdDuration, Instant};
+use std::time::Duration as StdDuration;
 use uuid::Uuid;
+// std::time::Instant panics in the browser; web-time works everywhere.
+use web_time::Instant;
+
+/// Below this width (in points) the app switches to the one-panel phone layout.
+const NARROW_WIDTH: f32 = 700.0;
+
+/// Import is offered where we can pick a file: desktop and web, not the Android build.
+const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
 
 const ACCENT: Color32 = Color32::from_rgb(70, 125, 230);
 const DANGER: Color32 = Color32::from_rgb(215, 75, 75);
@@ -48,8 +58,20 @@ struct Toast {
 
 pub struct TodoApp {
     store: Store,
-    path: PathBuf,
+    storage: Storage,
     can_save: bool,
+    /// Phone layout: showing the list picker instead of the task list.
+    show_nav: bool,
+    keyboard_shown: bool,
+    update_rx: Option<Receiver<CheckResult>>,
+    /// True when the user pressed "Check now" (so "up to date" and errors are reported).
+    update_manual: bool,
+    update_available: Option<Release>,
+    update_dismissed: bool,
+    install_rx: Option<Receiver<Result<std::path::PathBuf, String>>>,
+    /// The web file picker is async; the chosen file lands here and is picked up next frame.
+    #[cfg(target_arch = "wasm32")]
+    web_import: std::rc::Rc<std::cell::RefCell<Option<(String, Vec<u8>)>>>,
     dirty: bool,
     view: View,
     selected: Option<Uuid>,
@@ -69,8 +91,8 @@ pub struct TodoApp {
 
 impl TodoApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let path = storage::data_path();
-        let loaded = storage::load(&path);
+        let storage = Storage::for_platform();
+        let loaded = storage.load();
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         cc.egui_ctx.all_styles_mut(|s| {
             s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
@@ -82,8 +104,17 @@ impl TodoApp {
         });
         Self {
             store: loaded.store,
-            path,
+            storage,
             can_save: loaded.can_save,
+            show_nav: false,
+            keyboard_shown: false,
+            update_rx: None,
+            update_manual: false,
+            update_available: None,
+            update_dismissed: false,
+            install_rx: None,
+            #[cfg(target_arch = "wasm32")]
+            web_import: Default::default(),
             dirty: false,
             view: View::MyDay,
             selected: None,
@@ -96,33 +127,215 @@ impl TodoApp {
             confirm_delete_list: None,
             alerts: Vec::new(),
             toast: loaded.warning.map(|text| Toast { text, undo: None, at: Instant::now() }),
-            focus_add: true,
+            // Don't pop up the on-screen keyboard as soon as a phone opens the app.
+            focus_add: !platform::IS_MOBILE_OR_WEB,
             focus_search: false,
             pending_import: None,
         }
     }
 
-    fn pick_import_file(&mut self) {
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn pick_import_file(&mut self, _ctx: &egui::Context) {
         let picked = rfd::FileDialog::new()
             .set_title("Import from Microsoft To Do")
             .add_filter("Microsoft To Do / Outlook export", &["json", "csv"])
             .add_filter("All files", &["*"])
             .pick_file();
         if let Some(path) = picked {
-            self.load_import(&path);
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.load_import(&name, &bytes);
+                }
+                Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
+            }
         }
     }
 
-    fn load_import(&mut self, path: &Path) {
-        match import::parse_file(path) {
+    #[cfg(target_arch = "wasm32")]
+    fn pick_import_file(&mut self, ctx: &egui::Context) {
+        let slot = self.web_import.clone();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let file = rfd::AsyncFileDialog::new()
+                .add_filter("Microsoft To Do / Outlook export", &["json", "csv"])
+                .pick_file()
+                .await;
+            if let Some(file) = file {
+                let bytes = file.read().await;
+                *slot.borrow_mut() = Some((file.file_name(), bytes));
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    fn pick_import_file(&mut self, _ctx: &egui::Context) {}
+
+    fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
+        match import::parse_bytes(file_name, bytes) {
             Ok(import) => {
                 self.pending_import = Some(PendingImport {
-                    file_name: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                    file_name: file_name.to_string(),
                     import,
                     include_completed: false,
                 });
             }
             Err(e) => self.notify(e),
+        }
+    }
+
+    // ------------------------------------------------------------------ updates
+
+    /// Starts the daily background check (desktop and Android; the web app updates itself).
+    fn maybe_check_updates(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
+        if cfg!(target_arch = "wasm32") || self.update_rx.is_some() || self.update_available.is_some() {
+            return;
+        }
+        let due = self
+            .store
+            .settings
+            .last_update_check
+            .is_none_or(|last| now - last >= Duration::hours(24) || last > now);
+        if self.update_manual || (self.store.settings.check_updates && due) {
+            self.store.settings.last_update_check = Some(now);
+            self.dirty = true;
+            self.update_rx = Some(update::check_in_background(ctx.clone()));
+        }
+    }
+
+    fn poll_updates(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.update_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.update_rx = None;
+                let manual = std::mem::take(&mut self.update_manual);
+                match result {
+                    CheckResult::Available(release) => {
+                        self.update_dismissed = false;
+                        self.update_available = Some(release);
+                    }
+                    CheckResult::UpToDate if manual => {
+                        self.notify(format!("You're up to date (RustDo {}).", update::CURRENT_VERSION))
+                    }
+                    CheckResult::Failed(e) if manual => self.notify(format!("Couldn't check for updates: {e}")),
+                    _ => {}
+                }
+            }
+        }
+        if let Some(rx) = &self.install_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.install_rx = None;
+                match result {
+                    Ok(installer) => match std::process::Command::new(&installer).spawn() {
+                        Ok(_) => {
+                            // The installer replaces this program, so get out of its way.
+                            self.persist();
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        Err(e) => self.notify(format!("Couldn't start the installer: {e}")),
+                    },
+                    Err(e) => self.notify(format!("Couldn't download the update: {e}")),
+                }
+            }
+        }
+    }
+
+    fn install_update(&mut self, ctx: &egui::Context) {
+        let Some(release) = self.update_available.clone() else { return };
+        #[cfg(all(windows, feature = "updates"))]
+        if let (Some(url), Some(name)) = (release.download_url.clone(), release.download_name.clone()) {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let ctx2 = ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(update::download_installer(&url, &name));
+                ctx2.request_repaint();
+            });
+            self.install_rx = Some(rx);
+            self.notify("Downloading the update…");
+            return;
+        }
+        // Android (APK) and anything without an installer: open the download in the browser.
+        let url = release.download_url.unwrap_or(release.notes_url);
+        ctx.open_url(egui::OpenUrl::new_tab(url));
+    }
+
+    fn update_banner(&mut self, ui: &mut egui::Ui) {
+        if self.update_dismissed {
+            return;
+        }
+        let Some(release) = self.update_available.clone() else { return };
+        let mut install = false;
+        egui::Frame::group(ui.style())
+            .fill(ACCENT.gamma_multiply(0.18))
+            .stroke(Stroke::new(1.0_f32, ACCENT))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(format!("RustDo {} is available.", release.version)).strong());
+                    let busy = self.install_rx.is_some();
+                    let label = if busy { "Downloading…" } else { "Update now" };
+                    if ui
+                        .add_enabled(!busy, egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(ACCENT))
+                        .clicked()
+                    {
+                        install = true;
+                    }
+                    ui.hyperlink_to("What's new", &release.notes_url);
+                    if ui.button("Later").clicked() {
+                        self.update_dismissed = true;
+                    }
+                });
+            });
+        ui.add_space(6.0);
+        if install {
+            let ctx = ui.ctx().clone();
+            self.install_update(&ctx);
+        }
+    }
+
+    fn settings_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("⚙", |ui| {
+            ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
+            ui.separator();
+            if cfg!(target_arch = "wasm32") {
+                ui.label(RichText::new("The web app updates itself automatically.").weak());
+            } else {
+                if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
+                    self.dirty = true;
+                }
+                ui.label(
+                    RichText::new("Asks GitHub for the latest version. No task data is sent.")
+                        .weak()
+                        .small(),
+                );
+                let checking = self.update_rx.is_some();
+                if ui.add_enabled(!checking, egui::Button::new("Check now")).clicked() {
+                    self.update_manual = true;
+                    self.update_available = None;
+                    ui.close_menu();
+                }
+            }
+            ui.separator();
+            ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
+        });
+    }
+
+    /// Files dropped onto the window (desktop gives a path, the browser gives the bytes).
+    fn handle_dropped_files(&mut self, ctx: &egui::Context) {
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().cloned());
+        let Some(file) = dropped else { return };
+        if let Some(bytes) = &file.bytes {
+            self.load_import(&file.name, bytes);
+            return;
+        }
+        if let Some(path) = &file.path {
+            match std::fs::read(path) {
+                Ok(bytes) => {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.load_import(&name, &bytes);
+                }
+                Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
+            }
         }
     }
 
@@ -201,8 +414,8 @@ impl TodoApp {
             self.pending_import = None;
         } else if confirm {
             let pending = self.pending_import.take().unwrap();
-            if self.can_save && self.path.exists() {
-                if let Err(e) = storage::snapshot(&self.path, &self.store, "before-import") {
+            if self.can_save {
+                if let Err(e) = self.storage.snapshot(&self.store, "before-import") {
                     self.notify(format!("Import cancelled: couldn't save a backup first ({e})."));
                     return;
                 }
@@ -224,7 +437,7 @@ impl TodoApp {
         if !self.can_save {
             return;
         }
-        if let Err(e) = storage::save(&self.path, &self.store) {
+        if let Err(e) = self.storage.save(&self.store) {
             self.notify(format!("Couldn't save: {e}"));
         }
     }
@@ -311,14 +524,14 @@ impl TodoApp {
 
     // ------------------------------------------------------------------ sidebar
 
-    fn sidebar(&mut self, ctx: &egui::Context, today: NaiveDate) {
-        egui::SidePanel::left("sidebar")
-            .resizable(true)
-            .default_width(250.0)
-            .width_range(200.0..=400.0)
-            .show(ctx, |ui| {
+    /// The list picker: a left side panel on wide screens, the whole screen on phones.
+    fn sidebar(&mut self, ctx: &egui::Context, today: NaiveDate, narrow: bool) {
+        let body = |ui: &mut egui::Ui| {
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
+                    if narrow && ui.add(egui::Button::new(RichText::new("<").size(18.0)).frame(false)).clicked() {
+                        self.show_nav = false;
+                    }
                     ui.label(RichText::new("✔ RustDo").size(20.0).strong().color(ACCENT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let theme = self.store.settings.theme;
@@ -327,6 +540,7 @@ impl TodoApp {
                             ThemeChoice::Light => ("☀", ThemeChoice::Dark, "Theme: light"),
                             ThemeChoice::Dark => ("🌙", ThemeChoice::System, "Theme: dark"),
                         };
+                        self.settings_menu(ui);
                         if ui.button(icon).on_hover_text(tip).clicked() {
                             self.store.settings.theme = next;
                             apply_theme(ui.ctx(), next);
@@ -344,6 +558,10 @@ impl TodoApp {
                 if self.focus_search {
                     r.request_focus();
                     self.focus_search = false;
+                }
+                // On a phone, pressing Enter in the search box shows the results.
+                if narrow && r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !self.search.trim().is_empty() {
+                    self.show_nav = false;
                 }
                 ui.add_space(6.0);
 
@@ -365,13 +583,15 @@ impl TodoApp {
                     if nav_row(ui, selected, icon, name, count).clicked() {
                         self.view = view;
                         self.search.clear();
+                        self.show_nav = false;
                     }
                 }
                 ui.separator();
 
                 let lists: Vec<(Uuid, String)> =
                     self.store.lists.iter().map(|l| (l.id, l.name.clone())).collect();
-                let max_h = (ui.available_height() - 86.0).max(60.0);
+                let reserved = if CAN_IMPORT { 86.0 } else { 52.0 };
+                let max_h = (ui.available_height() - reserved).max(60.0);
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([false, true])
@@ -400,6 +620,7 @@ impl TodoApp {
                             if r.clicked() {
                                 self.view = View::List(id);
                                 self.search.clear();
+                                self.show_nav = false;
                             }
                             if r.double_clicked() {
                                 self.renaming_list = Some((id, name.clone()));
@@ -430,24 +651,36 @@ impl TodoApp {
                         self.new_list.clear();
                         self.view = View::List(id);
                         self.search.clear();
-                        self.focus_add = true;
+                        self.show_nav = false;
+                        self.focus_add = !platform::IS_MOBILE_OR_WEB;
                         self.dirty = true;
                     }
                 }
                 ui.add_space(2.0);
-                if ui
-                    .add_sized([ui.available_width(), 26.0], egui::Button::new("⬇  Import from Microsoft To Do…"))
-                    .on_hover_text("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window.")
-                    .clicked()
+                if CAN_IMPORT
+                    && ui
+                        .add_sized([ui.available_width(), 26.0], egui::Button::new("⬇  Import from Microsoft To Do…"))
+                        .on_hover_text("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window.")
+                        .clicked()
                 {
-                    self.pick_import_file();
+                    let ctx = ui.ctx().clone();
+                    self.pick_import_file(&ctx);
                 }
-            });
+        };
+        if narrow {
+            egui::CentralPanel::default().show(ctx, body);
+        } else {
+            egui::SidePanel::left("sidebar")
+                .resizable(true)
+                .default_width(250.0)
+                .width_range(200.0..=400.0)
+                .show(ctx, body);
+        }
     }
 
     // ------------------------------------------------------------------ task list
 
-    fn main_panel(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
+    fn main_panel(&mut self, ctx: &egui::Context, now: NaiveDateTime, narrow: bool) {
         let today = now.date();
         let mut actions = Vec::new();
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -467,8 +700,18 @@ impl TodoApp {
             };
 
             ui.add_space(10.0);
+            self.update_banner(ui);
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{icon}  {title}")).size(24.0).strong());
+                if narrow
+                    && ui
+                        .add(egui::Button::new(RichText::new("☰").size(20.0)).frame(false))
+                        .on_hover_text("Lists")
+                        .clicked()
+                {
+                    self.show_nav = true;
+                }
+                let size = if narrow { 20.0 } else { 24.0 };
+                ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
                 // Planned is always grouped by date, so sorting doesn't apply there.
                 if self.view == View::Planned && !searching {
                     return;
@@ -476,7 +719,8 @@ impl TodoApp {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let mut sort = self.store.settings.sort;
                     egui::ComboBox::from_id_salt("sort")
-                        .selected_text(format!("Sort: {}", sort.label()))
+                        .width(if narrow { 64.0 } else { 160.0 })
+                        .selected_text(if narrow { "Sort".to_string() } else { format!("Sort: {}", sort.label()) })
                         .show_ui(ui, |ui| {
                             for m in SortMode::ALL {
                                 ui.selectable_value(&mut sort, m, m.label());
@@ -496,7 +740,11 @@ impl TodoApp {
             if !searching && self.view != View::Completed {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.new_task)
-                        .hint_text("+  Add a task   (Enter to save, Ctrl+N)")
+                        .hint_text(if platform::IS_MOBILE_OR_WEB || narrow {
+                            "+  Add a task"
+                        } else {
+                            "+  Add a task   (Enter to save, Ctrl+N)"
+                        })
                         .font(FontId::proportional(15.0))
                         .desired_width(f32::INFINITY),
                 );
@@ -619,7 +867,8 @@ impl TodoApp {
 
     // ------------------------------------------------------------------ details
 
-    fn detail_panel(&mut self, ctx: &egui::Context, id: Uuid, now: NaiveDateTime) {
+    /// Task details: a right side panel on wide screens, the whole screen on phones.
+    fn detail_panel(&mut self, ctx: &egui::Context, id: Uuid, now: NaiveDateTime, narrow: bool) {
         let today = now.date();
         let lists: Vec<(Uuid, String)> =
             self.store.lists.iter().map(|l| (l.id, l.name.clone())).collect();
@@ -632,13 +881,15 @@ impl TodoApp {
             return;
         };
 
-        egui::SidePanel::right("details")
-            .resizable(true)
-            .default_width(350.0)
-            .width_range(290.0..=560.0)
-            .show(ctx, |ui| {
+        let body = |ui: &mut egui::Ui| {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
+                    if narrow {
+                        if ui.add(egui::Button::new(RichText::new("<  Back").size(16.0)).frame(false)).clicked() {
+                            close = true;
+                        }
+                        return;
+                    }
                     ui.label(RichText::new("Details").weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("✖").on_hover_text("Close (Esc)").clicked() {
@@ -886,7 +1137,16 @@ impl TodoApp {
                         });
                     });
                 });
-            });
+        };
+        if narrow {
+            egui::CentralPanel::default().show(ctx, body);
+        } else {
+            egui::SidePanel::right("details")
+                .resizable(true)
+                .default_width(350.0)
+                .width_range(290.0..=560.0)
+                .show(ctx, body);
+        }
 
         if changed {
             self.dirty = true;
@@ -1063,22 +1323,49 @@ impl eframe::App for TodoApp {
         // Wake up periodically so reminders fire and "today" rolls over at midnight.
         ctx.request_repaint_after(StdDuration::from_secs(5));
 
-        let dropped: Option<PathBuf> =
-            ctx.input(|i| i.raw.dropped_files.iter().find_map(|f| f.path.clone()));
-        if let Some(path) = dropped {
-            self.load_import(&path);
+        self.maybe_check_updates(ctx, now);
+        self.poll_updates(ctx);
+        self.handle_dropped_files(ctx);
+        #[cfg(target_arch = "wasm32")]
+        {
+            let picked = self.web_import.borrow_mut().take();
+            if let Some((name, bytes)) = picked {
+                self.load_import(&name, &bytes);
+            }
         }
 
         self.shortcuts(ctx);
-        self.sidebar(ctx, today);
-        if let Some(id) = self.selected {
-            if self.store.task(id).is_some() {
-                self.detail_panel(ctx, id, now);
-            } else {
-                self.selected = None;
-            }
+        if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
+            self.selected = None;
         }
-        self.main_panel(ctx, now);
+
+        // Wide screens: lists | tasks | details side by side.
+        // Phones: one screen at a time (lists, or tasks, or one task's details).
+        let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
+        if narrow {
+            if self.show_nav {
+                self.sidebar(ctx, today, true);
+            } else if let Some(id) = self.selected {
+                self.detail_panel(ctx, id, now, true);
+            } else {
+                self.main_panel(ctx, now, true);
+            }
+        } else {
+            self.show_nav = false;
+            self.sidebar(ctx, today, false);
+            if let Some(id) = self.selected {
+                self.detail_panel(ctx, id, now, false);
+            }
+            self.main_panel(ctx, now, false);
+        }
+
+        // Android needs to be told to show the on-screen keyboard for text fields.
+        let wants_keyboard = ctx.wants_keyboard_input();
+        if wants_keyboard != self.keyboard_shown {
+            platform::show_keyboard(wants_keyboard);
+            self.keyboard_shown = wants_keyboard;
+        }
+
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
         self.import_dialog(ctx, now);

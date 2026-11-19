@@ -1,8 +1,30 @@
 # RustDo
 
-A fast, local-first desktop to-do app written in Rust ([egui](https://github.com/emilk/egui)).
+A fast, local-first to-do app written in Rust ([egui](https://github.com/emilk/egui)).
 It's modeled on Microsoft To Do's workflow, with no account, cloud or telemetry.
-Your tasks live in one JSON file on your machine.
+Your tasks stay on your device.
+
+One codebase runs on three platforms:
+
+| Platform | How to get it | Where your tasks live |
+|---|---|---|
+| **Windows** | `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `%APPDATA%\RustDo\data\tasks.json` |
+| **Android** | `RustDo-<version>.apk` from [Releases](https://github.com/metman2013/RustDo/releases). Allow "Install unknown apps" for your browser when Android asks. | The app's private storage |
+| **Web (PWA)** | Open the site, then choose **Install app** (desktop Chrome/Edge) or **Add to Home screen** (phones). It works offline. | The browser's local storage for that site |
+
+Each device keeps its own task list. There's no sync between devices yet.
+
+## Updates
+
+- **Windows and Android** check this repository's latest GitHub Release at most once a day.
+  When there's a newer version, a banner offers **Update now**:
+  - **Windows** downloads the new installer, closes RustDo and runs the installer. Your tasks are kept.
+  - **Android** opens the new APK download. Install it over the old version.
+- To turn the check off, or check right away, use the **⚙** menu. The check is an anonymous
+  request to GitHub's public API and is the only network request RustDo makes. No task data
+  is sent.
+- **Web** updates itself. Each published build gets a new service-worker cache, and open
+  copies reload into the new version.
 
 ## Features
 
@@ -34,7 +56,11 @@ Your tasks live in one JSON file on your machine.
 | `Del` | Delete the selected task (you can undo) |
 | `Esc` | Clear the search, or close the details pane |
 
-Right-click a task for quick actions: My Day, importance, complete, delete.
+Right-click a task (long-press on a phone) for quick actions: My Day, importance,
+complete, delete.
+
+Narrow windows and phones get a one-column layout: tap ☰ for your lists, tap a task for
+its details, and use **< Back** to return.
 
 ## Importing from Microsoft To Do
 
@@ -56,9 +82,10 @@ permission and changes nothing in your account.
 - Personal account (outlook.com, hotmail, live) and sign-in fails? Add `-TenantId consumers`.
 - No sign-in window appears? Add `-UseDeviceCode` and sign in with the code at microsoft.com/devicelogin.
 
-**2. Import.** In RustDo, click **Import from Microsoft To Do…** at the bottom of the
-sidebar, or drag the file onto the window. A preview shows what will be added before
-anything changes.
+**2. Import.** In RustDo (Windows or web), click **Import from Microsoft To Do…** at the
+bottom of the sidebar, or drag the file onto the window. A preview shows what will be added
+before anything changes. The Android app doesn't import files yet; use the web app on your
+phone if you need your tasks there.
 
 - Your built-in "Tasks" list goes into RustDo's Tasks list. Lists with the same name are merged.
 - Completed tasks are left out unless you tick the box.
@@ -79,7 +106,52 @@ What doesn't carry over: My Day (Microsoft doesn't expose it), file attachments,
 shared-list membership. Unusual repeats, like every 2 weeks or several days a week,
 become the nearest simple repeat. The preview lists each one.
 
-## Build & run
+## Releasing a new version
+
+GitHub Actions ([.github/workflows/build.yml](.github/workflows/build.yml)) builds everything.
+Each push to `main` runs the tests and all builds, and publishes the web app.
+
+To release:
+
+1. Bump `version` under `[workspace.package]` in `Cargo.toml`. That one line is the version
+   for every platform.
+2. Commit, then tag and push:
+
+   ```bash
+   git tag v0.2.0
+   ```
+
+   ```bash
+   git push origin main --tags
+   ```
+
+The workflow attaches the Windows installer, the portable exe and the APK to a new GitHub
+Release. Installed copies pick it up through their update check.
+
+### One-time setup
+
+- **Web hosting:** in the repo's *Settings → Pages*, set **Source** to **GitHub Actions**.
+  The app is then served at `https://metman2013.github.io/RustDo/`. To use your own domain
+  later, add it under *Settings → Pages → Custom domain*, and add a `CNAME` file with the
+  domain to the `web/` folder.
+- **Android signing:** Android only installs an update if it's signed with the same key as
+  the installed app. Create a key once, and keep the file and password somewhere safe. If
+  you lose them, users must uninstall before the next update.
+
+  ```bash
+  keytool -genkeypair -keystore rustdo-release.jks -alias rustdo -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=metman2013"
+  ```
+
+  `keytool` comes with any Java JDK, for example `winget install Microsoft.OpenJDK.21`.
+  Then add two repository secrets under *Settings → Secrets and variables → Actions*:
+  `ANDROID_KEYSTORE_BASE64` with the file's base64 (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("rustdo-release.jks"))`)
+  and `ANDROID_KEYSTORE_PASSWORD`. Until those secrets exist, CI signs with a throwaway key.
+  That APK installs fine, but later builds can't update it.
+- **Windows SmartScreen:** the installer isn't code-signed, so Windows shows *"Windows
+  protected your PC"* the first time. Click **More info → Run anyway**. Removing the warning
+  requires a code-signing certificate, a paid service.
+
+## Build locally
 
 You need Rust (<https://rustup.rs>). On Windows, either toolchain works:
 
@@ -87,25 +159,25 @@ You need Rust (<https://rustup.rs>). On Windows, either toolchain works:
 - **GNU**: needs a full MinGW-w64 on `PATH`, for example `winget install BrechtSanders.WinLibs.POSIX.UCRT`.
   Rust's bundled `dlltool` can't run without `as.exe`.
 
-```bash
-cargo run --release
-```
+| Target | Command |
+|---|---|
+| Desktop app | `cargo run --release` |
+| Tests | `cargo test` |
+| Release exe with no personal paths embedded | `tools\build-release.ps1` |
+| Windows installer | `iscc /DAppVersion=0.1.0 installer\rustdo.iss`, with [Inno Setup 6](https://jrsoftware.org/isinfo.php) |
+| Web app into `dist/` | `tools\build-web.ps1`, which needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in Cargo.lock |
+| Serve the web app locally | `tools\serve-web.ps1`, then open http://localhost:8765 |
+| Android APK | `cargo apk build -p rustdo-android --release`, which needs the Android SDK and NDK plus `cargo install cargo-apk` (CI does this for you) |
+| Regenerate icons | `tools\make-icons.ps1` |
 
-The binary is `target/release/rustdo.exe`, a single self-contained file. Copy it anywhere.
-
-For binaries you publish, build with `tools\build-release.ps1`. By default Rust embeds
-source paths that include your Windows user folder. The script rewrites them to neutral
-names and then checks that none are left.
-
-```bash
-cargo test
-```
+By default Rust embeds source paths that include your Windows user folder in binaries.
+`build-release.ps1` and `build-web.ps1` rewrite those paths to neutral names.
 
 ## Your data
 
 | | |
 |---|---|
-| Location | `%APPDATA%\RustDo\data\tasks.json` (Linux: `~/.local/share/rustdo/`, macOS: `~/Library/Application Support/RustDo/`) |
+| Location | `%APPDATA%\RustDo\data\tasks.json` (Linux: `~/.local/share/rustdo/`, macOS: `~/Library/Application Support/RustDo/`). Uninstalling doesn't delete it. |
 | Override | Set the `RUSTDO_DATA` environment variable to a file path |
 | Backup | `tasks.json.bak` holds the last copy that loaded successfully |
 | Safety | Saves are atomic (write to a temp file, then rename). If the file is damaged, it's renamed to `tasks.corrupt-<timestamp>.json` and never overwritten. |
@@ -115,18 +187,28 @@ Only run the app on one machine at a time.
 
 ## Known limitations
 
-- Reminders fire only while RustDo is running. Minimizing is fine, closing isn't. There are no Windows toast notifications yet.
-- There's no built-in cloud sync or sharing of lists with other people.
+- Reminders fire only while RustDo is open. Minimizing is fine, closing isn't. There are
+  no system notifications yet (Windows toasts or Android notifications).
+- There's no sync between devices or sharing of lists with other people.
+- **Android is the least tested platform.** It's built by CI but hasn't been tried on real
+  phones yet. Typing relies on the on-screen keyboard sending key events, and some keyboard
+  apps (e.g. predictive or swipe input) may not work fully.
 - The export script hasn't been tested against every kind of Microsoft account
   (work, school and personal accounts sign in differently). If it fails, use the Graph Explorer route.
 
 ## Project layout
 
 ```
-src/main.rs     window setup
-src/model.rs    data model + rules (My Day, recurrence, reminders) with unit tests
-src/storage.rs  JSON load/save, backup, corruption handling
-src/import.rs   Microsoft To Do (Graph JSON) and Outlook CSV import, with tests
-src/app.rs      egui UI
-tools/Export-MicrosoftToDo.ps1   read-only exporter using Microsoft Graph
+src/main.rs        desktop entry point
+src/lib.rs         web (wasm) and Android entry points
+src/app.rs         egui UI, with wide and phone layouts
+src/model.rs       data model + rules (My Day, recurrence, reminders), with tests
+src/storage.rs     saving: JSON file (desktop/Android) or browser storage (web)
+src/import.rs      Microsoft To Do (Graph JSON) and Outlook CSV import, with tests
+src/update.rs      GitHub Releases update check
+src/platform.rs    Android hooks (data folder, on-screen keyboard)
+android/           APK wrapper crate, launcher icons
+web/               PWA page, manifest, service worker, icons
+installer/         Inno Setup script for the Windows installer
+tools/             build, export and icon scripts
 ```

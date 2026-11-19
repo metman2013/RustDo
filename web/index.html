@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>RustDo</title>
+  <meta name="description" content="A fast, private to-do app. Your tasks stay on your device.">
+  <meta name="theme-color" content="#467de6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <style>
+    :root { color-scheme: light dark; --bg: #f8f8f8; --fg: #555; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1b; --fg: #aaa; } }
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: var(--bg); }
+    canvas#rustdo_canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    #loading {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      font: 16px system-ui, sans-serif; color: var(--fg); padding: 16px; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="rustdo_canvas"></canvas>
+  <div id="loading">Loading RustDo…</div>
+  <noscript>RustDo needs JavaScript and WebAssembly.</noscript>
+  <script type="module">
+    import init from './pkg/rustdo_app.js';
+    init().catch((e) => {
+      document.getElementById('loading').textContent = 'RustDo couldn’t start: ' + e;
+    });
+
+    if ('serviceWorker' in navigator) {
+      // When a new version is published, the new service worker takes over and we reload once.
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!reloaded) { reloaded = true; location.reload(); }
+      });
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>

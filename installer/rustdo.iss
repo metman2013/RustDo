@@ -1,0 +1,60 @@
+; Inno Setup script for the RustDo Windows installer.
+; Build:  iscc /DAppVersion=0.1.0 installer\rustdo.iss
+; Output: target\installer\RustDo-<version>-setup.exe
+;
+; Installs for the current user only (no administrator rights needed), so the
+; in-app updater can run the next installer without a UAC prompt.
+
+#ifndef AppVersion
+  #define AppVersion "0.1.0"
+#endif
+
+[Setup]
+; Never change AppId: Windows uses it to recognise upgrades of the same app.
+AppId={{6E0B7C3E-4F0A-4E27-9C55-2B1D8A4F7D31}
+AppName=RustDo
+AppVersion={#AppVersion}
+AppVerName=RustDo {#AppVersion}
+AppPublisher=metman2013
+AppPublisherURL=https://github.com/metman2013/RustDo
+AppSupportURL=https://github.com/metman2013/RustDo/issues
+AppUpdatesURL=https://github.com/metman2013/RustDo/releases
+DefaultDirName={localappdata}\Programs\RustDo
+DefaultGroupName=RustDo
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+OutputDir=..\target\installer
+OutputBaseFilename=RustDo-{#AppVersion}-setup
+SetupIconFile=..\assets\rustdo.ico
+UninstallDisplayIcon={app}\rustdo.exe
+UninstallDisplayName=RustDo
+LicenseFile=..\LICENSE
+Compression=lzma2/max
+SolidCompression=yes
+WizardStyle=modern
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; Close a running RustDo before replacing it, and reopen it afterwards.
+CloseApplications=yes
+RestartApplications=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Files]
+Source: "..\target\release\rustdo.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\rustdo.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"
+Name: "{autodesktop}\RustDo"; Filename: "{app}\rustdo.exe"; IconFilename: "{app}\rustdo.ico"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\rustdo.exe"; Description: "{cm:LaunchProgram,RustDo}"; Flags: nowait postinstall skipifsilent
+
+; Your tasks live in %APPDATA%\RustDo and are deliberately NOT removed on uninstall.

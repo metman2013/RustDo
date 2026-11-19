@@ -92,12 +92,32 @@ pub enum ThemeChoice {
     Dark,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
     pub sort: SortMode,
     #[serde(default)]
     pub theme: ThemeChoice,
+    /// Look for a newer release on GitHub at most once a day (desktop and Android).
+    #[serde(default = "yes")]
+    pub check_updates: bool,
+    #[serde(default)]
+    pub last_update_check: Option<NaiveDateTime>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            sort: SortMode::default(),
+            theme: ThemeChoice::default(),
+            check_updates: true,
+            last_update_check: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

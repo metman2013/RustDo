@@ -1,2 +1,7 @@
 /target
+/dist
+/android/target
+/.claude
+*.jks
+*.keystore
 *.json.tmp

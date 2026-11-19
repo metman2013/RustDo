@@ -1,0 +1,147 @@
+# Builds RustDo for every platform.
+#  - Every push / pull request: tests + all builds (downloadable as workflow artifacts).
+#  - Push to main: also publishes the web app to GitHub Pages.
+#  - Push a tag like v0.2.0: also creates a GitHub Release with the Windows installer,
+#    the portable exe and the Android APK. The installed apps find it with their update check.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build (no personal paths)
+        shell: pwsh
+        run: ./tools/build-release.ps1
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $v = (Select-String Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          & $iscc "/DAppVersion=$v" installer\rustdo.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+          Copy-Item target\release\rustdo.exe "target\installer\RustDo-$v-portable.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: target/installer/*.exe
+
+  web:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Install wasm-bindgen (same version as Cargo.lock)
+        run: |
+          WB=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | head -1 | cut -d'"' -f2)
+          cargo install wasm-bindgen-cli --version "$WB" --locked
+      - name: Build web app
+        shell: pwsh
+        run: ./tools/build-web.ps1
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy-web:
+    # Needs Settings > Pages > Source set to "GitHub Actions" (one-time).
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: web
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install cargo-apk
+        run: cargo install cargo-apk --locked
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          KS="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$KS"
+            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key. This APK can't be installed over another build; see README > Android signing."
+            keytool -genkeypair -keystore "$KS" -storepass throwaway -keypass throwaway \
+              -alias rustdo -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=RustDo" -noprompt
+            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=throwaway" >> "$GITHUB_ENV"
+          fi
+          echo "CARGO_APK_RELEASE_KEYSTORE=$KS" >> "$GITHUB_ENV"
+      - name: Build APK
+        run: cargo apk build -p rustdo-android --release
+      - name: Collect APK
+        run: |
+          V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          mkdir -p out
+          cp "$(find target -name '*.apk' -path '*release*' | head -1)" "out/RustDo-$V.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*.apk
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, web, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match Cargo.toml version
+        run: |
+          V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "v$V" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $V in Cargo.toml"; exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: artifacts/*

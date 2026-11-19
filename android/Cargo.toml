@@ -1,0 +1,47 @@
+# Android wrapper: packages the RustDo library as the native library of an APK.
+# Build with cargo-apk from this folder:  cargo apk build --release
+[package]
+name = "rustdo-android"
+# cargo-apk derives Android's versionCode from this, so every release installs as an update.
+version.workspace = true
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+name = "rustdo"
+path = "lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustdo = { path = ".." }
+
+[package.metadata.android]
+package = "io.github.metman2013.rustdo"
+apk_name = "RustDo"
+build_targets = ["aarch64-linux-android"]
+resources = "res"
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_feature]]
+name = "android.hardware.touchscreen"
+required = false
+
+[[package.metadata.android.uses_feature]]
+opengles_version = [3, 0]
+required = true
+
+[package.metadata.android.application]
+label = "RustDo"
+icon = "@mipmap/ic_launcher"
+
+[package.metadata.android.application.activity]
+config_changes = "orientation|screenSize|screenLayout|keyboard|keyboardHidden|uiMode|density"
+launch_mode = "singleTop"
+orientation = "unspecified"

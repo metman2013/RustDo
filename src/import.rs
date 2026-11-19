@@ -87,7 +87,15 @@ impl ImportReport {
 /// Reads and parses an export file, picking the format from the extension/content.
 pub fn parse_file(path: &Path) -> Result<Import, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("Couldn't read {}: {e}", path.display()))?;
-    let text = decode_text(&bytes);
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    parse_bytes(&name, &bytes)
+}
+
+/// Parses an export given its file name (used for the format and list name) and contents.
+/// The web app uses this directly, since browsers hand over file contents, not paths.
+pub fn parse_bytes(file_name: &str, bytes: &[u8]) -> Result<Import, String> {
+    let text = decode_text(bytes);
+    let path = Path::new(file_name);
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().trim().to_string())
