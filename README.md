@@ -35,7 +35,9 @@ export on one, restore on the other.
 
 - **Windows and Android** check this repository's latest GitHub Release at most once a day.
   When there's a newer version, a banner offers **Update now**:
-  - **Windows** downloads the new installer, closes RustDo and runs the installer. Your tasks are kept.
+  - **Windows**: **Update & restart** downloads the new installer and runs it silently, with no
+    wizard and no clicks. RustDo closes, updates and reopens on its own in a few seconds.
+    Your tasks are kept. The setup wizard is only used for the first install.
   - **Android** opens the new APK download. Install it over the old version.
 - To turn the check off, or check right away, use the **⚙** menu. The check is an anonymous
   request to GitHub's public API and is the only network request RustDo makes. No task data
