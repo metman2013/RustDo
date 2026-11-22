@@ -6,6 +6,7 @@ use crate::model::{
 };
 use crate::import::{self, Import};
 use crate::changelog;
+use crate::companion;
 use crate::notes;
 use crate::notes_ui;
 use crate::notify;
@@ -97,6 +98,11 @@ pub struct TodoApp {
     notes_page: bool,
     /// Sticky notes (desktop): shared with the note windows, which draw themselves.
     notes: notes_ui::SharedNotes,
+    /// The background companion is running (it then owns the note windows).
+    companion_running: bool,
+    companion_checked: Option<Instant>,
+    /// Held while this window is open, so the tray's "Open RustDo" brings it to the front.
+    _app_lock: Option<std::fs::File>,
     keyboard_shown: bool,
     update_rx: Option<Receiver<CheckResult>>,
     /// True when the user pressed "Check now" (so "up to date" and errors are reported).
@@ -217,6 +223,10 @@ impl TodoApp {
             show_settings: false,
             notes_page: false,
             notes,
+            // Known from the first frame, so notes the companion shows don't flash up twice.
+            companion_running: companion::SUPPORTED && companion::is_running(),
+            companion_checked: None,
+            _app_lock: if companion::SUPPORTED { companion::lock_app() } else { None },
             keyboard_shown: false,
             update_rx: None,
             update_manual: false,
@@ -692,6 +702,7 @@ impl TodoApp {
         }
         ui.separator();
         self.notification_menu_items(ui);
+        self.companion_menu_items(ui);
         self.sharing_menu_items(ui);
         self.backup_menu_items(ui);
         #[cfg(target_os = "android")]
@@ -745,11 +756,63 @@ impl TodoApp {
         if self.dirty {
             self.persist();
         }
-        let enabled = self.store.settings.notifications;
-        #[cfg(not(target_arch = "wasm32"))]
-        std::thread::spawn(move || notify::ensure_helper(enabled));
-        #[cfg(target_arch = "wasm32")]
-        let _ = enabled;
+        // Start (or wake, or stop) the background companion and keep its sign-in entry current.
+        if companion::SUPPORTED {
+            let settings = self.store.settings.clone();
+            std::thread::spawn(move || companion::ensure(&settings));
+        } else if cfg!(windows) {
+            notify::register_app();
+        }
+    }
+
+    /// Desktop: once a second, see whether the companion runs, pick up notes it saved, and
+    /// come to the front if its tray icon's "Open RustDo" asked.
+    fn companion_tick(&mut self, ctx: &egui::Context) {
+        if !companion::SUPPORTED {
+            return;
+        }
+        if self.companion_checked.is_some_and(|t| t.elapsed() < StdDuration::from_secs(1)) {
+            return;
+        }
+        self.companion_checked = Some(Instant::now());
+        self.companion_running = companion::is_running();
+        notes_ui::lock(&self.notes).reload_if_changed();
+        if companion::take_show_app_request() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        }
+        ctx.request_repaint_after(StdDuration::from_secs(1));
+    }
+
+    /// Settings › Background (desktop): the companion and its tray icon.
+    fn companion_menu_items(&mut self, ui: &mut egui::Ui) {
+        if !companion::SUPPORTED {
+            return;
+        }
+        ui.label(RichText::new("Background").strong());
+        let s = &mut self.store.settings;
+        let mut changed = ui
+            .checkbox(&mut s.companion, "Keep sticky notes running in the background")
+            .on_hover_text("A tray icon keeps your sticky notes on the desktop after you close RustDo.")
+            .changed();
+        let sign_in = if cfg!(windows) { "Start with Windows" } else { "Start when I sign in" };
+        changed |= ui
+            .add_enabled(s.companion, egui::Checkbox::new(&mut s.companion_autostart, sign_in))
+            .changed();
+        let note = if !s.companion {
+            "Sticky notes show only while RustDo is open."
+        } else if cfg!(windows) {
+            "The RustDo tray icon (by the clock) opens RustDo, adds a note, or shows and hides notes. Reminders keep arriving after you close RustDo."
+        } else {
+            "The RustDo tray icon opens RustDo, adds a note, or shows and hides notes. GNOME needs the AppIndicator extension to show tray icons."
+        };
+        ui.add(egui::Label::new(RichText::new(note).weak().small()).wrap());
+        if changed {
+            self.dirty = true;
+            self.helper_handled = false; // start, wake or stop the companion
+        }
+        ui.separator();
     }
 
     // ------------------------------------------------------------------ family sharing
@@ -2422,22 +2485,35 @@ impl TodoApp {
                             task.steps.remove(i);
                             changed = true;
                         }
+                        // New step: a visible field, a clickable "+", and an Add button once
+                        // there's text (so nobody has to know that Enter saves).
                         ui.horizontal(|ui| {
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("+").color(ACCENT).strong());
+                            let field_id = Id::new(("new_step", id));
+                            let touch = is_touch(ui);
+                            let plus = egui::Button::new(RichText::new("+").color(ACCENT).strong().size(if touch { 22.0 } else { 18.0 }))
+                                .frame(false)
+                                .min_size(Vec2::splat(if touch { 40.0 } else { 24.0 }));
+                            let plus = ui.add(plus).on_hover_text("Add a step");
+                            let has_text = !new_step.trim().is_empty();
+                            let add_w = if has_text { if touch { 76.0 } else { 56.0 } } else { 0.0 };
                             let r = ui.add(
                                 egui::TextEdit::singleline(new_step)
-                                    .hint_text(if task.steps.is_empty() { "Add step" } else { "Next step" })
-                                    .frame(false)
-                                    .desired_width(f32::INFINITY),
+                                    .id(field_id)
+                                    .hint_text(if task.steps.is_empty() { "Add a step" } else { "Add another step" })
+                                    .min_size(field_height(ui))
+                                    .vertical_align(Align::Center)
+                                    .desired_width((ui.available_width() - add_w).max(80.0)),
                             );
-                            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                                if !new_step.trim().is_empty() {
-                                    task.steps.push(Step::new(new_step.trim()));
-                                    new_step.clear();
-                                    changed = true;
-                                }
-                                r.request_focus();
+                            let add = has_text && ui.button("Add").clicked();
+                            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            if (plus.clicked() || add || enter) && !new_step.trim().is_empty() {
+                                task.steps.push(Step::new(new_step.trim()));
+                                new_step.clear();
+                                changed = true;
+                            }
+                            // Keep typing the next one straight away.
+                            if plus.clicked() || add || enter {
+                                ui.memory_mut(|m| m.request_focus(field_id));
                             }
                         });
                     });
@@ -2944,7 +3020,11 @@ impl eframe::App for TodoApp {
             self.keyboard_shown = wants_keyboard;
         }
 
-        notes_ui::show_windows(ctx, &self.notes);
+        self.companion_tick(ctx);
+        // While the companion runs, it shows the notes (they stay up after this window closes).
+        if !(self.store.settings.companion && self.companion_running) {
+            notes_ui::show_windows(ctx, &self.notes);
+        }
         if notes::SUPPORTED && notes_ui::lock(&self.notes).take_backup_pending() {
             self.backup_pending = true;
         }

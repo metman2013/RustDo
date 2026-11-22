@@ -4,9 +4,11 @@
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
     use eframe::egui;
-    // Background reminder helper: no window, just notifications (see notify.rs).
-    if std::env::args().any(|a| a == "--reminders") {
-        rustdo_app::notify::run_reminder_helper();
+    // The background companion: tray icon, sticky notes, reminders (see companion.rs).
+    // `--reminders` is how versions before 0.2.7 started it at sign-in.
+    let args: Vec<String> = std::env::args().collect();
+    if rustdo_app::companion::is_companion_launch(&args) {
+        rustdo_app::companion::run(&args);
         return Ok(());
     }
     let options = eframe::NativeOptions {

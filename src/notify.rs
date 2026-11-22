@@ -1,9 +1,9 @@
 //! System notifications for reminders.
 //!
-//! * **Windows**: a small background *reminder helper* (`rustdo.exe --reminders`: no
-//!   window, no graphics) watches the task file and shows a Windows notification when a
-//!   reminder is due, so reminders arrive even after RustDo's window is closed. It starts
-//!   with RustDo and, for the installed version, when you sign in. Only one copy runs.
+//! * **Windows**: the background companion (`rustdo.exe --companion`, see companion.rs)
+//!   watches the task file and shows a Windows notification when a reminder is due, so
+//!   reminders arrive even after RustDo's window is closed. It starts with RustDo and, for
+//!   the installed version, when you sign in. Only one copy runs.
 //!   (Windows discards *scheduled* notifications from desktop apps when the app exits,
 //!   so scheduling ahead isn't an option.)
 //! * **Linux**: a desktop notification when a reminder fires while RustDo is running.
@@ -70,26 +70,32 @@ pub fn show_now(title: &str, body: &str) {
     web::show(title, body);
 }
 
-/// Windows: starts the reminder helper (if it isn't already running) and keeps the
-/// sign-in entry in line with the setting. Elsewhere: nothing.
-#[allow(unused_variables)]
-pub fn ensure_helper(enabled: bool) {
+/// Windows: registers RustDo as a notification sender (name and icon). Elsewhere: nothing.
+pub fn register_app() {
     #[cfg(windows)]
-    win::ensure_helper(enabled);
+    win::register_app();
 }
 
-/// Windows: stops the background reminder helper (it runs from this same exe, which the
+/// Windows: the sign-in entry that starts the companion (`None` removes it).
+#[cfg(windows)]
+pub fn set_run_entry(command: Option<&str>) {
+    win::set_run_entry(command);
+}
+
+/// Windows: shows due reminders as notifications until reminders are switched off in
+/// settings (the companion runs this on a background thread).
+#[cfg(windows)]
+pub fn reminder_loop() {
+    win::reminder_loop();
+}
+
+/// Windows: stops the background companion (it runs from this same exe, which the
 /// installer needs to replace). It's started again when the updated RustDo opens.
 pub fn stop_helper() {
     #[cfg(windows)]
     win::stop_helper();
 }
 
-/// Entry point for `rustdo.exe --reminders`. Runs until notifications are switched off.
-pub fn run_reminder_helper() {
-    #[cfg(windows)]
-    win::helper_main();
-}
 
 /// Web: "granted", "denied", "default" (not asked yet) or "unsupported".
 pub fn web_permission() -> &'static str {
@@ -125,7 +131,6 @@ mod win {
     const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "RustDo reminders";
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
 
     fn reg(args: &[&str]) {
         let _ = std::process::Command::new("reg").args(args).creation_flags(CREATE_NO_WINDOW).status();
@@ -160,23 +165,11 @@ mod win {
             .status();
     }
 
-    pub fn ensure_helper(enabled: bool) {
-        register_app();
-        let Ok(exe) = std::env::current_exe() else { return };
-        if !enabled {
-            reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]);
-            return; // A running helper sees the setting and exits by itself.
+    pub fn set_run_entry(command: Option<&str>) {
+        match command {
+            Some(command) => reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", command, "/f"]),
+            None => reg(&["delete", RUN_KEY, "/v", RUN_VALUE, "/f"]),
         }
-        // Start at sign-in, for the installed copy only (its path doesn't move).
-        if crate::update::is_installed_copy() {
-            let command = format!("\"{}\" --reminders", exe.display());
-            reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &command, "/f"]);
-        }
-        // Start now; a second copy notices the first and quits straight away.
-        let _ = std::process::Command::new(exe)
-            .arg("--reminders")
-            .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-            .spawn();
     }
 
     fn escape(s: &str) -> String {
@@ -199,21 +192,7 @@ mod win {
     }
 
     /// One helper per user: holds an exclusive lock on a file while it runs.
-    fn single_instance_lock() -> Option<std::fs::File> {
-        use std::os::windows::fs::OpenOptionsExt;
-        let dir = local_dir()?;
-        std::fs::create_dir_all(&dir).ok()?;
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .share_mode(0) // nobody else may open it while we hold it
-            .open(dir.join("reminders.lock"))
-            .ok()
-    }
-
-    pub fn helper_main() {
-        let Some(_lock) = single_instance_lock() else { return };
+    pub fn reminder_loop() {
         register_app();
         let path = crate::storage::data_path();
         let now = || chrono::Local::now().naive_local();
@@ -227,7 +206,7 @@ mod win {
             if let Ok(bytes) = std::fs::read(&path) {
                 if let Ok(store) = crate::storage::parse_backup(&bytes) {
                     if !store.settings.notifications {
-                        return; // switched off in ⚙
+                        return; // switched off in ⚙ (the companion restarts this if it's turned back on)
                     }
                     for due in super::due_between(&store, checked_until, until) {
                         if shown.insert(due.key.clone()) {
