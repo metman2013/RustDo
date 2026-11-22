@@ -127,6 +127,9 @@ pub struct Settings {
     /// slightly blurry letters.
     #[serde(default = "yes")]
     pub crisp_text: bool,
+    /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hub: Option<String>,
 }
 
 impl Default for Settings {
@@ -142,6 +145,7 @@ impl Default for Settings {
             last_export: None,
             last_export_dir: None,
             crisp_text: true,
+            hub: None,
         }
     }
 }
@@ -312,6 +316,9 @@ pub struct Store {
     pub tasks: Vec<Task>,
     #[serde(default)]
     pub settings: Settings,
+    /// Lists shared with family and friends through a RustDo Hub.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shares: Vec<crate::sync::Share>,
 }
 
 impl Default for Store {
@@ -332,6 +339,7 @@ impl Store {
             }],
             tasks: Vec::new(),
             settings: Settings::default(),
+            shares: Vec::new(),
         }
     }
 
@@ -351,6 +359,7 @@ impl Store {
         }
         let default = self.default_list;
         let known: Vec<Uuid> = self.lists.iter().map(|l| l.id).collect();
+        self.shares.retain(|s| known.contains(&s.list_id));
         for t in &mut self.tasks {
             if !known.contains(&t.list_id) {
                 t.list_id = default;
@@ -397,6 +406,8 @@ impl Store {
         }
         self.lists.retain(|l| l.id != id);
         self.tasks.retain(|t| t.list_id != id);
+        // Deleting a shared list only removes it from this device; others keep theirs.
+        self.shares.retain(|s| s.list_id != id);
         true
     }
 

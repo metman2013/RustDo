@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Sets the app version everywhere it's needed (desktop/web and Android).
+    Sets the app version everywhere it's needed (desktop/web, Android and RustDo Hub).
 
 .EXAMPLE
     .\tools\set-version.ps1 0.2.0
 #>
 param([Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version)
 $root = Split-Path -Parent $PSScriptRoot
-foreach ($file in 'Cargo.toml', 'android/Cargo.toml') {
+foreach ($file in 'Cargo.toml', 'android/Cargo.toml', 'hub/Cargo.toml') {
     $path = Join-Path $root $file
     $text = [System.IO.File]::ReadAllText($path)
     # Replace only the first top-level `version = "x.y.z"` line.

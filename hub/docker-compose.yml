@@ -1,0 +1,19 @@
+# RustDo Hub: share RustDo lists with family on your own network.
+#   docker compose up -d
+# Then in RustDo: ⚙ → Family sharing, hub address http://<this machine's IP>:7979
+services:
+  rustdo-hub:
+    image: ghcr.io/metman2013/rustdo-hub:latest
+    # Or build it yourself from this folder instead of pulling:
+    # build: .
+    container_name: rustdo-hub
+    restart: unless-stopped
+    init: true
+    ports:
+      - "7979:7979"
+    volumes:
+      # A named volume: Docker creates it with the right permissions.
+      - rustdo-hub-data:/data
+
+volumes:
+  rustdo-hub-data:
