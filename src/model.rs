@@ -130,6 +130,9 @@ pub struct Settings {
     /// Show and enter times on a 24-hour clock (21:30) instead of 12-hour with AM/PM (9:30 PM).
     #[serde(default)]
     pub clock_24h: bool,
+    /// The newest version whose "What's new" the user has seen (shown once after updates).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_version: Option<String>,
     /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
@@ -149,6 +152,7 @@ impl Default for Settings {
             last_export_dir: None,
             crisp_text: true,
             clock_24h: false,
+            last_seen_version: None,
             hub: None,
         }
     }

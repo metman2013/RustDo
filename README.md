@@ -47,6 +47,21 @@ current ones to `Backups\RustDo-before-restore-<time>.json`. A backup file is th
 JSON as `tasks.json`, so it also works as a way to move your tasks to another device:
 export on one, restore on the other.
 
+## Sticky notes (Windows and Linux)
+
+Put notes on your desktop, like Microsoft's Sticky Notes. Open **Desktop notes → Sticky
+notes** in the sidebar and click **+ New note**. Each note is its own small window:
+
+- Drag the top bar to move it and the bottom-right corner to resize it. **+** adds another note.
+- The **🎨** menu sets the note colour (ready-made colours or any colour), the text size, and
+  the text colour. Text colour is automatic by default: dark on light notes, light on dark ones.
+- **Keep on top** keeps a note above other windows. **✖** hides a note; show it again from the
+  Sticky notes page.
+
+Notes show while RustDo is running (minimized is fine), and reopen where you left them.
+They are saved in `notes.json` next to `tasks.json`. They're never synced to a RustDo Hub
+or shared, and they aren't part of the task backups.
+
 ## Family sharing (RustDo Hub)
 
 Share a list (groceries, chores, packing) with people at home, **without any cloud**.
@@ -102,6 +117,7 @@ Full guide, including the Windows exe and using it away from home: [docs/hub.md]
 | Light / dark theme | ✅ System / light / dark (button next to the logo) |
 | Undo delete | ✅ |
 | Bring your tasks over | ✅ Import from Microsoft To Do (see below) |
+| Sticky Notes | ✅ On Windows and Linux (see [Sticky notes](#sticky-notes-windows-and-linux)) |
 
 ### Keyboard shortcuts
 
@@ -175,7 +191,10 @@ Each push to `main` runs the tests and all builds, and publishes the web app.
 To release:
 
 1. Set the new version for every platform: `.\tools\set-version.ps1 0.2.0`.
-2. Get it onto `main`: merge a pull request, or commit and push.
+2. Add a `## 0.2.0 - <date>` section to [CHANGELOG.md](CHANGELOG.md), written for people who
+   use RustDo. The app shows it in **What's new** after the update, and the GitHub Release
+   uses it as its notes. A test fails if the current version has no entry.
+3. Get it onto `main`: merge a pull request, or commit and push.
 
 That's it. When `main` has a version that hasn't been released yet, the workflow creates the
 `v0.2.0` tag and a GitHub Release, and attaches:

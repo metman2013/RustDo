@@ -5,6 +5,9 @@ use crate::model::{
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
+use crate::changelog;
+use crate::notes;
+use crate::notes_ui;
 use crate::notify;
 use crate::platform;
 use crate::storage::{self, Storage};
@@ -27,6 +30,8 @@ const AUTO_UPDATE_WINDOW: StdDuration = StdDuration::from_secs(120);
 
 /// Below this width (in points) the app switches to the one-panel phone layout.
 const NARROW_WIDTH: f32 = 700.0;
+/// Sidebar room for the "Desktop notes" section below the lists.
+const NOTES_SECTION_H: f32 = 62.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
@@ -88,6 +93,10 @@ pub struct TodoApp {
     show_nav: bool,
     /// Phones: settings fill the screen as their own page instead of a pop-up menu.
     show_settings: bool,
+    /// Showing the Sticky notes page instead of a task list (desktop).
+    notes_page: bool,
+    /// Sticky notes (desktop): shared with the note windows, which draw themselves.
+    notes: notes_ui::SharedNotes,
     keyboard_shown: bool,
     update_rx: Option<Receiver<CheckResult>>,
     /// True when the user pressed "Check now" (so "up to date" and errors are reported).
@@ -156,6 +165,8 @@ pub struct TodoApp {
     sync_soon: bool,
     sync_error: Option<String>,
     share_dialog: Option<ShareDialog>,
+    /// The "What's new" dialog: the releases to describe, newest first.
+    whats_new: Option<Vec<changelog::Release>>,
 }
 
 impl TodoApp {
@@ -169,6 +180,24 @@ impl TodoApp {
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         let touch_mode = platform::prefers_touch();
         apply_style(&cc.egui_ctx, touch_mode);
+        let notes = notes_ui::Shared::load(if notes::SUPPORTED { storage.folder() } else { None });
+
+        // "What's new" after an update. A brand-new install (no tasks yet) just records
+        // the version: there's nothing "new" to someone who has never used RustDo.
+        let mut first_run_dirty = false;
+        let settings = &mut loaded.store.settings;
+        let whats_new = if settings.last_seen_version.is_none() && loaded.store.tasks.is_empty() {
+            settings.last_seen_version = Some(update::CURRENT_VERSION.to_string());
+            first_run_dirty = loaded.can_save;
+            None
+        } else {
+            let unseen = changelog::unseen(
+                &changelog::releases(),
+                settings.last_seen_version.as_deref(),
+                update::CURRENT_VERSION,
+            );
+            (!unseen.is_empty()).then_some(unseen)
+        };
         Self {
             touch_mode,
             store: loaded.store,
@@ -176,6 +205,8 @@ impl TodoApp {
             can_save: loaded.can_save,
             show_nav: false,
             show_settings: false,
+            notes_page: false,
+            notes,
             keyboard_shown: false,
             update_rx: None,
             update_manual: false,
@@ -204,7 +235,7 @@ impl TodoApp {
             list_rect: None,
             #[cfg(target_arch = "wasm32")]
             web_import: Default::default(),
-            dirty: false,
+            dirty: first_run_dirty,
             view: View::MyDay,
             selected: None,
             search: String::new(),
@@ -228,6 +259,7 @@ impl TodoApp {
             sync_soon: false,
             sync_error: None,
             share_dialog: None,
+            whats_new,
         }
     }
 
@@ -565,7 +597,13 @@ impl TodoApp {
     }
 
     fn settings_contents(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
+            if ui.button("What's new").clicked() {
+                self.whats_new = Some(changelog::releases());
+                self.close_settings(ui);
+            }
+        });
         ui.separator();
         if cfg!(target_arch = "wasm32") {
             ui.label(RichText::new("The web app updates itself automatically.").weak());
@@ -824,6 +862,7 @@ impl TodoApp {
                             self.store.shares.push(share);
                             self.dirty = true;
                             self.view = View::List(id);
+                            self.notes_page = false;
                             self.show_nav = false;
                             self.share_dialog = None;
                             self.notify(format!("Joined “{}”", self.store.list_name(id)));
@@ -1185,6 +1224,7 @@ impl TodoApp {
             let report = import::apply(&mut self.store, &pending.import, pending.include_completed, now);
             self.dirty = true;
             self.view = View::All;
+            self.notes_page = false;
             self.search.clear();
             self.notify(report.summary());
         }
@@ -1302,6 +1342,59 @@ impl TodoApp {
         }
     }
 
+    /// "What's new": the changelog for the releases since the user last looked.
+    fn whats_new_dialog(&mut self, ctx: &egui::Context) {
+        let Some(releases) = &self.whats_new else { return };
+        let mut close = false;
+        let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 460.0);
+        let title = match releases.as_slice() {
+            [only] => format!("What's new in RustDo {}", only.version),
+            _ => "What's new in RustDo".to_string(),
+        };
+        dialog_window(ctx, title, self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 460.0));
+            egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                for (i, r) in releases.iter().enumerate() {
+                    if i > 0 {
+                        ui.add_space(6.0);
+                        ui.separator();
+                    }
+                    if releases.len() > 1 {
+                        ui.label(RichText::new(format!("Version {}", r.version)).strong().size(17.0));
+                    }
+                    if !r.date.is_empty() {
+                        ui.label(RichText::new(&r.date).weak().small());
+                    }
+                    for (section, items) in &r.sections {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(section).strong().color(ACCENT));
+                        for item in items {
+                            ui.horizontal_top(|ui| {
+                                ui.label("•");
+                                ui.add(egui::Label::new(item.as_str()).wrap());
+                            });
+                        }
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Got it").clicked() {
+                    close = true;
+                }
+                ui.hyperlink_to("All releases", format!("https://github.com/{}/releases", update::REPO));
+            });
+        });
+        if close {
+            self.whats_new = None;
+            let current = Some(update::CURRENT_VERSION.to_string());
+            if self.store.settings.last_seen_version != current {
+                self.store.settings.last_seen_version = current;
+                self.dirty = true;
+            }
+        }
+    }
+
     fn restore_dialog(&mut self, ctx: &egui::Context) {
         // Android: paste a backup that was exported to the clipboard.
         if let Some(text) = &mut self.paste_restore {
@@ -1387,6 +1480,7 @@ impl TodoApp {
             self.selected = None;
             self.alerts.clear();
             self.view = View::MyDay;
+            self.notes_page = false;
             self.search.clear();
             self.dirty = true;
             self.notify(format!("Restored from {name}."));
@@ -1481,6 +1575,7 @@ impl TodoApp {
             self.search.clear();
             if self.view == View::Completed {
                 self.view = View::MyDay;
+                self.notes_page = false;
             }
             self.focus_add = true;
         }
@@ -1566,8 +1661,9 @@ impl TodoApp {
                         self.store.open_count(view, today)
                     };
                     let selected = self.view == view && !searching;
-                    if nav_row(ui, selected, icon, name, count).clicked() {
+                    if nav_row(ui, selected && !self.notes_page, icon, name, count).clicked() {
                         self.view = view;
+                        self.notes_page = false;
                         self.search.clear();
                         self.show_nav = false;
                     }
@@ -1582,7 +1678,7 @@ impl TodoApp {
                     (false, true) => 80.0,
                     (true, false) => 86.0,
                     (false, false) => 52.0,
-                };
+                } + if notes::SUPPORTED { NOTES_SECTION_H } else { 0.0 };
                 // Phone layout: the whole screen scrolls as one page, so show every list.
                 let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
@@ -1609,10 +1705,11 @@ impl TodoApp {
                             let count = self.store.open_count(View::List(id), today);
                             let shared = self.store.shares.iter().any(|s| s.list_id == id);
                             let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
-                            let selected = self.view == View::List(id) && !searching;
+                            let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
                             if r.clicked() {
                                 self.view = View::List(id);
+                                self.notes_page = false;
                                 self.search.clear();
                                 self.show_nav = false;
                             }
@@ -1654,6 +1751,7 @@ impl TodoApp {
                     if let Some(id) = self.store.add_list(&self.new_list) {
                         self.new_list.clear();
                         self.view = View::List(id);
+                        self.notes_page = false;
                         self.search.clear();
                         self.show_nav = false;
                         self.focus_add = !platform::IS_MOBILE_OR_WEB;
@@ -1670,6 +1768,22 @@ impl TodoApp {
                     let ctx = ui.ctx().clone();
                     self.pick_import_file(&ctx);
                 }
+
+                // Sticky notes: their own section, apart from the to-do lists.
+                if notes::SUPPORTED {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.label(RichText::new("DESKTOP NOTES").small().weak());
+                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open).count();
+                    if nav_row(ui, self.notes_page, "📝", "Sticky notes", shown)
+                        .on_hover_text("Notes on your desktop, kept on this computer")
+                        .clicked()
+                    {
+                        self.notes_page = true;
+                        self.search.clear();
+                        self.show_nav = false;
+                    }
+                }
         };
         if narrow {
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -1685,6 +1799,20 @@ impl TodoApp {
                 .width_range(200.0..=400.0)
                 .show(ctx, body);
         }
+    }
+
+    /// The Sticky notes page (desktop), with a Back button on narrow windows.
+    fn notes_panel(&mut self, ctx: &egui::Context) {
+        let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if narrow {
+                let back = egui::Button::new(RichText::new("<  Lists").size(18.0)).frame(false);
+                if ui.add(back).clicked() {
+                    self.show_nav = true;
+                }
+            }
+            notes_ui::notes_page(ui, &self.notes);
+        });
     }
 
     // ------------------------------------------------------------------ task list
@@ -2477,6 +2605,7 @@ impl TodoApp {
             if self.store.delete_list(id) {
                 if self.view == View::List(id) {
                     self.view = View::List(self.store.default_list);
+                    self.notes_page = false;
                 }
                 if self.selected.is_some_and(|s| self.store.task(s).is_none()) {
                     self.selected = None;
@@ -2529,6 +2658,12 @@ impl TodoApp {
 }
 
 impl eframe::App for TodoApp {
+    /// Don't lose the last second of typing in a sticky note.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        notes_ui::lock(&self.notes).save_if_due(true);
+    }
+
     /// Android: keep the font atlas small enough for 16-bit texture coordinates.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if cfg!(target_os = "android") {
@@ -2597,6 +2732,8 @@ impl eframe::App for TodoApp {
                 self.settings_page(ctx);
             } else if self.show_nav {
                 self.sidebar(ctx, today, true);
+            } else if self.notes_page {
+                self.notes_panel(ctx);
             } else if let Some(id) = self.selected {
                 self.detail_panel(ctx, id, now, true);
             } else {
@@ -2606,10 +2743,14 @@ impl eframe::App for TodoApp {
             self.show_nav = false;
             self.show_settings = false;
             self.sidebar(ctx, today, false);
-            if let Some(id) = self.selected {
-                self.detail_panel(ctx, id, now, false);
+            if self.notes_page {
+                self.notes_panel(ctx);
+            } else {
+                if let Some(id) = self.selected {
+                    self.detail_panel(ctx, id, now, false);
+                }
+                self.main_panel(ctx, now, false);
             }
-            self.main_panel(ctx, now, false);
         }
 
         // Android needs to be told to show the on-screen keyboard for text fields.
@@ -2619,11 +2760,13 @@ impl eframe::App for TodoApp {
             self.keyboard_shown = wants_keyboard;
         }
 
+        notes_ui::show_windows(ctx, &self.notes);
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
         self.share_dialog(ctx);
         self.import_dialog(ctx, now);
         self.restore_dialog(ctx);
+        self.whats_new_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {
