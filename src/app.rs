@@ -2422,22 +2422,35 @@ impl TodoApp {
                             task.steps.remove(i);
                             changed = true;
                         }
+                        // New step: a visible field, a clickable "+", and an Add button once
+                        // there's text (so nobody has to know that Enter saves).
                         ui.horizontal(|ui| {
-                            ui.add_space(6.0);
-                            ui.label(RichText::new("+").color(ACCENT).strong());
+                            let field_id = Id::new(("new_step", id));
+                            let touch = is_touch(ui);
+                            let plus = egui::Button::new(RichText::new("+").color(ACCENT).strong().size(if touch { 22.0 } else { 18.0 }))
+                                .frame(false)
+                                .min_size(Vec2::splat(if touch { 40.0 } else { 24.0 }));
+                            let plus = ui.add(plus).on_hover_text("Add a step");
+                            let has_text = !new_step.trim().is_empty();
+                            let add_w = if has_text { if touch { 76.0 } else { 56.0 } } else { 0.0 };
                             let r = ui.add(
                                 egui::TextEdit::singleline(new_step)
-                                    .hint_text(if task.steps.is_empty() { "Add step" } else { "Next step" })
-                                    .frame(false)
-                                    .desired_width(f32::INFINITY),
+                                    .id(field_id)
+                                    .hint_text(if task.steps.is_empty() { "Add a step" } else { "Add another step" })
+                                    .min_size(field_height(ui))
+                                    .vertical_align(Align::Center)
+                                    .desired_width((ui.available_width() - add_w).max(80.0)),
                             );
-                            if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                                if !new_step.trim().is_empty() {
-                                    task.steps.push(Step::new(new_step.trim()));
-                                    new_step.clear();
-                                    changed = true;
-                                }
-                                r.request_focus();
+                            let add = has_text && ui.button("Add").clicked();
+                            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            if (plus.clicked() || add || enter) && !new_step.trim().is_empty() {
+                                task.steps.push(Step::new(new_step.trim()));
+                                new_step.clear();
+                                changed = true;
+                            }
+                            // Keep typing the next one straight away.
+                            if plus.clicked() || add || enter {
+                                ui.memory_mut(|m| m.request_focus(field_id));
                             }
                         });
                     });
