@@ -1,8 +1,11 @@
 //! RustDo: one codebase for the desktop app, the web app (PWA) and the Android app.
 
 pub mod app;
+pub mod changelog;
 pub mod import;
 pub mod model;
+pub mod notes;
+pub mod notes_ui;
 pub mod notify;
 pub mod platform;
 pub mod storage;

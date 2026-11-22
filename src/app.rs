@@ -1,10 +1,13 @@
 //! The egui user interface.
 
 use crate::model::{
-    relative_date, sort_tasks, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
+    format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
+use crate::changelog;
+use crate::notes;
+use crate::notes_ui;
 use crate::notify;
 use crate::platform;
 use crate::storage::{self, Storage};
@@ -27,6 +30,8 @@ const AUTO_UPDATE_WINDOW: StdDuration = StdDuration::from_secs(120);
 
 /// Below this width (in points) the app switches to the one-panel phone layout.
 const NARROW_WIDTH: f32 = 700.0;
+/// Sidebar room for the "Desktop notes" section below the lists.
+const NOTES_SECTION_H: f32 = 62.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
@@ -86,6 +91,12 @@ pub struct TodoApp {
     can_save: bool,
     /// Phone layout: showing the list picker instead of the task list.
     show_nav: bool,
+    /// Phones: settings fill the screen as their own page instead of a pop-up menu.
+    show_settings: bool,
+    /// Showing the Sticky notes page instead of a task list (desktop).
+    notes_page: bool,
+    /// Sticky notes (desktop): shared with the note windows, which draw themselves.
+    notes: notes_ui::SharedNotes,
     keyboard_shown: bool,
     update_rx: Option<Receiver<CheckResult>>,
     /// True when the user pressed "Check now" (so "up to date" and errors are reported).
@@ -138,6 +149,10 @@ pub struct TodoApp {
     rename_focus: bool,
     confirm_delete_list: Option<Uuid>,
     alerts: Vec<Uuid>,
+    /// How many reminders the reminders box showed last frame (a new one re-opens it).
+    alerts_shown: usize,
+    /// Whether the reminders box is expanded (false: just its header).
+    alerts_open: bool,
     toast: Option<Toast>,
     focus_add: bool,
     focus_search: bool,
@@ -150,6 +165,8 @@ pub struct TodoApp {
     sync_soon: bool,
     sync_error: Option<String>,
     share_dialog: Option<ShareDialog>,
+    /// The "What's new" dialog: the releases to describe, newest first.
+    whats_new: Option<Vec<changelog::Release>>,
 }
 
 impl TodoApp {
@@ -163,12 +180,33 @@ impl TodoApp {
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         let touch_mode = platform::prefers_touch();
         apply_style(&cc.egui_ctx, touch_mode);
+        let notes = notes_ui::Shared::load(if notes::SUPPORTED { storage.folder() } else { None });
+
+        // "What's new" after an update. A brand-new install (no tasks yet) just records
+        // the version: there's nothing "new" to someone who has never used RustDo.
+        let mut first_run_dirty = false;
+        let settings = &mut loaded.store.settings;
+        let whats_new = if settings.last_seen_version.is_none() && loaded.store.tasks.is_empty() {
+            settings.last_seen_version = Some(update::CURRENT_VERSION.to_string());
+            first_run_dirty = loaded.can_save;
+            None
+        } else {
+            let unseen = changelog::unseen(
+                &changelog::releases(),
+                settings.last_seen_version.as_deref(),
+                update::CURRENT_VERSION,
+            );
+            (!unseen.is_empty()).then_some(unseen)
+        };
         Self {
             touch_mode,
             store: loaded.store,
             storage,
             can_save: loaded.can_save,
             show_nav: false,
+            show_settings: false,
+            notes_page: false,
+            notes,
             keyboard_shown: false,
             update_rx: None,
             update_manual: false,
@@ -197,7 +235,7 @@ impl TodoApp {
             list_rect: None,
             #[cfg(target_arch = "wasm32")]
             web_import: Default::default(),
-            dirty: false,
+            dirty: first_run_dirty,
             view: View::MyDay,
             selected: None,
             search: String::new(),
@@ -208,6 +246,8 @@ impl TodoApp {
             rename_focus: false,
             confirm_delete_list: None,
             alerts: Vec::new(),
+            alerts_shown: 0,
+            alerts_open: true,
             toast: loaded.warning.map(|text| Toast { text, undo: None, at: Instant::now() }),
             // Don't pop up the on-screen keyboard as soon as a phone opens the app.
             focus_add: !platform::IS_MOBILE_OR_WEB,
@@ -219,6 +259,7 @@ impl TodoApp {
             sync_soon: false,
             sync_error: None,
             share_dialog: None,
+            whats_new,
         }
     }
 
@@ -508,89 +549,146 @@ impl TodoApp {
         }
     }
 
-    fn settings_menu(&mut self, ui: &mut egui::Ui) {
+    /// The ⚙ button: a pop-up menu on wide screens, a full-screen page on phones.
+    fn settings_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        if narrow {
+            if ui.button("⚙").on_hover_text("Settings").clicked() {
+                self.show_settings = true;
+            }
+            return;
+        }
         ui.menu_button("⚙", |ui| {
             // A fixed width: wrapping text in an auto-sized menu never settles on a size.
             ui.set_width(300.0);
+            // Never taller than the window: scroll instead of running off the bottom.
+            let max_h = ui.ctx().screen_rect().bottom() - ui.next_widget_position().y - 16.0;
+            egui::ScrollArea::vertical().max_height(max_h.max(120.0)).show(ui, |ui| {
+                self.settings_contents(ui);
+            });
+        });
+    }
+
+    /// Phones: settings as their own scrolling page with a Back button.
+    fn settings_page(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                let back = egui::Button::new(RichText::new("<  Back").size(20.0)).frame(false).min_size(Vec2::new(0.0, 44.0));
+                if ui.add(back).clicked() {
+                    self.show_settings = false;
+                }
+                ui.label(RichText::new("Settings").size(20.0).strong());
+            });
+            ui.separator();
+            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                self.settings_contents(ui);
+                ui.add_space(24.0);
+            });
+        });
+        if ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.show_settings = false;
+        }
+    }
+
+    /// Done with settings: closes the pop-up menu, or leaves the phone settings page.
+    fn close_settings(&mut self, ui: &mut egui::Ui) {
+        ui.close_menu();
+        self.show_settings = false;
+    }
+
+    fn settings_contents(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
             ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
-            ui.separator();
-            if cfg!(target_arch = "wasm32") {
-                ui.label(RichText::new("The web app updates itself automatically.").weak());
-            } else {
-                if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
-                    self.dirty = true;
-                }
-                if cfg!(windows) {
-                    let installed = update::is_installed_copy();
-                    let r = ui.add_enabled(
-                        installed,
-                        egui::Checkbox::new(&mut self.store.settings.auto_update, "Install updates automatically"),
-                    );
-                    if r.changed() {
-                        self.dirty = true;
-                    }
-                    let note = if installed {
-                        "Checks each time RustDo opens and updates itself silently, then reopens."
-                    } else {
-                        "Only for the installed version (this is the portable exe)."
-                    };
-                    ui.label(RichText::new(note).weak().small());
-                }
-                ui.label(
-                    RichText::new("Asks GitHub for the latest version. No task data is sent.")
-                        .weak()
-                        .small(),
-                );
-                let checking = self.update_rx.is_some();
-                if ui.add_enabled(!checking, egui::Button::new("Check now")).clicked() {
-                    self.update_manual = true;
-                    self.update_available = None;
-                    ui.close_menu();
-                }
+            if ui.button("What's new").clicked() {
+                self.whats_new = Some(changelog::releases());
+                self.close_settings(ui);
             }
-            ui.separator();
-            self.notification_menu_items(ui);
-            self.sharing_menu_items(ui);
-            self.backup_menu_items(ui);
-            #[cfg(target_os = "android")]
-            {
-                ui.separator();
-                let (jni, content) = platform::android_inset_sources();
-                let fmt = |v: Option<[i32; 4]>| {
-                    v.map_or("none".to_string(), |[l, t, r, b]| format!("{t} top, {b} bottom, {l}/{r} sides"))
-                };
-                ui.label(
-                    RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
-                        .weak()
-                        .small(),
+        });
+        ui.separator();
+        if cfg!(target_arch = "wasm32") {
+            ui.label(RichText::new("The web app updates itself automatically.").weak());
+        } else {
+            if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
+                self.dirty = true;
+            }
+            if cfg!(windows) {
+                let installed = update::is_installed_copy();
+                let r = ui.add_enabled(
+                    installed,
+                    egui::Checkbox::new(&mut self.store.settings.auto_update, "Install updates automatically"),
                 );
-                if ui.checkbox(&mut self.store.settings.crisp_text, "Sharp text").changed() {
+                if r.changed() {
                     self.dirty = true;
                 }
-                let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
-                ui.label(
-                    RichText::new(format!(
-                        "Rounds the screen scale to whole pixels so letters render evenly (screen {:.3}x, drawn at {:.3}x). Turn off if things look too big.",
-                        native,
-                        ui.ctx().pixels_per_point()
-                    ))
+                let note = if installed {
+                    "Checks each time RustDo opens and updates itself silently, then reopens."
+                } else {
+                    "Only for the installed version (this is the portable exe)."
+                };
+                ui.label(RichText::new(note).weak().small());
+            }
+            ui.label(
+                RichText::new("Asks GitHub for the latest version. No task data is sent.")
                     .weak()
                     .small(),
-                );
+            );
+            let checking = self.update_rx.is_some();
+            if ui.add_enabled(!checking, egui::Button::new("Check now")).clicked() {
+                self.update_manual = true;
+                self.update_available = None;
+                self.close_settings(ui);
             }
+        }
+        ui.separator();
+        ui.label(RichText::new("Time").strong());
+        let s = &mut self.store.settings;
+        if ui.radio_value(&mut s.clock_24h, false, "12-hour clock (9:30 PM)").changed()
+            | ui.radio_value(&mut s.clock_24h, true, "24-hour clock (21:30)").changed()
+        {
+            self.dirty = true;
+        }
+        ui.separator();
+        self.notification_menu_items(ui);
+        self.sharing_menu_items(ui);
+        self.backup_menu_items(ui);
+        #[cfg(target_os = "android")]
+        {
             ui.separator();
-            // The full Releases page: newest version first, with every earlier one below.
-            let releases = format!("https://github.com/{}/releases", update::REPO);
-            if cfg!(target_arch = "wasm32") {
-                ui.hyperlink_to("⬇ Get the desktop & mobile apps", releases)
-                    .on_hover_text("Windows, Linux and Android downloads");
-            } else {
-                ui.hyperlink_to("Downloads & release notes", releases);
+            let (jni, content) = platform::android_inset_sources();
+            let fmt = |v: Option<[i32; 4]>| {
+                v.map_or("none".to_string(), |[l, t, r, b]| format!("{t} top, {b} bottom, {l}/{r} sides"))
+            };
+            ui.label(
+                RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
+                    .weak()
+                    .small(),
+            );
+            if ui.checkbox(&mut self.store.settings.crisp_text, "Sharp text").changed() {
+                self.dirty = true;
             }
-            ui.hyperlink_to("Join the RustDo Discord", update::DISCORD)
-                .on_hover_text("Chat, ideas and help: opens in your browser");
-            ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
-        });
+            let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
+            ui.label(
+                RichText::new(format!(
+                    "Rounds the screen scale to whole pixels so letters render evenly (screen {:.3}x, drawn at {:.3}x). Turn off if things look too big.",
+                    native,
+                    ui.ctx().pixels_per_point()
+                ))
+                .weak()
+                .small(),
+            );
+        }
+        ui.separator();
+        // The full Releases page: newest version first, with every earlier one below.
+        let releases = format!("https://github.com/{}/releases", update::REPO);
+        if cfg!(target_arch = "wasm32") {
+            ui.hyperlink_to("⬇ Get the desktop & mobile apps", releases)
+                .on_hover_text("Windows, Linux and Android downloads");
+        } else {
+            ui.hyperlink_to("Downloads & release notes", releases);
+        }
+        ui.hyperlink_to("Join the RustDo Discord", update::DISCORD)
+            .on_hover_text("Chat, ideas and help: opens in your browser");
+        ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
     }
 
     /// Windows: starts the background reminder helper shortly after launch (and again
@@ -626,7 +724,9 @@ impl TodoApp {
         }
         let shared = self.store.shares.len();
         let status = if shared == 0 {
-            "Share a list with people at home: right-click it (long-press on a phone) → Share list. Needs a RustDo Hub on your network.".to_string()
+            // No arrows here: egui's built-in fonts have no "→" and draw a box instead.
+            let how = if is_touch(ui) { "long-press it and choose Share list" } else { "right-click it and choose Share list" };
+            format!("Share a list with people at home: {how}. Needs a RustDo Hub on your network.")
         } else if let Some(err) = &self.sync_error {
             format!("Can't sync right now: {err}")
         } else {
@@ -634,7 +734,7 @@ impl TodoApp {
             format!(
                 "{shared} shared list{} · {}",
                 if shared == 1 { "" } else { "s" },
-                last.map_or("not synced yet".into(), |t| format!("last synced {}", t.format("%H:%M")))
+                last.map_or("not synced yet".into(), |t| format!("last synced {}", format_time(t, self.store.settings.clock_24h)))
             )
         };
         let color = if self.sync_error.is_some() && shared > 0 { DANGER } else { ui.visuals().weak_text_color() };
@@ -642,7 +742,7 @@ impl TodoApp {
         ui.horizontal_wrapped(|ui| {
             if ui.button("Join a shared list…").clicked() {
                 self.open_share_dialog(None);
-                ui.close_menu();
+                self.close_settings(ui);
             }
             if shared > 0 && ui.button("Sync now").clicked() {
                 self.last_sync_at = None;
@@ -762,6 +862,7 @@ impl TodoApp {
                             self.store.shares.push(share);
                             self.dirty = true;
                             self.view = View::List(id);
+                            self.notes_page = false;
                             self.show_nav = false;
                             self.share_dialog = None;
                             self.notify(format!("Joined “{}”", self.store.list_name(id)));
@@ -797,12 +898,9 @@ impl TodoApp {
         let mut close = false;
         let mut stop_sharing = false;
         let mut submit = false;
-        egui::Window::new(title)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        dialog_window(ctx, title, self.insets)
             .show(ctx, |ui| {
-                ui.set_max_width(380.0);
+                ui.set_max_width(dialog_width(ui, 380.0));
                 if let Some(share) = &existing {
                     ui.label(format!("“{list_name}” is shared. Anyone with this code can join it from their RustDo:"));
                     ui.add_space(4.0);
@@ -815,7 +913,7 @@ impl TodoApp {
                     ui.label(RichText::new(format!("Hub: {}", share.hub)).weak().small());
                     let status = match (&self.sync_error, share.last_sync) {
                         (Some(e), _) => RichText::new(format!("Can't sync right now: {e}")).color(DANGER),
-                        (None, Some(t)) => RichText::new(format!("Last synced {}", t.format("%H:%M"))).weak(),
+                        (None, Some(t)) => RichText::new(format!("Last synced {}", format_time(t, self.store.settings.clock_24h))).weak(),
                         (None, None) => RichText::new("Syncing…").weak(),
                     };
                     ui.label(status.small());
@@ -970,17 +1068,17 @@ impl TodoApp {
 
         let export_label = if cfg!(target_os = "android") { "Copy backup to clipboard" } else { "Export backup…" };
         if ui.button(export_label).clicked() {
-            ui.close_menu();
+            self.close_settings(ui);
             let ctx = ui.ctx().clone();
             self.export_backup(&ctx, now);
         }
         if cfg!(target_os = "android") {
             if ui.button("Restore from pasted backup…").clicked() {
-                ui.close_menu();
+                self.close_settings(ui);
                 self.paste_restore = Some(String::new());
             }
         } else if ui.button("Restore from backup…").clicked() {
-            ui.close_menu();
+            self.close_settings(ui);
             let ctx = ui.ctx().clone();
             self.pick_restore_file(&ctx);
         }
@@ -993,7 +1091,7 @@ impl TodoApp {
                     .on_hover_text(format!("{}\nYour tasks (tasks.json) and the Backups folder", dir.display()))
                     .clicked()
                 {
-                    ui.close_menu();
+                    self.close_settings(ui);
                     platform::open_folder(&dir);
                 }
             }
@@ -1002,13 +1100,13 @@ impl TodoApp {
                     ui.add(egui::Label::new(RichText::new(format!("Also backing up to {extra}")).small()).wrap());
                     ui.horizontal(|ui| {
                         if small_btn(ui, "Change…").clicked() {
-                            ui.close_menu();
+                            self.close_settings(ui);
                             self.choose_backup_folder(now.date());
                         }
                         if small_btn(ui, "Stop").clicked() {
                             self.store.settings.backup_dir = None;
                             self.dirty = true;
-                            ui.close_menu();
+                            self.close_settings(ui);
                         }
                     });
                 }
@@ -1018,7 +1116,7 @@ impl TodoApp {
                         .on_hover_text("For example a OneDrive or USB folder, so a copy lives off this PC.")
                         .clicked()
                     {
-                        ui.close_menu();
+                        self.close_settings(ui);
                         self.choose_backup_folder(now.date());
                     }
                 }
@@ -1050,12 +1148,9 @@ impl TodoApp {
         let mut confirm = false;
         let mut cancel = false;
         let existing: Vec<String> = self.store.lists.iter().map(|l| l.name.to_lowercase()).collect();
-        egui::Window::new("Import tasks")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        dialog_window(ctx, "Import tasks", self.insets)
             .show(ctx, |ui| {
-                ui.set_max_width(480.0);
+                ui.set_max_width(dialog_width(ui, 480.0));
                 let imp = &pending.import;
                 ui.label(format!(
                     "{} from {}: {} list{}, {} task{} ({} completed).",
@@ -1129,6 +1224,7 @@ impl TodoApp {
             let report = import::apply(&mut self.store, &pending.import, pending.include_completed, now);
             self.dirty = true;
             self.view = View::All;
+            self.notes_page = false;
             self.search.clear();
             self.notify(report.summary());
         }
@@ -1246,17 +1342,67 @@ impl TodoApp {
         }
     }
 
+    /// "What's new": the changelog for the releases since the user last looked.
+    fn whats_new_dialog(&mut self, ctx: &egui::Context) {
+        let Some(releases) = &self.whats_new else { return };
+        let mut close = false;
+        let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 460.0);
+        let title = match releases.as_slice() {
+            [only] => format!("What's new in RustDo {}", only.version),
+            _ => "What's new in RustDo".to_string(),
+        };
+        dialog_window(ctx, title, self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 460.0));
+            egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                for (i, r) in releases.iter().enumerate() {
+                    if i > 0 {
+                        ui.add_space(6.0);
+                        ui.separator();
+                    }
+                    if releases.len() > 1 {
+                        ui.label(RichText::new(format!("Version {}", r.version)).strong().size(17.0));
+                    }
+                    if !r.date.is_empty() {
+                        ui.label(RichText::new(&r.date).weak().small());
+                    }
+                    for (section, items) in &r.sections {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(section).strong().color(ACCENT));
+                        for item in items {
+                            ui.horizontal_top(|ui| {
+                                ui.label("•");
+                                ui.add(egui::Label::new(item.as_str()).wrap());
+                            });
+                        }
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Got it").clicked() {
+                    close = true;
+                }
+                ui.hyperlink_to("All releases", format!("https://github.com/{}/releases", update::REPO));
+            });
+        });
+        if close {
+            self.whats_new = None;
+            let current = Some(update::CURRENT_VERSION.to_string());
+            if self.store.settings.last_seen_version != current {
+                self.store.settings.last_seen_version = current;
+                self.dirty = true;
+            }
+        }
+    }
+
     fn restore_dialog(&mut self, ctx: &egui::Context) {
         // Android: paste a backup that was exported to the clipboard.
         if let Some(text) = &mut self.paste_restore {
             let mut restore = false;
             let mut cancel = false;
-            egui::Window::new("Restore from a backup")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            dialog_window(ctx, "Restore from a backup", self.insets)
                 .show(ctx, |ui| {
-                    ui.set_max_width(420.0);
+                    ui.set_max_width(dialog_width(ui, 420.0));
                     ui.label("Paste the backup text you saved earlier:");
                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                         ui.add(egui::TextEdit::multiline(text).desired_rows(6).desired_width(f32::INFINITY));
@@ -1286,12 +1432,9 @@ impl TodoApp {
         let mut cancel = false;
         let open = backup.tasks.iter().filter(|t| !t.done).count();
         let newest = backup.tasks.iter().map(|t| t.created).max();
-        egui::Window::new("Restore backup?")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        dialog_window(ctx, "Restore backup?", self.insets)
             .show(ctx, |ui| {
-                ui.set_max_width(420.0);
+                ui.set_max_width(dialog_width(ui, 420.0));
                 ui.label(format!(
                     "{name}: {} lists, {} tasks ({open} open).",
                     backup.lists.len(),
@@ -1337,6 +1480,7 @@ impl TodoApp {
             self.selected = None;
             self.alerts.clear();
             self.view = View::MyDay;
+            self.notes_page = false;
             self.search.clear();
             self.dirty = true;
             self.notify(format!("Restored from {name}."));
@@ -1431,6 +1575,7 @@ impl TodoApp {
             self.search.clear();
             if self.view == View::Completed {
                 self.view = View::MyDay;
+                self.notes_page = false;
             }
             self.focus_add = true;
         }
@@ -1473,7 +1618,7 @@ impl TodoApp {
                             ThemeChoice::Light => ("☀", ThemeChoice::Dark, "Theme: light"),
                             ThemeChoice::Dark => ("🌙", ThemeChoice::System, "Theme: dark"),
                         };
-                        self.settings_menu(ui);
+                        self.settings_button(ui, narrow);
                         if ui.button(icon).on_hover_text(tip).clicked() {
                             self.store.settings.theme = next;
                             apply_theme(ui.ctx(), next);
@@ -1516,8 +1661,9 @@ impl TodoApp {
                         self.store.open_count(view, today)
                     };
                     let selected = self.view == view && !searching;
-                    if nav_row(ui, selected, icon, name, count).clicked() {
+                    if nav_row(ui, selected && !self.notes_page, icon, name, count).clicked() {
                         self.view = view;
+                        self.notes_page = false;
                         self.search.clear();
                         self.show_nav = false;
                     }
@@ -1532,7 +1678,7 @@ impl TodoApp {
                     (false, true) => 80.0,
                     (true, false) => 86.0,
                     (false, false) => 52.0,
-                };
+                } + if notes::SUPPORTED { NOTES_SECTION_H } else { 0.0 };
                 // Phone layout: the whole screen scrolls as one page, so show every list.
                 let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
@@ -1559,10 +1705,11 @@ impl TodoApp {
                             let count = self.store.open_count(View::List(id), today);
                             let shared = self.store.shares.iter().any(|s| s.list_id == id);
                             let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
-                            let selected = self.view == View::List(id) && !searching;
+                            let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
                             if r.clicked() {
                                 self.view = View::List(id);
+                                self.notes_page = false;
                                 self.search.clear();
                                 self.show_nav = false;
                             }
@@ -1604,6 +1751,7 @@ impl TodoApp {
                     if let Some(id) = self.store.add_list(&self.new_list) {
                         self.new_list.clear();
                         self.view = View::List(id);
+                        self.notes_page = false;
                         self.search.clear();
                         self.show_nav = false;
                         self.focus_add = !platform::IS_MOBILE_OR_WEB;
@@ -1620,6 +1768,22 @@ impl TodoApp {
                     let ctx = ui.ctx().clone();
                     self.pick_import_file(&ctx);
                 }
+
+                // Sticky notes: their own section, apart from the to-do lists.
+                if notes::SUPPORTED {
+                    ui.add_space(4.0);
+                    ui.separator();
+                    ui.label(RichText::new("DESKTOP NOTES").small().weak());
+                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open).count();
+                    if nav_row(ui, self.notes_page, "📝", "Sticky notes", shown)
+                        .on_hover_text("Notes on your desktop, kept on this computer")
+                        .clicked()
+                    {
+                        self.notes_page = true;
+                        self.search.clear();
+                        self.show_nav = false;
+                    }
+                }
         };
         if narrow {
             egui::CentralPanel::default().show(ctx, |ui| {
@@ -1635,6 +1799,20 @@ impl TodoApp {
                 .width_range(200.0..=400.0)
                 .show(ctx, body);
         }
+    }
+
+    /// The Sticky notes page (desktop), with a Back button on narrow windows.
+    fn notes_panel(&mut self, ctx: &egui::Context) {
+        let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            if narrow {
+                let back = egui::Button::new(RichText::new("<  Lists").size(18.0)).frame(false);
+                if ui.add(back).clicked() {
+                    self.show_nav = true;
+                }
+            }
+            notes_ui::notes_page(ui, &self.notes);
+        });
     }
 
     // ------------------------------------------------------------------ task list
@@ -1983,6 +2161,7 @@ impl TodoApp {
     /// Task details: a right side panel on wide screens, the whole screen on phones.
     fn detail_panel(&mut self, ctx: &egui::Context, id: Uuid, now: NaiveDateTime, narrow: bool) {
         let today = now.date();
+        let clock_24h = self.store.settings.clock_24h;
         let lists: Vec<(Uuid, String)> =
             self.store.lists.iter().map(|l| (l.id, l.name.clone())).collect();
         let mut toggle_done = false;
@@ -2105,9 +2284,21 @@ impl TodoApp {
                                     let mut h = r.hour();
                                     let mut m = r.minute();
                                     ui.add(egui_extras::DatePickerButton::new(&mut date).id_salt("reminder_date"));
-                                    ui.add(egui::DragValue::new(&mut h).range(0..=23).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    // Hours as the user reads them: 0-23, or 1-12 plus an AM/PM switch.
+                                    let (mut h12, mut pm) = to_12h(h);
+                                    if clock_24h {
+                                        ui.add(egui::DragValue::new(&mut h).range(0..=23).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    } else {
+                                        ui.add(egui::DragValue::new(&mut h12).range(1..=12));
+                                    }
                                     ui.label(":");
                                     ui.add(egui::DragValue::new(&mut m).range(0..=59).speed(0.5).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    if !clock_24h {
+                                        if ui.button(if pm { "PM" } else { "AM" }).on_hover_text("Switch AM / PM").clicked() {
+                                            pm = !pm;
+                                        }
+                                        h = from_12h(h12, pm);
+                                    }
                                     let new_r = date.and_hms_opt(h, m, 0).unwrap_or(r);
                                     if new_r != r {
                                         task.reminder = Some(new_r);
@@ -2121,12 +2312,12 @@ impl TodoApp {
                                     }
                                 });
                                 if let Some(r) = task.reminder {
-                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), r.format("%H:%M"))).weak().small());
+                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), format_time(r, clock_24h))).weak().small());
                                 }
                             }
                             None => {
                                 ui.horizontal_wrapped(|ui| {
-                                    for (label, when) in reminder_presets(now) {
+                                    for (label, when) in reminder_presets(now, clock_24h) {
                                         if ui.button(label).clicked() {
                                             task.reminder = Some(when);
                                             task.reminder_fired = false;
@@ -2281,45 +2472,89 @@ impl TodoApp {
 
     // ------------------------------------------------------------------ overlays
 
+    /// Reminders that came due while RustDo is open: one box in the corner (bottom centre on
+    /// phones) listing them all, which collapses to its header. A new reminder opens it again.
     fn alert_windows(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
         let store = &self.store;
         self.alerts.retain(|id| store.task(*id).is_some_and(|t| !t.done));
-        let mut acted = Vec::new();
-        for (i, id) in self.alerts.iter().enumerate() {
-            let Some(t) = self.store.task(*id) else { continue };
-            egui::Window::new("🔔 Reminder")
-                .id(Id::new(("alert", *id)))
-                .collapsible(false)
-                .resizable(false)
-                .anchor(Align2::RIGHT_BOTTOM, Vec2::new(-16.0, -16.0 - i as f32 * 140.0))
-                .show(ctx, |ui| {
-                    ui.set_min_width(280.0);
-                    ui.label(RichText::new(&t.title).strong().size(16.0));
-                    if let Some(due) = t.due {
-                        ui.label(RichText::new(format!("Due {}", relative_date(due, now.date()))).weak());
-                    }
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("✔ Complete").clicked() {
-                            acted.push((*id, AlertAction::Complete));
-                        }
-                        if ui.button("Open").clicked() {
-                            acted.push((*id, AlertAction::Open));
-                        }
-                        if ui.button("Dismiss").clicked() {
-                            acted.push((*id, AlertAction::Dismiss));
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Snooze:").weak());
-                        for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
-                            if small_btn(ui, label).clicked() {
-                                acted.push((*id, AlertAction::Snooze(mins)));
-                            }
-                        }
-                    });
-                });
+        let count = self.alerts.len();
+        let grew = count > self.alerts_shown;
+        self.alerts_shown = count;
+        if count == 0 {
+            return;
         }
+        let mut acted = Vec::new();
+        let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
+        let (align, x) = if narrow { (Align2::CENTER_BOTTOM, 0.0) } else { (Align2::RIGHT_BOTTOM, -16.0) };
+        // Never taller than ~60% of the window; more reminders scroll.
+        let max_list_h = (ctx.screen_rect().height() * 0.6).max(150.0);
+        egui::Window::new("Reminders")
+            .id(Id::new("alerts"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            // Above the Android navigation bar.
+            .anchor(align, Vec2::new(x, -16.0 - self.insets[3]))
+            .show(ctx, |ui| {
+                ui.set_width(dialog_width(ui, 300.0));
+                if grew {
+                    self.alerts_open = true;
+                }
+                let open = self.alerts_open;
+                ui.horizontal(|ui| {
+                    let size = Vec2::splat(ui.spacing().icon_width);
+                    let (_, icon) = ui.allocate_exact_size(size, Sense::click());
+                    egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon);
+                    let title = if count == 1 { "🔔 Reminder".to_string() } else { format!("🔔 {count} reminders") };
+                    let label = ui.add(egui::Label::new(RichText::new(title).strong().size(16.0)).sense(Sense::click()));
+                    if (icon | label).on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+                        self.alerts_open = !open;
+                    }
+                    if count > 1 {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if small_btn(ui, "Dismiss all").clicked() {
+                                for id in &self.alerts {
+                                    acted.push((*id, AlertAction::Dismiss));
+                                }
+                            }
+                        });
+                    }
+                });
+                if open {
+                    ui.separator();
+                    egui::ScrollArea::vertical().max_height(max_list_h).show(ui, |ui| {
+                        for (i, id) in self.alerts.iter().enumerate() {
+                            let Some(t) = self.store.task(*id) else { continue };
+                            if i > 0 {
+                                ui.separator();
+                            }
+                            ui.label(RichText::new(&t.title).strong());
+                            if let Some(due) = t.due {
+                                ui.label(RichText::new(format!("Due {}", relative_date(due, now.date()))).weak().small());
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("✔ Complete").clicked() {
+                                    acted.push((*id, AlertAction::Complete));
+                                }
+                                if ui.button("Open").clicked() {
+                                    acted.push((*id, AlertAction::Open));
+                                }
+                                if ui.button("Dismiss").clicked() {
+                                    acted.push((*id, AlertAction::Dismiss));
+                                }
+                            });
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Snooze:").weak());
+                                for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
+                                    if small_btn(ui, label).clicked() {
+                                        acted.push((*id, AlertAction::Snooze(mins)));
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+            });
         for (id, action) in acted {
             self.alerts.retain(|a| *a != id);
             match action {
@@ -2346,11 +2581,9 @@ impl TodoApp {
         let count = self.store.tasks.iter().filter(|t| t.list_id == id).count();
         let mut confirm = false;
         let mut cancel = false;
-        egui::Window::new("Delete list?")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        dialog_window(ctx, "Delete list?", self.insets)
             .show(ctx, |ui| {
+                ui.set_max_width(dialog_width(ui, 380.0));
                 ui.label(format!(
                     "“{name}” and its {count} task{} will be permanently deleted.",
                     if count == 1 { "" } else { "s" }
@@ -2372,6 +2605,7 @@ impl TodoApp {
             if self.store.delete_list(id) {
                 if self.view == View::List(id) {
                     self.view = View::List(self.store.default_list);
+                    self.notes_page = false;
                 }
                 if self.selected.is_some_and(|s| self.store.task(s).is_none()) {
                     self.selected = None;
@@ -2394,7 +2628,7 @@ impl TodoApp {
         let mut undo = false;
         let mut close = false;
         egui::Area::new(Id::new("toast"))
-            .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -24.0))
+            .anchor(Align2::CENTER_BOTTOM, Vec2::new(0.0, -24.0 - self.insets[3]))
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -2424,6 +2658,12 @@ impl TodoApp {
 }
 
 impl eframe::App for TodoApp {
+    /// Don't lose the last second of typing in a sticky note.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        notes_ui::lock(&self.notes).save_if_due(true);
+    }
+
     /// Android: keep the font atlas small enough for 16-bit texture coordinates.
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if cfg!(target_os = "android") {
@@ -2488,8 +2728,12 @@ impl eframe::App for TodoApp {
         // Phones: one screen at a time (lists, or tasks, or one task's details).
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         if narrow {
-            if self.show_nav {
+            if self.show_settings {
+                self.settings_page(ctx);
+            } else if self.show_nav {
                 self.sidebar(ctx, today, true);
+            } else if self.notes_page {
+                self.notes_panel(ctx);
             } else if let Some(id) = self.selected {
                 self.detail_panel(ctx, id, now, true);
             } else {
@@ -2497,11 +2741,16 @@ impl eframe::App for TodoApp {
             }
         } else {
             self.show_nav = false;
+            self.show_settings = false;
             self.sidebar(ctx, today, false);
-            if let Some(id) = self.selected {
-                self.detail_panel(ctx, id, now, false);
+            if self.notes_page {
+                self.notes_panel(ctx);
+            } else {
+                if let Some(id) = self.selected {
+                    self.detail_panel(ctx, id, now, false);
+                }
+                self.main_panel(ctx, now, false);
             }
-            self.main_panel(ctx, now, false);
         }
 
         // Android needs to be told to show the on-screen keyboard for text fields.
@@ -2511,11 +2760,13 @@ impl eframe::App for TodoApp {
             self.keyboard_shown = wants_keyboard;
         }
 
+        notes_ui::show_windows(ctx, &self.notes);
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
         self.share_dialog(ctx);
         self.import_dialog(ctx, now);
         self.restore_dialog(ctx);
+        self.whats_new_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {
@@ -2581,6 +2832,24 @@ fn capped_texture_side(side: Option<usize>) -> Option<usize> {
     Some(side.map_or(MAX_ATLAS_SIDE, |s| s.min(MAX_ATLAS_SIDE)))
 }
 
+/// A dialog that fits the screen. Wide screens: centred. Phones: near the top (below the
+/// status bar), so the on-screen keyboard doesn't cover its text fields. Long content
+/// (import summaries, pasted backups) scrolls inside the dialog's own ScrollArea.
+fn dialog_window<'a>(ctx: &egui::Context, title: impl Into<egui::WidgetText>, insets: [f32; 4]) -> egui::Window<'a> {
+    let window = egui::Window::new(title).collapsible(false).resizable(false);
+    if ctx.screen_rect().width() < NARROW_WIDTH {
+        window.anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 16.0))
+    } else {
+        window.anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+    }
+}
+
+/// A dialog's content width: what it would like, or less on a narrow screen (leaving
+/// room for the window's own margins and a gap to the screen edges).
+fn dialog_width(ui: &egui::Ui, preferred: f32) -> f32 {
+    preferred.min(ui.ctx().screen_rect().width() - 48.0).max(160.0)
+}
+
 /// Android: draw at a whole-number scale. egui places every glyph on the pixel grid, so
 /// at a fractional density (2.625x on many Pixels) letters land up to half a pixel
 /// apart and text looks uneven and fuzzy. Rounding the scale (2.625x -> 3x) keeps every
@@ -2610,17 +2879,18 @@ fn next_monday(today: NaiveDate) -> NaiveDate {
     today + Duration::days(7 - today.weekday().num_days_from_monday() as i64)
 }
 
-fn reminder_presets(now: NaiveDateTime) -> Vec<(&'static str, NaiveDateTime)> {
+fn reminder_presets(now: NaiveDateTime, clock_24h: bool) -> Vec<(String, NaiveDateTime)> {
     let today = now.date();
     let nine = |d: NaiveDate| d.and_hms_opt(9, 0, 0).unwrap();
     let mut out = Vec::new();
     // "Later today": three hours from now, rounded up to the hour.
     let later = (now + Duration::hours(3)).with_minute(0).and_then(|t| t.with_second(0));
     if let Some(later) = later.filter(|l| l.date() == today) {
-        out.push(("Later today", later));
+        out.push(("Later today".to_string(), later));
     }
-    out.push(("Tomorrow 9:00", nine(today + Duration::days(1))));
-    out.push(("Next week", nine(next_monday(today))));
+    let tomorrow = nine(today + Duration::days(1));
+    out.push((format!("Tomorrow {}", format_time(tomorrow, clock_24h)), tomorrow));
+    out.push(("Next week".to_string(), nine(next_monday(today))));
     out
 }
 
@@ -2773,7 +3043,7 @@ fn task_row(
     }
     if let Some(r) = t.reminder {
         if !t.done && !t.reminder_fired {
-            meta.push((format!("🔔 {}", r.format("%H:%M")), weak));
+            meta.push((format!("🔔 {}", format_time(r, store.settings.clock_24h)), weak));
         }
     }
     if t.recurrence != Recurrence::Never {
