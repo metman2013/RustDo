@@ -175,18 +175,18 @@ Each push to `main` runs the tests and all builds, and publishes the web app.
 To release:
 
 1. Set the new version for every platform: `.\tools\set-version.ps1 0.2.0`.
-2. Commit, then tag and push:
+2. Get it onto `main`: merge a pull request, or commit and push.
 
-   ```bash
-   git tag v0.2.0
-   ```
+That's it. When `main` has a version that hasn't been released yet, the workflow creates the
+`v0.2.0` tag and a GitHub Release, and attaches:
+- the Windows installer and portable exe
+- the Linux packages
+- the APK
+- the RustDo Hub exe
 
-   ```bash
-   git push origin main --tags
-   ```
-
-The workflow attaches the Windows installer, the portable exe and the APK to a new GitHub
-Release. Installed copies pick it up through their update check.
+It also publishes the Hub's Docker image as `:0.2.0` and `:latest`. Nothing is released
+unless every build succeeds. Installed copies pick the release up through their update
+check. Pushing a `v0.2.0` tag yourself also works.
 
 ### One-time setup
 
