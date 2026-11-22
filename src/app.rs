@@ -117,7 +117,10 @@ pub struct TodoApp {
     /// The reminder helper has been started (or stopped) for the current setting.
     helper_handled: bool,
     /// A RustDo backup waiting for the user to confirm "replace all my tasks".
-    pending_restore: Option<(String, Store)>,
+    /// A full backup to restore: file name, tasks, and the sticky notes it carries (if any).
+    pending_restore: Option<(String, Store, Option<notes::Notes>)>,
+    /// A sticky notes backup to merge in (desktop).
+    pending_notes_restore: Option<(String, notes::Notes)>,
     /// Android: the "paste a backup" box, when open.
     paste_restore: Option<String>,
     backup_day: Option<NaiveDate>,
@@ -182,6 +185,13 @@ impl TodoApp {
         apply_style(&cc.egui_ctx, touch_mode);
         let notes = notes_ui::Shared::load(if notes::SUPPORTED { storage.folder() } else { None });
 
+        // An automatic update that did finish: forget the attempt.
+        if loaded.store.settings.update_attempt.as_deref().is_some_and(|v| {
+            changelog::version_key(v) <= changelog::version_key(update::CURRENT_VERSION)
+        }) {
+            loaded.store.settings.update_attempt = None;
+        }
+
         // "What's new" after an update. A brand-new install (no tasks yet) just records
         // the version: there's nothing "new" to someone who has never used RustDo.
         let mut first_run_dirty = false;
@@ -220,6 +230,7 @@ impl TodoApp {
             ready_installer: None,
             helper_handled: false,
             pending_restore: None,
+            pending_notes_restore: None,
             paste_restore: None,
             backup_day: None,
             last_backup: None,
@@ -340,8 +351,16 @@ impl TodoApp {
     fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
         // A RustDo backup is restored (after confirmation) rather than merged.
         if let Ok(store) = storage::parse_backup(bytes) {
-            self.pending_restore = Some((file_name.to_string(), store));
+            let carried = notes::parse_backup(bytes).ok().filter(|_| notes::SUPPORTED);
+            self.pending_restore = Some((file_name.to_string(), store, carried));
             return;
+        }
+        // A sticky notes backup (desktop) is merged in (after confirmation).
+        if notes::SUPPORTED {
+            if let Ok(found) = notes::parse_backup(bytes) {
+                self.pending_notes_restore = Some((file_name.to_string(), found));
+                return;
+            }
         }
         match import::parse_bytes(file_name, bytes) {
             Ok(import) => {
@@ -392,10 +411,19 @@ impl TodoApp {
                     CheckResult::Available(release) => {
                         self.update_dismissed = false;
                         // Found right after launch: update straight away, no questions.
+                        let version = release.version.clone();
+                        // An earlier automatic update to this version didn't finish (we're
+                        // still running the old one): don't close RustDo for it again.
+                        let failed_before = self.store.settings.update_attempt.as_deref() == Some(version.as_str());
                         let auto = self.can_auto_update()
                             && self.started.elapsed() < AUTO_UPDATE_WINDOW
-                            && release.download_url.is_some();
-                        let version = release.version.clone();
+                            && release.download_url.is_some()
+                            && !failed_before;
+                        if failed_before {
+                            self.notify(format!(
+                                "The last automatic update to {version} didn't finish. Use “Update & restart” to try again."
+                            ));
+                        }
                         self.update_available = Some(release);
                         if auto {
                             self.auto_installing = true;
@@ -448,6 +476,7 @@ impl TodoApp {
                 || self.paste_restore.is_some()
                 || self.pending_import.is_some()
                 || self.pending_restore.is_some()
+                || self.pending_notes_restore.is_some()
                 || self.confirm_delete_list.is_some()
                 || self.share_dialog.is_some())
     }
@@ -462,10 +491,24 @@ impl TodoApp {
             self.notify(format!("TEST: would now run {} silently", installer.display()));
             return;
         }
-        match std::process::Command::new(&installer)
-            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
-            .spawn()
-        {
+        // The reminder helper runs from this same exe: stop it so the installer can replace it.
+        notify::stop_helper();
+        // Remember the attempt: if RustDo starts again still on the old version, the update
+        // failed and we won't retry it automatically at every start.
+        if self.auto_installing {
+            self.store.settings.update_attempt = self.update_available.as_ref().map(|r| r.version.clone());
+        }
+        let mut args = vec![
+            "/VERYSILENT".to_string(),
+            "/SUPPRESSMSGBOXES".into(),
+            "/NORESTART".into(),
+            "/CLOSEAPPLICATIONS".into(),
+        ];
+        // A log next to the tasks, for when an update goes wrong.
+        if let Some(dir) = self.storage.folder() {
+            args.push(format!("/LOG={}", dir.join("update-install.log").display()));
+        }
+        match std::process::Command::new(&installer).args(&args).spawn() {
             Ok(_) => {
                 // The installer replaces this program, so get out of its way.
                 self.persist();
@@ -1055,7 +1098,7 @@ impl TodoApp {
             "A backup is saved automatically each day on this phone (last 14 days). Uninstalling the app removes them.".to_string()
         } else {
             format!(
-                "A backup is saved automatically each day in the Backups folder (last {} days).",
+                "A backup of your tasks and sticky notes is saved automatically each day in the Backups folder (last {} days).",
                 storage::KEEP_BACKUPS
             )
         };
@@ -1085,6 +1128,16 @@ impl TodoApp {
 
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Back up sticky notes…").on_hover_text("Save just your sticky notes to a file").clicked() {
+                    self.close_settings(ui);
+                    self.backup_notes(now.date());
+                }
+                if ui.button("Restore sticky notes…").on_hover_text("Bring notes back from a backup (your current notes are kept)").clicked() {
+                    self.close_settings(ui);
+                    self.pick_notes_restore_file();
+                }
+            });
             if let Some(dir) = self.storage.folder() {
                 if ui
                     .button("Open RustDo folder")
@@ -1263,7 +1316,12 @@ impl TodoApp {
         self.backup_day = Some(today);
         self.last_backup = Some(Instant::now());
         self.backup_pending = false;
-        if let Err(e) = self.storage.auto_backup(&self.store, today) {
+        let mut result = self.storage.auto_backup(&self.store, today);
+        if notes::SUPPORTED && result.is_ok() {
+            let snapshot = notes_ui::lock(&self.notes).notes.clone();
+            result = self.storage.auto_backup_notes(&snapshot, &self.store.settings, today);
+        }
+        if let Err(e) = result {
             if !self.backup_error_shown {
                 self.backup_error_shown = true;
                 self.notify(format!("Automatic backup failed: {e}"));
@@ -1272,7 +1330,9 @@ impl TodoApp {
     }
 
     fn export_backup(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
-        let json = storage::export_json(&self.store);
+        // Desktop: the backup carries the sticky notes too.
+        let carried = notes::SUPPORTED.then(|| notes_ui::lock(&self.notes).notes.clone());
+        let json = storage::export_json_with_notes(&self.store, carried.as_ref());
         let name = storage::backup_file_name(now.date());
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
@@ -1395,6 +1455,106 @@ impl TodoApp {
         }
     }
 
+    /// "Restore sticky notes?": merges a notes backup into the current notes.
+    fn notes_restore_dialog(&mut self, ctx: &egui::Context) {
+        let Some((name, found)) = &self.pending_notes_restore else { return };
+        let mut confirm = false;
+        let mut cancel = false;
+        let count = found.notes.len();
+        dialog_window(ctx, "Restore sticky notes?", self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 420.0));
+            ui.label(format!("{name}: {count} sticky note{}.", if count == 1 { "" } else { "s" }));
+            ui.add_space(4.0);
+            ui.add(
+                egui::Label::new(
+                    "Your current notes are kept. Notes from the backup are added (hidden: show them \
+                     from the Sticky notes page), and a note in both keeps whichever was edited last.",
+                )
+                .wrap(),
+            );
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new("Restore notes").color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    confirm = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if cancel {
+            self.pending_notes_restore = None;
+        } else if confirm {
+            let (_, found) = self.pending_notes_restore.take().unwrap();
+            let (added, updated) = notes_ui::lock(&self.notes).merge_in(&found);
+            self.notes_page = true;
+            self.notify(match (added, updated) {
+                (0, 0) => "Nothing to restore: you already have these notes.".to_string(),
+                (a, 0) => format!("Restored {a} sticky note{}. Show them from this page.", if a == 1 { "" } else { "s" }),
+                (a, u) => format!("Restored {a} sticky note{} and updated {u}.", if a == 1 { "" } else { "s" }),
+            });
+        }
+    }
+
+    /// Desktop: saves every sticky note to a file of the user's choosing.
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    fn backup_notes(&mut self, today: NaiveDate) {
+        let snapshot = notes_ui::lock(&self.notes).notes.clone();
+        if snapshot.notes.is_empty() {
+            self.notify("There are no sticky notes to back up yet.");
+            return;
+        }
+        let start_dir = self
+            .store
+            .settings
+            .last_export_dir
+            .clone()
+            .map(std::path::PathBuf::from)
+            .filter(|d| d.is_dir())
+            .or_else(|| self.storage.folder());
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Back up sticky notes")
+            .set_file_name(notes::backup_file_name(today))
+            .add_filter("Sticky notes backup", &["json"]);
+        if let Some(dir) = start_dir {
+            dialog = dialog.set_directory(dir);
+        }
+        let Some(path) = dialog.save_file() else { return };
+        match notes::file::save(&path, &snapshot) {
+            Ok(()) => {
+                self.store.settings.last_export_dir = path.parent().map(|d| d.display().to_string());
+                self.dirty = true;
+                let n = snapshot.notes.len();
+                self.notify(format!("{n} sticky note{} saved to {}", if n == 1 { "" } else { "s" }, path.display()));
+            }
+            Err(e) => self.notify(format!("Couldn't save the notes backup: {e}")),
+        }
+    }
+
+    /// Desktop: choose a sticky notes backup (or a full RustDo backup) to restore notes from.
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    fn pick_notes_restore_file(&mut self) {
+        let mut dialog = rfd::FileDialog::new()
+            .set_title("Restore sticky notes")
+            .add_filter("Sticky notes or RustDo backup", &["json"]);
+        if let Some(dir) = self.storage.folder() {
+            let backups = dir.join("Backups");
+            dialog = dialog.set_directory(if backups.is_dir() { backups } else { dir });
+        }
+        let Some(path) = dialog.pick_file() else { return };
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|b| notes::parse_backup(&b)) {
+            Ok(found) => self.pending_notes_restore = Some((name, found)),
+            Err(e) => self.notify(format!("{name}: {e}")),
+        }
+    }
+
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    fn backup_notes(&mut self, _today: NaiveDate) {}
+
+    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    fn pick_notes_restore_file(&mut self) {}
+
     fn restore_dialog(&mut self, ctx: &egui::Context) {
         // Android: paste a backup that was exported to the clipboard.
         if let Some(text) = &mut self.paste_restore {
@@ -1419,7 +1579,10 @@ impl TodoApp {
             if restore {
                 let text = self.paste_restore.take().unwrap_or_default();
                 match storage::parse_backup(text.as_bytes()) {
-                    Ok(store) => self.pending_restore = Some(("pasted backup".into(), store)),
+                    Ok(store) => {
+                        let carried = notes::parse_backup(text.as_bytes()).ok().filter(|_| notes::SUPPORTED);
+                        self.pending_restore = Some(("pasted backup".into(), store, carried));
+                    }
                     Err(e) => self.notify(e),
                 }
             } else if cancel {
@@ -1427,7 +1590,9 @@ impl TodoApp {
             }
         }
 
-        let Some((name, backup)) = &self.pending_restore else { return };
+        self.notes_restore_dialog(ctx);
+        let Some((name, backup, carried)) = &self.pending_restore else { return };
+        let note_count = carried.as_ref().map_or(0, |n| n.notes.len());
         let mut confirm = false;
         let mut cancel = false;
         let open = backup.tasks.iter().filter(|t| !t.done).count();
@@ -1435,8 +1600,13 @@ impl TodoApp {
         dialog_window(ctx, "Restore backup?", self.insets)
             .show(ctx, |ui| {
                 ui.set_max_width(dialog_width(ui, 420.0));
+                let notes_part = match note_count {
+                    0 => String::new(),
+                    1 => ", 1 sticky note".to_string(),
+                    n => format!(", {n} sticky notes"),
+                };
                 ui.label(format!(
-                    "{name}: {} lists, {} tasks ({open} open).",
+                    "{name}: {} lists, {} tasks ({open} open){notes_part}.",
                     backup.lists.len(),
                     backup.tasks.len()
                 ));
@@ -1444,13 +1614,14 @@ impl TodoApp {
                     ui.label(RichText::new(format!("Newest task created {}.", newest.format("%b %-d, %Y"))).weak());
                 }
                 ui.add_space(4.0);
-                ui.add(
-                    egui::Label::new(
-                        "This replaces all your current tasks and lists with the backup. \
-                         Your current tasks are saved first, so this can be undone.",
-                    )
-                    .wrap(),
-                );
+                let what = if note_count > 0 {
+                    "This replaces all your current tasks, lists and sticky notes with the backup. \
+                     Your current tasks and notes are saved first, so this can be undone."
+                } else {
+                    "This replaces all your current tasks and lists with the backup. \
+                     Your current tasks are saved first, so this can be undone."
+                };
+                ui.add(egui::Label::new(what).wrap());
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
@@ -1467,10 +1638,19 @@ impl TodoApp {
         if cancel {
             self.pending_restore = None;
         } else if confirm {
-            let (name, mut backup) = self.pending_restore.take().unwrap();
+            let (name, mut backup, carried) = self.pending_restore.take().unwrap();
             if self.can_save {
                 if let Err(e) = self.storage.snapshot(&self.store, "before-restore") {
                     self.notify(format!("Restore cancelled: couldn't save your current tasks first ({e})."));
+                    return;
+                }
+            }
+            // Sticky notes first: if their safety copy fails, nothing has changed yet.
+            if let Some(restored) = carried {
+                let safety = self.storage.backup_dirs(&self.store.settings).into_iter().next();
+                let replaced = notes_ui::lock(&self.notes).replace_all(restored, safety.as_deref());
+                if let Err(e) = replaced {
+                    self.notify(format!("Restore cancelled: {e}."));
                     return;
                 }
             }
@@ -1811,7 +1991,11 @@ impl TodoApp {
                     self.show_nav = true;
                 }
             }
-            notes_ui::notes_page(ui, &self.notes);
+            match notes_ui::notes_page(ui, &self.notes) {
+                notes_ui::PageAction::Backup => self.backup_notes(Local::now().date_naive()),
+                notes_ui::PageAction::Restore => self.pick_notes_restore_file(),
+                notes_ui::PageAction::None => {}
+            }
         });
     }
 
@@ -2761,6 +2945,9 @@ impl eframe::App for TodoApp {
         }
 
         notes_ui::show_windows(ctx, &self.notes);
+        if notes::SUPPORTED && notes_ui::lock(&self.notes).take_backup_pending() {
+            self.backup_pending = true;
+        }
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
         self.share_dialog(ctx);

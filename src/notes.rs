@@ -118,6 +118,34 @@ impl Notes {
         self.notes.retain(|n| n.id != id);
     }
 
+    /// Brings in notes from a backup without losing any here: new notes are added (hidden,
+    /// so a restore doesn't cover the desktop; show them from the Sticky notes page), and a
+    /// note that exists in both keeps whichever version was edited last.
+    /// Returns (added, updated).
+    pub fn merge(&mut self, other: &Notes) -> (usize, usize) {
+        let (mut added, mut updated) = (0, 0);
+        for theirs in &other.notes {
+            match self.notes.iter_mut().find(|n| n.id == theirs.id) {
+                Some(ours) => {
+                    if theirs.updated > ours.updated {
+                        let open = ours.open;
+                        *ours = theirs.clone();
+                        ours.open = open;
+                        updated += 1;
+                    }
+                }
+                None => {
+                    let mut n = theirs.clone();
+                    n.open = false;
+                    self.notes.push(n);
+                    added += 1;
+                }
+            }
+        }
+        self.repair();
+        (added, updated)
+    }
+
     /// Clamps values that a hand-edited or damaged file could get wrong.
     pub fn repair(&mut self) {
         for n in &mut self.notes {
@@ -133,6 +161,35 @@ impl Notes {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------- backups
+
+/// Daily automatic notes backups: `RustDo-notes-<date>.json` (next to the task backups).
+pub const BACKUP_PREFIX: &str = "RustDo-notes-";
+
+pub fn backup_file_name(date: chrono::NaiveDate) -> String {
+    format!("{BACKUP_PREFIX}{}.json", date.format("%Y-%m-%d"))
+}
+
+/// The key under which a full RustDo backup (tasks export) carries the sticky notes.
+pub const BACKUP_KEY: &str = "sticky_notes";
+
+/// Reads sticky notes from a notes backup (`{"notes": [...]}`) or from a full RustDo
+/// backup that carries them under `sticky_notes`.
+pub fn parse_backup(bytes: &[u8]) -> Result<Notes, String> {
+    let text = String::from_utf8_lossy(bytes);
+    let value: serde_json::Value =
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| "This isn't a sticky notes backup.".to_string())?;
+    let notes_value = match value.get(BACKUP_KEY) {
+        Some(v) => v.clone(),
+        None if value.get("notes").is_some_and(|n| n.is_array()) && value.get("default_list").is_none() => value,
+        None => return Err("This backup doesn't contain any sticky notes.".into()),
+    };
+    let mut notes: Notes =
+        serde_json::from_value(notes_value).map_err(|e| format!("This sticky notes backup is damaged ({e})."))?;
+    notes.repair();
+    Ok(notes)
 }
 
 /// Relative luminance (WCAG) of an sRGB colour, 0 (black) to 1 (white).
@@ -207,6 +264,32 @@ pub mod file {
         }
     }
 
+    /// Writes today's `RustDo-notes-<date>.json` into `dir` (replacing today's earlier one)
+    /// and deletes all but the newest `keep`. Nothing is written while there are no notes.
+    pub fn write_daily_backup(dir: &Path, notes: &Notes, today: chrono::NaiveDate, keep: usize) -> io::Result<()> {
+        if notes.notes.is_empty() {
+            return Ok(());
+        }
+        fs::create_dir_all(dir)?;
+        save(&dir.join(super::backup_file_name(today)), notes)?;
+        let mut backups: Vec<_> = fs::read_dir(dir)?
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                    n.starts_with(super::BACKUP_PREFIX)
+                        && n.ends_with(".json")
+                        && n[super::BACKUP_PREFIX.len()..].starts_with(|c: char| c.is_ascii_digit())
+                })
+            })
+            .collect();
+        backups.sort();
+        let excess = backups.len().saturating_sub(keep);
+        for old in &backups[..excess] {
+            let _ = fs::remove_file(old);
+        }
+        Ok(())
+    }
+
     /// Atomic save: write a temporary file, then rename it over the old one.
     pub fn save(path: &Path, notes: &Notes) -> io::Result<()> {
         if let Some(dir) = path.parent() {
@@ -277,6 +360,75 @@ mod tests {
         let mut n = StickyNote::new(now(), PRESETS[0].1);
         n.text = "\n  Groceries  \nmilk".into();
         assert_eq!(n.title(), "Groceries");
+    }
+
+    #[test]
+    fn merge_adds_new_notes_hidden_and_keeps_the_newest_edit() {
+        let t = |m| now() + chrono::Duration::minutes(m);
+        let mut mine = Notes::default();
+        let shared = mine.add(t(0), None);
+        mine.get_mut(shared).unwrap().text = "mine, newer".into();
+        mine.get_mut(shared).unwrap().updated = t(10);
+        let old_here = mine.add(t(0), None);
+        mine.get_mut(old_here).unwrap().text = "old".into();
+
+        let mut backup = mine.clone();
+        backup.get_mut(shared).unwrap().text = "backup, older".into();
+        backup.get_mut(shared).unwrap().updated = t(5);
+        backup.get_mut(old_here).unwrap().text = "backup, newer".into();
+        backup.get_mut(old_here).unwrap().updated = t(20);
+        let only_in_backup = backup.add(t(0), None);
+        backup.get_mut(only_in_backup).unwrap().text = "from backup".into();
+
+        assert_eq!(mine.merge(&backup), (1, 1));
+        let text = |n: &Notes, id| n.notes.iter().find(|x| x.id == id).unwrap().text.clone();
+        assert_eq!(text(&mine, shared), "mine, newer");
+        assert_eq!(text(&mine, old_here), "backup, newer");
+        assert_eq!(text(&mine, only_in_backup), "from backup");
+        assert!(!mine.notes.iter().find(|x| x.id == only_in_backup).unwrap().open);
+        // Merging the same backup again changes nothing.
+        assert_eq!(mine.merge(&backup), (0, 0));
+    }
+
+    #[test]
+    fn reads_notes_backups_and_full_backups() {
+        let mut notes = Notes::default();
+        let id = notes.add(now(), None);
+        notes.get_mut(id).unwrap().text = "Call mum".into();
+        let notes_file = serde_json::to_string(&notes).unwrap();
+        assert_eq!(parse_backup(notes_file.as_bytes()).unwrap(), notes);
+
+        let full = format!(r#"{{"lists":[],"tasks":[],"default_list":"x","{BACKUP_KEY}":{notes_file}}}"#);
+        assert_eq!(parse_backup(full.as_bytes()).unwrap(), notes);
+
+        let tasks_only = r#"{"lists":[],"tasks":[],"default_list":"x"}"#;
+        assert!(parse_backup(tasks_only.as_bytes()).unwrap_err().contains("doesn't contain"));
+        assert!(parse_backup(b"not json").is_err());
+    }
+
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    #[test]
+    fn daily_notes_backups_keep_the_newest() {
+        let dir = std::env::temp_dir().join(format!("rustdo-notes-bk-{}", Uuid::new_v4()));
+        let mut notes = Notes::default();
+        file::write_daily_backup(&dir, &notes, now().date(), 3).unwrap();
+        assert!(!dir.exists(), "no notes, no backup");
+        notes.add(now(), None);
+        for d in 1..=5 {
+            let day = chrono::NaiveDate::from_ymd_opt(2026, 11, d).unwrap();
+            file::write_daily_backup(&dir, &notes, day, 3).unwrap();
+        }
+        // A manual "before restore" copy shares the prefix but isn't a daily backup.
+        std::fs::write(dir.join("RustDo-notes-before-restore-1.json"), "{}").unwrap();
+        file::write_daily_backup(&dir, &notes, chrono::NaiveDate::from_ymd_opt(2026, 11, 6).unwrap(), 3).unwrap();
+        let mut names: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["RustDo-notes-2026-11-04.json", "RustDo-notes-2026-11-05.json", "RustDo-notes-2026-11-06.json", "RustDo-notes-before-restore-1.json"]
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]

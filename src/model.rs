@@ -133,6 +133,11 @@ pub struct Settings {
     /// The newest version whose "What's new" the user has seen (shown once after updates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_version: Option<String>,
+    /// Windows: the version an automatic update last tried to install. If RustDo starts
+    /// again still older than that, the update didn't finish, so don't retry it on its own
+    /// (that would close RustDo at every start); offer "Update & restart" instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_attempt: Option<String>,
     /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
@@ -153,6 +158,7 @@ impl Default for Settings {
             crisp_text: true,
             clock_24h: false,
             last_seen_version: None,
+            update_attempt: None,
             hub: None,
         }
     }

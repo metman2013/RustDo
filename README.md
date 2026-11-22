@@ -59,8 +59,14 @@ notes** in the sidebar and click **+ New note**. Each note is its own small wind
   Sticky notes page.
 
 Notes show while RustDo is running (minimized is fine), and reopen where you left them.
-They are saved in `notes.json` next to `tasks.json`. They're never synced to a RustDo Hub
-or shared, and they aren't part of the task backups.
+They are saved in `notes.json` next to `tasks.json` and are never synced to a RustDo Hub
+or shared.
+
+Backups: each day's automatic backup also writes `Backups\RustDo-notes-<date>.json` (last
+14 days, and to your extra backup folder if set). **Export backup** includes the notes and
+**Restore from backup** brings them back (after saving a copy of your current notes). To back
+up or restore only notes, use **Back up notes… / Restore notes…** on the Sticky notes page or
+in Settings › Backups; restoring notes merges them with the ones you have.
 
 ## Family sharing (RustDo Hub)
 

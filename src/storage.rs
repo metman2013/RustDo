@@ -111,6 +111,38 @@ impl Storage {
         }
     }
 
+    /// Desktop/Android: the folders that receive automatic backups (Backups next to the
+    /// data file first, then the user's extra backup folder if set).
+    pub fn backup_dirs(&self, settings: &crate::model::Settings) -> Vec<PathBuf> {
+        match self {
+            Storage::File(path) => {
+                let mut dirs = vec![backups_dir(path)];
+                if let Some(extra) = settings.backup_dir.as_deref().filter(|d| !d.trim().is_empty()) {
+                    dirs.push(PathBuf::from(extra));
+                }
+                dirs
+            }
+            #[cfg(target_arch = "wasm32")]
+            Storage::Browser => Vec::new(),
+        }
+    }
+
+    /// Desktop: today's sticky notes backup, next to the task backups.
+    pub fn auto_backup_notes(
+        &self,
+        notes: &crate::notes::Notes,
+        settings: &crate::model::Settings,
+        today: chrono::NaiveDate,
+    ) -> Result<(), String> {
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        for dir in self.backup_dirs(settings) {
+            crate::notes::file::write_daily_backup(&dir, notes, today, KEEP_BACKUPS)
+                .map_err(|e| format!("couldn't back up your sticky notes to {}: {e}", dir.display()))?;
+        }
+        let _ = (notes, settings, today);
+        Ok(())
+    }
+
     /// Where the automatic backups go, for showing to the user.
     pub fn backups_location(&self) -> String {
         match self {
@@ -148,6 +180,19 @@ pub fn backup_file_name(date: chrono::NaiveDate) -> String {
 /// The full data as pretty JSON: the export format, identical to the data file.
 pub fn export_json(store: &Store) -> String {
     serde_json::to_string_pretty(store).unwrap_or_default()
+}
+
+/// The export format, with the sticky notes alongside (under `sticky_notes`) when there
+/// are any. Older RustDo versions read it fine: they ignore the extra field.
+pub fn export_json_with_notes(store: &Store, notes: Option<&crate::notes::Notes>) -> String {
+    let Some(notes) = notes.filter(|n| !n.notes.is_empty()) else {
+        return export_json(store);
+    };
+    let Ok(mut value) = serde_json::to_value(store) else { return export_json(store) };
+    if let (Some(map), Ok(n)) = (value.as_object_mut(), serde_json::to_value(notes)) {
+        map.insert(crate::notes::BACKUP_KEY.to_string(), n);
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| export_json(store))
 }
 
 /// Reads a RustDo backup/export (or a copy of tasks.json).
@@ -464,6 +509,24 @@ mod tests {
         assert_eq!(back.tasks, store.tasks);
         assert!(parse_backup(br#"{"lists":[]}"#).is_err(), "Microsoft To Do exports aren't backups");
         assert!(parse_backup(b"not json").is_err());
+    }
+
+    #[test]
+    fn exports_carry_sticky_notes_and_still_restore_as_backups() {
+        let now = chrono::Local::now().naive_local();
+        let mut store = Store::new();
+        store.add_task("Backed up", View::All, now);
+        let mut notes = crate::notes::Notes::default();
+        let id = notes.add(now, None);
+        notes.get_mut(id).unwrap().text = "Call mum".into();
+
+        let json = export_json_with_notes(&store, Some(&notes));
+        assert_eq!(parse_backup(json.as_bytes()).unwrap().tasks, store.tasks);
+        assert_eq!(crate::notes::parse_backup(json.as_bytes()).unwrap(), notes);
+
+        // No notes: exactly the old format.
+        assert_eq!(export_json_with_notes(&store, Some(&crate::notes::Notes::default())), export_json(&store));
+        assert_eq!(export_json_with_notes(&store, None), export_json(&store));
     }
 
     #[test]

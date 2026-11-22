@@ -37,6 +37,8 @@ pub struct Shared {
     spawn: HashMap<Uuid, (Option<Pos2>, Vec2)>,
     /// A just-created note whose text box should get the keyboard.
     focus: Option<Uuid>,
+    /// Notes changed since the last automatic backup.
+    backup_pending: bool,
 }
 
 pub type SharedNotes = Arc<Mutex<Shared>>;
@@ -62,12 +64,46 @@ impl Shared {
             confirm_delete: None,
             spawn: HashMap::new(),
             focus: None,
+            backup_pending: false,
         }))
     }
 
     pub fn changed(&mut self) {
         self.dirty = true;
+        self.backup_pending = true;
         self.last_change = Instant::now();
+    }
+
+    /// Whether notes changed since this was last asked (for the automatic backup).
+    pub fn take_backup_pending(&mut self) -> bool {
+        std::mem::take(&mut self.backup_pending)
+    }
+
+    /// A full restore: the backup's notes replace these. A copy of the current notes is
+    /// saved in `safety_dir` first (`RustDo-notes-before-restore-<time>.json`).
+    pub fn replace_all(&mut self, notes: Notes, safety_dir: Option<&std::path::Path>) -> Result<(), String> {
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        if let Some(dir) = safety_dir.filter(|_| !self.notes.notes.is_empty()) {
+            let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+            let copy = dir.join(format!("{}before-restore-{stamp}.json", notes::BACKUP_PREFIX));
+            notes::file::save(&copy, &self.notes).map_err(|e| format!("couldn't save your current sticky notes first ({e})"))?;
+        }
+        let _ = safety_dir;
+        self.notes = notes;
+        self.notes.repair();
+        self.spawn.clear();
+        self.confirm_delete = None;
+        self.changed();
+        self.save_if_due(true);
+        Ok(())
+    }
+
+    /// A notes-only restore: adds the backup's notes without losing any here.
+    pub fn merge_in(&mut self, notes: &Notes) -> (usize, usize) {
+        let counts = self.notes.merge(notes);
+        self.changed();
+        self.save_if_due(true);
+        counts
     }
 
     /// Saves if something changed a moment ago (typing doesn't write on every key).
@@ -413,12 +449,27 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction) 
     }
 }
 
+/// What the Sticky notes page asks the main window to do (file dialogs live there).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PageAction {
+    None,
+    Backup,
+    Restore,
+}
+
 /// The main window's "Sticky notes" page: every note, to show, hide, create or delete.
-pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) {
+pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
+    let mut page_action = PageAction::None;
     let mut s = lock(shared);
     ui.horizontal(|ui| {
         ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui.button("Restore notes…").on_hover_text("Bring notes back from a backup file (your current notes are kept)").clicked() {
+                page_action = PageAction::Restore;
+            }
+            if ui.button("Back up notes…").on_hover_text("Save all sticky notes to a file").clicked() {
+                page_action = PageAction::Backup;
+            }
             if ui.button("+ New note").clicked() {
                 // Next to the RustDo window (cascading from the newest note if there is one).
                 let near = s.notes.notes.last().filter(|n| n.open).and_then(|n| n.pos).or_else(|| {
@@ -431,7 +482,8 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) {
     ui.label(
         RichText::new(
             "Notes sit on your desktop as their own little windows while RustDo is running. \
-             They stay on this computer: never synced or shared.",
+             They stay on this computer: never synced or shared. They're included in RustDo's \
+             daily backups, and “Back up notes…” saves them to a file of your own.",
         )
         .weak(),
     );
@@ -445,7 +497,7 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) {
             ui.label(RichText::new("📝").size(40.0));
             ui.label(RichText::new("No sticky notes yet. Click “+ New note” to put one on your desktop.").weak());
         });
-        return;
+        return page_action;
     }
     let mut toggle = None;
     let mut delete = None;
@@ -506,4 +558,5 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) {
         s.confirm_delete = None;
     }
     s.save_if_due(false);
+    page_action
 }
