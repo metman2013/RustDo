@@ -8,6 +8,11 @@ Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, 
 
 ## 0.2.6 - 2026-11-22
 
+### New
+- Sticky notes are now backed up. The daily automatic backup saves them next to your task backups (and to your extra backup folder, if you set one), keeping the last 14 days.
+- Export backup includes your sticky notes, and Restore from backup brings them back. Older backups without notes still restore and leave your current notes alone.
+- Back up or restore just your sticky notes, from Settings under Backups or from the Sticky notes page. Restoring notes keeps the ones you have: notes from the backup are added, and a note in both keeps whichever was edited last.
+
 ### Fixed
 - Windows: automatic updates could fail and leave RustDo closing itself at every start without reopening. The background reminder helper kept the program file in use, so the installer couldn't replace it. The installer and RustDo now stop the helper first, and the helper starts again when the new version opens.
 - Windows: if an automatic update ever doesn't finish, RustDo no longer retries it on its own at every start. It stays open and offers "Update & restart" instead.
