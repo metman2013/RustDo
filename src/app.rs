@@ -140,6 +140,10 @@ pub struct TodoApp {
     rename_focus: bool,
     confirm_delete_list: Option<Uuid>,
     alerts: Vec<Uuid>,
+    /// How many reminders the reminders box showed last frame (a new one re-opens it).
+    alerts_shown: usize,
+    /// Whether the reminders box is expanded (false: just its header).
+    alerts_open: bool,
     toast: Option<Toast>,
     focus_add: bool,
     focus_search: bool,
@@ -211,6 +215,8 @@ impl TodoApp {
             rename_focus: false,
             confirm_delete_list: None,
             alerts: Vec::new(),
+            alerts_shown: 0,
+            alerts_open: true,
             toast: loaded.warning.map(|text| Toast { text, undo: None, at: Instant::now() }),
             // Don't pop up the on-screen keyboard as soon as a phone opens the app.
             focus_add: !platform::IS_MOBILE_OR_WEB,
@@ -2338,48 +2344,89 @@ impl TodoApp {
 
     // ------------------------------------------------------------------ overlays
 
+    /// Reminders that came due while RustDo is open: one box in the corner (bottom centre on
+    /// phones) listing them all, which collapses to its header. A new reminder opens it again.
     fn alert_windows(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
         let store = &self.store;
         self.alerts.retain(|id| store.task(*id).is_some_and(|t| !t.done));
-        let mut acted = Vec::new();
-        let (alert_align, alert_x) =
-            if ctx.screen_rect().width() < NARROW_WIDTH { (Align2::CENTER_BOTTOM, 0.0) } else { (Align2::RIGHT_BOTTOM, -16.0) };
-        for (i, id) in self.alerts.iter().enumerate() {
-            let Some(t) = self.store.task(*id) else { continue };
-            egui::Window::new("🔔 Reminder")
-                .id(Id::new(("alert", *id)))
-                .collapsible(false)
-                .resizable(false)
-                // Above the Android navigation bar; centred on phones.
-                .anchor(alert_align, Vec2::new(alert_x, -16.0 - self.insets[3] - i as f32 * 140.0))
-                .show(ctx, |ui| {
-                    ui.set_min_width(dialog_width(ui, 280.0));
-                    ui.label(RichText::new(&t.title).strong().size(16.0));
-                    if let Some(due) = t.due {
-                        ui.label(RichText::new(format!("Due {}", relative_date(due, now.date()))).weak());
-                    }
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("✔ Complete").clicked() {
-                            acted.push((*id, AlertAction::Complete));
-                        }
-                        if ui.button("Open").clicked() {
-                            acted.push((*id, AlertAction::Open));
-                        }
-                        if ui.button("Dismiss").clicked() {
-                            acted.push((*id, AlertAction::Dismiss));
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Snooze:").weak());
-                        for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
-                            if small_btn(ui, label).clicked() {
-                                acted.push((*id, AlertAction::Snooze(mins)));
-                            }
-                        }
-                    });
-                });
+        let count = self.alerts.len();
+        let grew = count > self.alerts_shown;
+        self.alerts_shown = count;
+        if count == 0 {
+            return;
         }
+        let mut acted = Vec::new();
+        let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
+        let (align, x) = if narrow { (Align2::CENTER_BOTTOM, 0.0) } else { (Align2::RIGHT_BOTTOM, -16.0) };
+        // Never taller than ~60% of the window; more reminders scroll.
+        let max_list_h = (ctx.screen_rect().height() * 0.6).max(150.0);
+        egui::Window::new("Reminders")
+            .id(Id::new("alerts"))
+            .title_bar(false)
+            .collapsible(false)
+            .resizable(false)
+            // Above the Android navigation bar.
+            .anchor(align, Vec2::new(x, -16.0 - self.insets[3]))
+            .show(ctx, |ui| {
+                ui.set_width(dialog_width(ui, 300.0));
+                if grew {
+                    self.alerts_open = true;
+                }
+                let open = self.alerts_open;
+                ui.horizontal(|ui| {
+                    let size = Vec2::splat(ui.spacing().icon_width);
+                    let (_, icon) = ui.allocate_exact_size(size, Sense::click());
+                    egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon);
+                    let title = if count == 1 { "🔔 Reminder".to_string() } else { format!("🔔 {count} reminders") };
+                    let label = ui.add(egui::Label::new(RichText::new(title).strong().size(16.0)).sense(Sense::click()));
+                    if (icon | label).on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+                        self.alerts_open = !open;
+                    }
+                    if count > 1 {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if small_btn(ui, "Dismiss all").clicked() {
+                                for id in &self.alerts {
+                                    acted.push((*id, AlertAction::Dismiss));
+                                }
+                            }
+                        });
+                    }
+                });
+                if open {
+                    ui.separator();
+                    egui::ScrollArea::vertical().max_height(max_list_h).show(ui, |ui| {
+                        for (i, id) in self.alerts.iter().enumerate() {
+                            let Some(t) = self.store.task(*id) else { continue };
+                            if i > 0 {
+                                ui.separator();
+                            }
+                            ui.label(RichText::new(&t.title).strong());
+                            if let Some(due) = t.due {
+                                ui.label(RichText::new(format!("Due {}", relative_date(due, now.date()))).weak().small());
+                            }
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("✔ Complete").clicked() {
+                                    acted.push((*id, AlertAction::Complete));
+                                }
+                                if ui.button("Open").clicked() {
+                                    acted.push((*id, AlertAction::Open));
+                                }
+                                if ui.button("Dismiss").clicked() {
+                                    acted.push((*id, AlertAction::Dismiss));
+                                }
+                            });
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new("Snooze:").weak());
+                                for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
+                                    if small_btn(ui, label).clicked() {
+                                        acted.push((*id, AlertAction::Snooze(mins)));
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+            });
         for (id, action) in acted {
             self.alerts.retain(|a| *a != id);
             match action {
