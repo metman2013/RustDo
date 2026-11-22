@@ -35,8 +35,10 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Close a running RustDo before replacing it, and reopen it afterwards.
-CloseApplications=yes
+; Close a running RustDo before replacing it, and reopen it afterwards. "force": the
+; reminder helper (rustdo.exe --reminders) has no window, so Windows can't ask it to close
+; politely; without force it keeps rustdo.exe locked and a silent update fails.
+CloseApplications=force
 RestartApplications=no
 
 [Languages]
@@ -67,3 +69,18 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/IM rustdo.exe /F"; Flags: runhidde
 Filename: "{sys}\reg.exe"; Parameters: "delete ""HKCU\Software\Microsoft\Windows\CurrentVersion\Run"" /v ""RustDo reminders"" /f"; Flags: runhidden; RunOnceId: "RemoveReminderAutostart"
 
 ; Your tasks live in Documents\RustDo and are deliberately NOT removed on uninstall.
+
+[Code]
+// Stop every running RustDo (the app and the background reminder helper, which share
+// rustdo.exe) before files are replaced. Otherwise the locked exe makes a silent update
+// fail, and the old version keeps trying to update itself at every start.
+// Tasks are safe: the app saves before it runs the installer, and the helper only reads.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/IM rustdo.exe /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Give Windows a moment to release the file after the processes exit.
+  Sleep(800);
+  Result := '';
+end;

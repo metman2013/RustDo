@@ -78,6 +78,13 @@ pub fn ensure_helper(enabled: bool) {
     win::ensure_helper(enabled);
 }
 
+/// Windows: stops the background reminder helper (it runs from this same exe, which the
+/// installer needs to replace). It's started again when the updated RustDo opens.
+pub fn stop_helper() {
+    #[cfg(windows)]
+    win::stop_helper();
+}
+
 /// Entry point for `rustdo.exe --reminders`. Runs until notifications are switched off.
 pub fn run_reminder_helper() {
     #[cfg(windows)]
@@ -140,6 +147,17 @@ mod win {
             }
             reg(&["add", &key, "/v", "IconUri", "/t", "REG_SZ", "/d", &icon.display().to_string(), "/f"]);
         }
+    }
+
+    /// Ends every other process running this exe (the reminder helper), not this one.
+    pub fn stop_helper() {
+        let Ok(exe) = std::env::current_exe() else { return };
+        let Some(name) = exe.file_name().and_then(|n| n.to_str()) else { return };
+        let me = std::process::id();
+        let _ = std::process::Command::new("taskkill")
+            .args(["/F", "/FI", &format!("IMAGENAME eq {name}"), "/FI", &format!("PID ne {me}")])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
     }
 
     pub fn ensure_helper(enabled: bool) {

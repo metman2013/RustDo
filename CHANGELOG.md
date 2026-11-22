@@ -6,6 +6,12 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.2.6 - 2026-11-22
+
+### Fixed
+- Windows: automatic updates could fail and leave RustDo closing itself at every start without reopening. The background reminder helper kept the program file in use, so the installer couldn't replace it. The installer and RustDo now stop the helper first, and the helper starts again when the new version opens.
+- Windows: if an automatic update ever doesn't finish, RustDo no longer retries it on its own at every start. It stays open and offers "Update & restart" instead.
+
 ## 0.2.5 - 2026-11-22
 
 ### New

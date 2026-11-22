@@ -182,6 +182,13 @@ impl TodoApp {
         apply_style(&cc.egui_ctx, touch_mode);
         let notes = notes_ui::Shared::load(if notes::SUPPORTED { storage.folder() } else { None });
 
+        // An automatic update that did finish: forget the attempt.
+        if loaded.store.settings.update_attempt.as_deref().is_some_and(|v| {
+            changelog::version_key(v) <= changelog::version_key(update::CURRENT_VERSION)
+        }) {
+            loaded.store.settings.update_attempt = None;
+        }
+
         // "What's new" after an update. A brand-new install (no tasks yet) just records
         // the version: there's nothing "new" to someone who has never used RustDo.
         let mut first_run_dirty = false;
@@ -392,10 +399,19 @@ impl TodoApp {
                     CheckResult::Available(release) => {
                         self.update_dismissed = false;
                         // Found right after launch: update straight away, no questions.
+                        let version = release.version.clone();
+                        // An earlier automatic update to this version didn't finish (we're
+                        // still running the old one): don't close RustDo for it again.
+                        let failed_before = self.store.settings.update_attempt.as_deref() == Some(version.as_str());
                         let auto = self.can_auto_update()
                             && self.started.elapsed() < AUTO_UPDATE_WINDOW
-                            && release.download_url.is_some();
-                        let version = release.version.clone();
+                            && release.download_url.is_some()
+                            && !failed_before;
+                        if failed_before {
+                            self.notify(format!(
+                                "The last automatic update to {version} didn't finish. Use “Update & restart” to try again."
+                            ));
+                        }
                         self.update_available = Some(release);
                         if auto {
                             self.auto_installing = true;
@@ -462,10 +478,24 @@ impl TodoApp {
             self.notify(format!("TEST: would now run {} silently", installer.display()));
             return;
         }
-        match std::process::Command::new(&installer)
-            .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"])
-            .spawn()
-        {
+        // The reminder helper runs from this same exe: stop it so the installer can replace it.
+        notify::stop_helper();
+        // Remember the attempt: if RustDo starts again still on the old version, the update
+        // failed and we won't retry it automatically at every start.
+        if self.auto_installing {
+            self.store.settings.update_attempt = self.update_available.as_ref().map(|r| r.version.clone());
+        }
+        let mut args = vec![
+            "/VERYSILENT".to_string(),
+            "/SUPPRESSMSGBOXES".into(),
+            "/NORESTART".into(),
+            "/CLOSEAPPLICATIONS".into(),
+        ];
+        // A log next to the tasks, for when an update goes wrong.
+        if let Some(dir) = self.storage.folder() {
+            args.push(format!("/LOG={}", dir.join("update-install.log").display()));
+        }
+        match std::process::Command::new(&installer).args(&args).spawn() {
             Ok(_) => {
                 // The installer replaces this program, so get out of its way.
                 self.persist();
