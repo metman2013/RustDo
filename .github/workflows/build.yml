@@ -12,7 +12,9 @@ name: Build
 
 on:
   push:
-    branches: [main]
+    # claude/**: work branches from Claude Code sessions get the full build too (no
+    # release, no web deploy, no Docker publish: those only happen from main or a tag).
+    branches: [main, "claude/**"]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
