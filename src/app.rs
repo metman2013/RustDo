@@ -361,12 +361,12 @@ impl TodoApp {
     fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
         // A RustDo backup is restored (after confirmation) rather than merged.
         if let Ok(store) = storage::parse_backup(bytes) {
-            let carried = notes::parse_backup(bytes).ok().filter(|_| notes::SUPPORTED);
+            let carried = notes::parse_backup(bytes).ok().filter(|_| notes::AVAILABLE);
             self.pending_restore = Some((file_name.to_string(), store, carried));
             return;
         }
         // A sticky notes backup (desktop) is merged in (after confirmation).
-        if notes::SUPPORTED {
+        if notes::AVAILABLE {
             if let Ok(found) = notes::parse_backup(bytes) {
                 self.pending_notes_restore = Some((file_name.to_string(), found));
                 return;
@@ -1198,7 +1198,8 @@ impl TodoApp {
                 }
                 if ui.button("Restore sticky notes…").on_hover_text("Bring notes back from a backup (your current notes are kept)").clicked() {
                     self.close_settings(ui);
-                    self.pick_notes_restore_file();
+                    let ctx = ui.ctx().clone();
+                    self.pick_notes_restore_file(&ctx);
                 }
             });
             if let Some(dir) = self.storage.folder() {
@@ -1394,7 +1395,7 @@ impl TodoApp {
 
     fn export_backup(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
         // Desktop: the backup carries the sticky notes too.
-        let carried = notes::SUPPORTED.then(|| notes_ui::lock(&self.notes).notes.clone());
+        let carried = notes::AVAILABLE.then(|| notes_ui::lock(&self.notes).notes.clone());
         let json = storage::export_json_with_notes(&self.store, carried.as_ref());
         let name = storage::backup_file_name(now.date());
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
@@ -1596,7 +1597,7 @@ impl TodoApp {
 
     /// Desktop: choose a sticky notes backup (or a full RustDo backup) to restore notes from.
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-    fn pick_notes_restore_file(&mut self) {
+    fn pick_notes_restore_file(&mut self, _ctx: &egui::Context) {
         let mut dialog = rfd::FileDialog::new()
             .set_title("Restore sticky notes")
             .add_filter("Sticky notes or RustDo backup", &["json"]);
@@ -1612,11 +1613,33 @@ impl TodoApp {
         }
     }
 
-    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+    /// Web: downloads every sticky note as a file.
+    #[cfg(target_arch = "wasm32")]
+    fn backup_notes(&mut self, today: NaiveDate) {
+        let snapshot = notes_ui::lock(&self.notes).notes.clone();
+        if snapshot.notes.is_empty() {
+            self.notify("There are no sticky notes to back up yet.");
+            return;
+        }
+        let name = notes::backup_file_name(today);
+        let json = serde_json::to_string_pretty(&snapshot).unwrap_or_default();
+        match platform::download_text(&name, &json) {
+            Ok(()) => self.notify(format!("Downloaded {name}. Keep it somewhere safe.")),
+            Err(e) => self.notify(format!("Couldn't download the notes backup: {e}")),
+        }
+    }
+
+    /// Web: the browser's file picker; a notes backup it returns goes to the restore dialog.
+    #[cfg(target_arch = "wasm32")]
+    fn pick_notes_restore_file(&mut self, ctx: &egui::Context) {
+        self.pick_import_file(ctx);
+    }
+
+    #[cfg(target_os = "android")]
     fn backup_notes(&mut self, _today: NaiveDate) {}
 
-    #[cfg(any(target_os = "android", target_arch = "wasm32"))]
-    fn pick_notes_restore_file(&mut self) {}
+    #[cfg(target_os = "android")]
+    fn pick_notes_restore_file(&mut self, _ctx: &egui::Context) {}
 
     fn restore_dialog(&mut self, ctx: &egui::Context) {
         // Android: paste a backup that was exported to the clipboard.
@@ -1643,7 +1666,7 @@ impl TodoApp {
                 let text = self.paste_restore.take().unwrap_or_default();
                 match storage::parse_backup(text.as_bytes()) {
                     Ok(store) => {
-                        let carried = notes::parse_backup(text.as_bytes()).ok().filter(|_| notes::SUPPORTED);
+                        let carried = notes::parse_backup(text.as_bytes()).ok().filter(|_| notes::AVAILABLE);
                         self.pending_restore = Some(("pasted backup".into(), store, carried));
                     }
                     Err(e) => self.notify(e),
@@ -1921,7 +1944,7 @@ impl TodoApp {
                     (false, true) => 80.0,
                     (true, false) => 86.0,
                     (false, false) => 52.0,
-                } + if notes::SUPPORTED { NOTES_SECTION_H } else { 0.0 };
+                } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 };
                 // Phone layout: the whole screen scrolls as one page, so show every list.
                 let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
@@ -2013,13 +2036,19 @@ impl TodoApp {
                 }
 
                 // Sticky notes: their own section, apart from the to-do lists.
-                if notes::SUPPORTED {
+                if notes::AVAILABLE {
                     ui.add_space(4.0);
                     ui.separator();
-                    ui.label(RichText::new("DESKTOP NOTES").small().weak());
-                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open).count();
+                    let (heading, tip) = if notes::WALL {
+                        ("STICKY NOTES", "A wall of sticky notes, kept in this browser")
+                    } else {
+                        ("DESKTOP NOTES", "Notes on your desktop, kept on this computer")
+                    };
+                    ui.label(RichText::new(heading).small().weak());
+                    // Desktop: notes showing; web: all of them (they're all on the wall).
+                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open || notes::WALL).count();
                     if nav_row(ui, self.notes_page, "📝", "Sticky notes", shown)
-                        .on_hover_text("Notes on your desktop, kept on this computer")
+                        .on_hover_text(tip)
                         .clicked()
                     {
                         self.notes_page = true;
@@ -2056,7 +2085,7 @@ impl TodoApp {
             }
             match notes_ui::notes_page(ui, &self.notes) {
                 notes_ui::PageAction::Backup => self.backup_notes(Local::now().date_naive()),
-                notes_ui::PageAction::Restore => self.pick_notes_restore_file(),
+                notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::None => {}
             }
         });

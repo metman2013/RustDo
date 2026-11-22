@@ -6,6 +6,16 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.2.8 - 2026-11-22
+
+### New
+- Sticky notes in the web app: the Sticky notes page is now a wall of notes. Drag a note by its top bar to move it, drag its corner to resize it, and the note you touch comes to the front. Tidy up lines them all up neatly.
+- Web notes can be any colour, with adjustable text size and colour, just like on the desktop. They're kept in your browser and included in Export backup; Back up notes and Restore notes download and open a notes file.
+- On a phone-sized screen, the wall becomes a simple column of notes.
+
+### Fixed
+- Dragging a note on a touch screen no longer makes it jump on the first touch.
+
 ## 0.2.7 - 2026-11-22
 
 ### New
