@@ -2424,6 +2424,13 @@ impl TodoApp {
 }
 
 impl eframe::App for TodoApp {
+    /// Android: keep the font atlas small enough for 16-bit texture coordinates.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if cfg!(target_os = "android") {
+            raw_input.max_texture_side = capped_texture_side(raw_input.max_texture_side);
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let now = Local::now().naive_local();
         let today = now.date();
@@ -2557,6 +2564,21 @@ fn apply_style(ctx: &egui::Context, touch: bool) {
             s.spacing.button_padding = Vec2::new(8.0, 4.0);
         }
     });
+}
+
+/// Widest font atlas whose texture coordinates are still exact in 16-bit floats.
+///
+/// egui makes the font atlas as wide as the GPU allows (often 8192 or 16384 px) and its
+/// GLES shaders use `mediump` texture coordinates. Most phone GPUs quietly compute those at
+/// full precision, but some (e.g. the PowerVR GPU in the Pixel 10 series) really use 16-bit
+/// floats: on a 16384 px atlas a coordinate is then only accurate to ~8 texels, so every
+/// letter is sampled a few pixels to the side, cut off on one edge and showing a sliver of
+/// its neighbour. At 2048 px the error stays under half a texel, inside the 1 px padding
+/// egui leaves between glyphs.
+const MAX_ATLAS_SIDE: usize = 2048;
+
+fn capped_texture_side(side: Option<usize>) -> Option<usize> {
+    Some(side.map_or(MAX_ATLAS_SIDE, |s| s.min(MAX_ATLAS_SIDE)))
 }
 
 /// Android: draw at a whole-number scale. egui places every glyph on the pixel grid, so
@@ -2853,4 +2875,40 @@ fn task_row(
             ui.close_menu();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rounds to the nearest 16-bit float (11 significant bits), as a `mediump` GPU does.
+    fn to_f16(x: f32) -> f32 {
+        if x == 0.0 {
+            return 0.0;
+        }
+        let step = 2f32.powi(x.abs().log2().floor() as i32 - 10);
+        (x / step).round() * step
+    }
+
+    /// Worst error, in texels, of a texture coordinate across an atlas of this width
+    /// (sampled at every glyph-edge-like position, including ones between texels).
+    fn worst_texel_error(width: usize) -> f32 {
+        (0..width * 4)
+            .map(|i| {
+                let u = i as f32 / 4.0 / width as f32;
+                (to_f16(u) - u).abs() * width as f32
+            })
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn atlas_is_capped_for_16_bit_texture_coordinates() {
+        assert_eq!(capped_texture_side(Some(16384)), Some(MAX_ATLAS_SIDE));
+        assert_eq!(capped_texture_side(Some(1024)), Some(1024));
+        assert_eq!(capped_texture_side(None), Some(MAX_ATLAS_SIDE));
+        // The bug: on a 16384 px atlas letters were sampled several texels off.
+        assert!(worst_texel_error(16384) >= 4.0);
+        // The fix: within half a texel, i.e. inside the 1 px padding between glyphs.
+        assert!(worst_texel_error(MAX_ATLAS_SIDE) <= 0.5);
+    }
 }
