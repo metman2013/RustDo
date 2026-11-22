@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod changelog;
+pub mod companion;
 pub mod import;
 pub mod model;
 pub mod notes;

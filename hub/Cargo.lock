@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "rustdo-hub"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "getrandom",
  "serde",

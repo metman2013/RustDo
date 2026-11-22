@@ -25,7 +25,7 @@ time. Turn them off under **⚙ → Notify me about reminders**.
 
 | Platform | When you're notified |
 |---|---|
-| **Windows** | **Always, even after you close RustDo.** A tiny background helper (`rustdo.exe --reminders`: no window, very little memory) shows a Windows notification at the reminder time. It starts with RustDo, and the installed version also starts it when you sign in to Windows. Turning notifications off stops it; uninstalling removes it. |
+| **Windows** | **Always, even after you close RustDo.** The background companion (`rustdo.exe --companion`, the same program that keeps [sticky notes](#sticky-notes-windows-and-linux) on the desktop) shows a Windows notification at the reminder time. It starts with RustDo, and the installed version also starts it when you sign in to Windows (even with the tray icon turned off, it then runs quietly for reminders). Turning notifications and background notes off stops it; uninstalling removes it. |
 | **Linux** | While RustDo is running (minimized is fine). |
 | **Web** | While the app is open, after you click **Allow notifications** in ⚙. Browsers can't notify for a closed web page. |
 | **Android** | In-app popup while the app is open. Real Android notifications are planned. |
@@ -58,7 +58,16 @@ notes** in the sidebar and click **+ New note**. Each note is its own small wind
 - **Keep on top** keeps a note above other windows. **✖** hides a note; show it again from the
   Sticky notes page.
 
-Notes show while RustDo is running (minimized is fine), and reopen where you left them.
+With **Settings › Background › Keep sticky notes running in the background** (on by default),
+notes stay on the desktop after you close RustDo. A RustDo tray icon (Windows: by the clock;
+Linux: in the panel's tray, which GNOME shows with the AppIndicator extension) keeps them
+running: click it to open RustDo, or right-click it for New sticky note, Show / Hide all
+notes and Quit. It's the same program started as `rustdo.exe --companion`, and it starts at
+sign-in unless you untick **Start with Windows** (Linux: **Start when I sign in**). On
+Windows it also delivers reminder notifications. Without it, notes show only while RustDo is
+open.
+
+Notes reopen where you left them.
 They are saved in `notes.json` next to `tasks.json` and are never synced to a RustDo Hub
 or shared.
 

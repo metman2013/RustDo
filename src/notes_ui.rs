@@ -39,9 +39,27 @@ pub struct Shared {
     focus: Option<Uuid>,
     /// Notes changed since the last automatic backup.
     backup_pending: bool,
+    /// When `notes.json` was last written or read by this process: another RustDo process
+    /// (the main window or the companion) saving it changes the file's time.
+    file_stamp: Option<std::time::SystemTime>,
 }
 
 pub type SharedNotes = Arc<Mutex<Shared>>;
+
+trait WithStamp {
+    fn with_stamp(self) -> Self;
+}
+
+impl WithStamp for SharedNotes {
+    /// Remembers the file time of what was just loaded.
+    fn with_stamp(self) -> Self {
+        {
+            let mut s = lock(&self);
+            s.file_stamp = s.stamp();
+        }
+        self
+    }
+}
 
 pub fn lock(shared: &SharedNotes) -> MutexGuard<'_, Shared> {
     shared.lock().unwrap_or_else(|e| e.into_inner())
@@ -65,7 +83,47 @@ impl Shared {
             spawn: HashMap::new(),
             focus: None,
             backup_pending: false,
+            file_stamp: None,
         }))
+        .with_stamp()
+    }
+
+    fn stamp(&self) -> Option<std::time::SystemTime> {
+        let path = self.path.as_ref()?;
+        std::fs::metadata(path).and_then(|m| m.modified()).ok()
+    }
+
+    /// Picks up changes another RustDo process saved (the main window and the background
+    /// companion share `notes.json`). Our own unsaved changes win: they're saved shortly.
+    /// Returns whether anything was reloaded.
+    pub fn reload_if_changed(&mut self) -> bool {
+        if self.dirty {
+            return false;
+        }
+        let stamp = self.stamp();
+        if stamp.is_none() || stamp == self.file_stamp {
+            return false;
+        }
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        if let Some(path) = &self.path {
+            let (fresh, warning) = notes::file::load(path);
+            if warning.is_none() {
+                // Keep window positions for notes that are still showing.
+                self.spawn.retain(|id, _| fresh.notes.iter().any(|n| n.id == *id && n.open));
+                self.notes = fresh;
+            }
+        }
+        self.file_stamp = stamp;
+        true
+    }
+
+    /// Shows or hides every note (the tray menu).
+    pub fn set_all_open(&mut self, open: bool) {
+        let ids: Vec<Uuid> = self.notes.notes.iter().map(|n| n.id).collect();
+        for id in ids {
+            self.set_open(id, open);
+        }
+        self.save_if_due(true);
     }
 
     pub fn changed(&mut self) {
@@ -117,6 +175,7 @@ impl Shared {
         if let Some(path) = &self.path {
             match notes::file::save(path, &self.notes) {
                 Ok(()) => {
+                    self.file_stamp = std::fs::metadata(path).and_then(|m| m.modified()).ok();
                     if self.warning.as_deref().is_some_and(|w| w.starts_with("Couldn't save")) {
                         self.warning = None;
                     }

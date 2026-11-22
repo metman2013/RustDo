@@ -133,6 +133,13 @@ pub struct Settings {
     /// The newest version whose "What's new" the user has seen (shown once after updates).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_version: Option<String>,
+    /// Desktop: keep sticky notes (and, on Windows, reminders) running in the background
+    /// companion, with a tray icon, after the main window closes.
+    #[serde(default = "yes")]
+    pub companion: bool,
+    /// Desktop: start the companion when the user signs in.
+    #[serde(default = "yes")]
+    pub companion_autostart: bool,
     /// Windows: the version an automatic update last tried to install. If RustDo starts
     /// again still older than that, the update didn't finish, so don't retry it on its own
     /// (that would close RustDo at every start); offer "Update & restart" instead.
@@ -159,6 +166,8 @@ impl Default for Settings {
             clock_24h: false,
             last_seen_version: None,
             update_attempt: None,
+            companion: true,
+            companion_autostart: true,
             hub: None,
         }
     }

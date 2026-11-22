@@ -6,6 +6,16 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.2.7 - 2026-11-22
+
+### New
+- Sticky notes stay on your desktop after you close RustDo. A RustDo icon in the system tray (by the clock on Windows) keeps them running: click it to open RustDo, or right-click it to add a note, show or hide all notes, or quit.
+- The tray icon starts when you sign in, so your notes come back after a restart. Turn this off in Settings under Background ("Start with Windows"), or turn the background notes off completely ("Keep sticky notes running in the background").
+- On Windows, reminders now come from the same tray companion, so they keep arriving after you close RustDo, as before.
+
+### Improved
+- Adding steps to a task is easier to spot: the step box now looks like a box, the blue + adds the step, and an Add button appears as you type.
+
 ## 0.2.6 - 2026-11-22
 
 ### New
