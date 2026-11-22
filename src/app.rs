@@ -8,6 +8,7 @@ use crate::import::{self, Import};
 use crate::notify;
 use crate::platform;
 use crate::storage::{self, Storage};
+use crate::sync::{self, Done, Job};
 use crate::update::{self, CheckResult, Release};
 use std::sync::mpsc::Receiver;
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
@@ -29,6 +30,12 @@ const NARROW_WIDTH: f32 = 700.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
+
+/// Built at runtime from `update::REPO` (like the other GitHub links) so the binary never
+/// contains "/RustDo/", which tools/build-release.ps1 treats as a leaked local path.
+fn hub_docs() -> String {
+    format!("https://github.com/{}/blob/main/docs/hub.md", update::REPO)
+}
 
 const ACCENT: Color32 = Color32::from_rgb(70, 125, 230);
 const DANGER: Color32 = Color32::from_rgb(215, 75, 75);
@@ -53,6 +60,16 @@ struct PendingImport {
     file_name: String,
     import: Import,
     include_completed: bool,
+}
+
+/// The "Share list" / "Join a shared list" dialog.
+struct ShareDialog {
+    /// The list being shared; `None` when joining someone else's list.
+    list: Option<Uuid>,
+    hub: String,
+    code: String,
+    busy: bool,
+    error: Option<String>,
 }
 
 struct Toast {
@@ -125,6 +142,14 @@ pub struct TodoApp {
     focus_add: bool,
     focus_search: bool,
     pending_import: Option<PendingImport>,
+    // Family sharing (RustDo Hub)
+    sync_rx: Option<Receiver<Vec<Done>>>,
+    sync_jobs: Vec<Job>,
+    last_sync_at: Option<Instant>,
+    /// Something changed: sync shortly instead of waiting for the regular round.
+    sync_soon: bool,
+    sync_error: Option<String>,
+    share_dialog: Option<ShareDialog>,
 }
 
 impl TodoApp {
@@ -188,6 +213,12 @@ impl TodoApp {
             focus_add: !platform::IS_MOBILE_OR_WEB,
             focus_search: false,
             pending_import: None,
+            sync_rx: None,
+            sync_jobs: Vec::new(),
+            last_sync_at: None,
+            sync_soon: false,
+            sync_error: None,
+            share_dialog: None,
         }
     }
 
@@ -376,7 +407,8 @@ impl TodoApp {
                 || self.paste_restore.is_some()
                 || self.pending_import.is_some()
                 || self.pending_restore.is_some()
-                || self.confirm_delete_list.is_some())
+                || self.confirm_delete_list.is_some()
+                || self.share_dialog.is_some())
     }
 
     /// Runs the downloaded installer silently (no wizard; it reopens RustDo when done).
@@ -518,6 +550,7 @@ impl TodoApp {
             }
             ui.separator();
             self.notification_menu_items(ui);
+            self.sharing_menu_items(ui);
             self.backup_menu_items(ui);
             #[cfg(target_os = "android")]
             {
@@ -530,6 +563,19 @@ impl TodoApp {
                     RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
                         .weak()
                         .small(),
+                );
+                if ui.checkbox(&mut self.store.settings.crisp_text, "Sharp text").changed() {
+                    self.dirty = true;
+                }
+                let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Rounds the screen scale to whole pixels so letters render evenly (screen {:.3}x, drawn at {:.3}x). Turn off if things look too big.",
+                        native,
+                        ui.ctx().pixels_per_point()
+                    ))
+                    .weak()
+                    .small(),
                 );
             }
             ui.separator();
@@ -563,6 +609,304 @@ impl TodoApp {
         std::thread::spawn(move || notify::ensure_helper(enabled));
         #[cfg(target_arch = "wasm32")]
         let _ = enabled;
+    }
+
+    // ------------------------------------------------------------------ family sharing
+
+    fn sharing_menu_items(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Family sharing").strong());
+        if !sync::SUPPORTED {
+            ui.label(
+                RichText::new("Sharing lists through a RustDo Hub works in the Windows, Linux and Android apps.")
+                    .weak()
+                    .small(),
+            );
+            ui.separator();
+            return;
+        }
+        let shared = self.store.shares.len();
+        let status = if shared == 0 {
+            "Share a list with people at home: right-click it (long-press on a phone) → Share list. Needs a RustDo Hub on your network.".to_string()
+        } else if let Some(err) = &self.sync_error {
+            format!("Can't sync right now: {err}")
+        } else {
+            let last = self.store.shares.iter().filter_map(|s| s.last_sync).max();
+            format!(
+                "{shared} shared list{} · {}",
+                if shared == 1 { "" } else { "s" },
+                last.map_or("not synced yet".into(), |t| format!("last synced {}", t.format("%H:%M")))
+            )
+        };
+        let color = if self.sync_error.is_some() && shared > 0 { DANGER } else { ui.visuals().weak_text_color() };
+        ui.label(RichText::new(status).color(color).small());
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Join a shared list…").clicked() {
+                self.open_share_dialog(None);
+                ui.close_menu();
+            }
+            if shared > 0 && ui.button("Sync now").clicked() {
+                self.last_sync_at = None;
+            }
+        });
+        ui.hyperlink_to("How to set up a RustDo Hub", hub_docs());
+        ui.separator();
+    }
+
+    fn open_share_dialog(&mut self, list: Option<Uuid>) {
+        self.share_dialog = Some(ShareDialog {
+            list,
+            hub: self.store.settings.hub.clone().unwrap_or_default(),
+            code: String::new(),
+            busy: false,
+            error: None,
+        });
+    }
+
+    /// Collects finished hub requests and starts the next round: every 30 seconds, or a
+    /// couple of seconds after a change.
+    fn sync_tick(&mut self, ctx: &egui::Context) {
+        if !sync::SUPPORTED {
+            return;
+        }
+        if let Some(rx) = &self.sync_rx {
+            match rx.try_recv() {
+                Ok(done) => {
+                    self.sync_rx = None;
+                    for d in done {
+                        self.sync_done(d);
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.sync_rx = None,
+            }
+        }
+        if self.sync_rx.is_some() {
+            return;
+        }
+        let since = self.last_sync_at.map(|t| t.elapsed());
+        let due = !self.sync_jobs.is_empty()
+            || (!self.store.shares.is_empty()
+                && since.is_none_or(|e| e >= StdDuration::from_secs(30) || (self.sync_soon && e >= StdDuration::from_secs(2))));
+        if !due {
+            return;
+        }
+        self.sync_soon = false;
+        self.last_sync_at = Some(Instant::now());
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut jobs = std::mem::take(&mut self.sync_jobs);
+        for share in &self.store.shares {
+            jobs.push(Job::Sync { hub: share.hub.clone(), out: sync::outgoing(&self.store, share, now_ms) });
+        }
+        self.sync_rx = Some(sync::run(jobs, ctx.clone()));
+    }
+
+    fn sync_done(&mut self, done: Done) {
+        match done {
+            Done::Synced(out, Ok(resp)) => {
+                let Some(idx) = self.store.shares.iter().position(|s| s.list_id == out.list_id) else { return };
+                if resp.list_id != out.list_id {
+                    self.sync_error = Some("the hub has a different list under this code".into());
+                    return;
+                }
+                // Taken out while applying: `apply` changes the store it lives in.
+                let mut share = self.store.shares.remove(idx);
+                let before = share.rev;
+                sync::apply(&mut self.store, &mut share, &out, &resp);
+                share.last_sync = Some(Local::now().naive_local());
+                let changed = share.rev != before || !out.sent.is_empty();
+                self.store.shares.insert(idx, share);
+                if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
+                    self.selected = None;
+                }
+                self.sync_error = None;
+                if changed {
+                    self.dirty = true;
+                }
+            }
+            Done::Synced(_, Err(e)) => self.sync_error = Some(e),
+            Done::Shared { list_id, hub, result } => {
+                let dialog = self.share_dialog.as_mut().filter(|d| d.list == Some(list_id));
+                match result {
+                    Ok(code) => {
+                        if self.store.lists.iter().any(|l| l.id == list_id) && !self.store.shares.iter().any(|s| s.list_id == list_id) {
+                            self.store.shares.push(sync::Share {
+                                list_id,
+                                hub,
+                                code,
+                                rev: 0,
+                                known: Default::default(),
+                                last_sync: None,
+                            });
+                            self.dirty = true;
+                            self.last_sync_at = None; // upload it right away
+                        }
+                        if let Some(d) = dialog {
+                            d.busy = false;
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(d) = dialog {
+                            d.busy = false;
+                            d.error = Some(e);
+                        }
+                    }
+                }
+            }
+            Done::Joined { hub, code, result } => {
+                let dialog = self.share_dialog.as_mut().filter(|d| d.list.is_none());
+                match result {
+                    Ok(resp) => match sync::join(&mut self.store, &hub, &code, &resp) {
+                        Some(mut share) => {
+                            share.last_sync = Some(Local::now().naive_local());
+                            let id = share.list_id;
+                            self.store.shares.push(share);
+                            self.dirty = true;
+                            self.view = View::List(id);
+                            self.show_nav = false;
+                            self.share_dialog = None;
+                            self.notify(format!("Joined “{}”", self.store.list_name(id)));
+                        }
+                        None => {
+                            if let Some(d) = dialog {
+                                d.busy = false;
+                                d.error = Some("You already have this list.".into());
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        if let Some(d) = dialog {
+                            d.busy = false;
+                            d.error = Some(e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn share_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.share_dialog.as_mut() else { return };
+        let list = dialog.list;
+        let existing = list.and_then(|id| self.store.shares.iter().find(|s| s.list_id == id)).cloned();
+        let title = match (list, &existing) {
+            (None, _) => "Join a shared list",
+            (Some(_), Some(_)) => "Shared list",
+            (Some(_), None) => "Share list",
+        };
+        let list_name = list.map(|id| self.store.list_name(id).to_string()).unwrap_or_default();
+        let mut close = false;
+        let mut stop_sharing = false;
+        let mut submit = false;
+        egui::Window::new(title)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                if let Some(share) = &existing {
+                    ui.label(format!("“{list_name}” is shared. Anyone with this code can join it from their RustDo:"));
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Label::new(RichText::new(&share.code).monospace().size(26.0).strong()).selectable(true));
+                        if ui.button("Copy").clicked() {
+                            ui.ctx().copy_text(share.code.clone());
+                        }
+                    });
+                    ui.label(RichText::new(format!("Hub: {}", share.hub)).weak().small());
+                    let status = match (&self.sync_error, share.last_sync) {
+                        (Some(e), _) => RichText::new(format!("Can't sync right now: {e}")).color(DANGER),
+                        (None, Some(t)) => RichText::new(format!("Last synced {}", t.format("%H:%M"))).weak(),
+                        (None, None) => RichText::new("Syncing…").weak(),
+                    };
+                    ui.label(status.small());
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                        if ui.button("Stop syncing on this device").clicked() {
+                            stop_sharing = true;
+                        }
+                    });
+                    return;
+                }
+                if list.is_some() {
+                    ui.label(format!(
+                        "Share “{list_name}” through your RustDo Hub. You'll get a code; anyone who has it and can reach the hub can see and change this list."
+                    ));
+                } else {
+                    ui.label("Enter your RustDo Hub's address and the code someone gave you.");
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("Hub address").small());
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut dialog.hub)
+                        .hint_text("e.g. 192.168.1.20:7979")
+                        .desired_width(f32::INFINITY),
+                );
+                submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && list.is_some();
+                if list.is_none() {
+                    ui.label(RichText::new("Share code").small());
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut dialog.code)
+                            .hint_text("e.g. K7QM-2XPD")
+                            .desired_width(f32::INFINITY),
+                    );
+                    submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                }
+                if let Some(e) = &dialog.error {
+                    ui.label(RichText::new(e).color(DANGER).small());
+                }
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    let label = if list.is_some() { "Share" } else { "Join" };
+                    if ui.add_enabled(!dialog.busy, egui::Button::new(label)).clicked() {
+                        submit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                    if dialog.busy {
+                        ui.spinner();
+                    }
+                });
+                ui.hyperlink_to(RichText::new("No hub yet? How to set one up").small(), hub_docs());
+            });
+
+        if submit && !dialog.busy {
+            dialog.error = None;
+            match sync::normalize_hub(&dialog.hub) {
+                None => dialog.error = Some("Enter the hub's address, e.g. 192.168.1.20:7979".into()),
+                Some(hub) => match list {
+                    Some(list_id) => {
+                        dialog.busy = true;
+                        self.sync_jobs.push(Job::Share { hub: hub.clone(), list_id });
+                        self.store.settings.hub = Some(hub);
+                        self.dirty = true;
+                    }
+                    None => match sync::normalize_code(&dialog.code) {
+                        None => dialog.error = Some("A share code has 8 letters and numbers, like K7QM-2XPD.".into()),
+                        Some(code) => {
+                            dialog.busy = true;
+                            self.sync_jobs.push(Job::Join { hub: hub.clone(), code });
+                            self.store.settings.hub = Some(hub);
+                            self.dirty = true;
+                        }
+                    },
+                },
+            }
+        }
+        if stop_sharing {
+            if let Some(id) = list {
+                self.store.shares.retain(|s| s.list_id != id);
+                self.dirty = true;
+                self.notify("This list no longer syncs on this device. It stays here as a normal list.");
+            }
+            close = true;
+        }
+        if close {
+            self.share_dialog = None;
+        }
     }
 
     fn notification_menu_items(&mut self, ui: &mut egui::Ui) {
@@ -799,6 +1143,7 @@ impl TodoApp {
         if !self.can_save {
             return;
         }
+        self.sync_soon = true;
         match self.storage.save(&self.store) {
             Ok(()) => self.backup_pending = true,
             Err(e) => self.notify(format!("Couldn't save: {e}")),
@@ -1212,7 +1557,8 @@ impl TodoApp {
                                 continue;
                             }
                             let count = self.store.open_count(View::List(id), today);
-                            let icon = if is_default { "🏠" } else { "☰" };
+                            let shared = self.store.shares.iter().any(|s| s.list_id == id);
+                            let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
                             let selected = self.view == View::List(id) && !searching;
                             let r = nav_row(ui, selected, icon, &name, count);
                             if r.clicked() {
@@ -1229,6 +1575,13 @@ impl TodoApp {
                                     self.renaming_list = Some((id, name.clone()));
                                     self.rename_focus = true;
                                     ui.close_menu();
+                                }
+                                if sync::SUPPORTED {
+                                    let label = if shared { "👥  Sharing…" } else { "👥  Share list…" };
+                                    if ui.button(label).clicked() {
+                                        self.open_share_dialog(Some(id));
+                                        ui.close_menu();
+                                    }
                                 }
                                 if !is_default && ui.button("🗑  Delete list").clicked() {
                                     self.confirm_delete_list = Some(id);
@@ -2002,6 +2355,9 @@ impl TodoApp {
                     "“{name}” and its {count} task{} will be permanently deleted.",
                     if count == 1 { "" } else { "s" }
                 ));
+                if self.store.shares.iter().any(|s| s.list_id == id) {
+                    ui.label(RichText::new("It's shared: this only removes it from this device. Everyone else keeps it.").weak().small());
+                }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui.add(egui::Button::new(RichText::new("Delete list").color(Color32::WHITE)).fill(DANGER)).clicked() {
@@ -2095,6 +2451,7 @@ impl eframe::App for TodoApp {
         ctx.request_repaint_after(StdDuration::from_secs(5));
 
         self.maybe_check_updates(ctx, now);
+        self.sync_tick(ctx);
         self.poll_updates(ctx);
         self.handle_dropped_files(ctx);
         #[cfg(target_arch = "wasm32")]
@@ -2116,6 +2473,7 @@ impl eframe::App for TodoApp {
             apply_style(ctx, true);
         }
 
+        apply_text_scale(ctx, self.store.settings.crisp_text);
         // Must come before the other panels so it sits at the very edges.
         self.apply_safe_insets(ctx);
 
@@ -2148,6 +2506,7 @@ impl eframe::App for TodoApp {
 
         self.alert_windows(ctx, now);
         self.delete_list_dialog(ctx);
+        self.share_dialog(ctx);
         self.import_dialog(ctx, now);
         self.restore_dialog(ctx);
         self.toast_area(ctx);
@@ -2198,6 +2557,23 @@ fn apply_style(ctx: &egui::Context, touch: bool) {
             s.spacing.button_padding = Vec2::new(8.0, 4.0);
         }
     });
+}
+
+/// Android: draw at a whole-number scale. egui places every glyph on the pixel grid, so
+/// at a fractional density (2.625x on many Pixels) letters land up to half a pixel
+/// apart and text looks uneven and fuzzy. Rounding the scale (2.625x -> 3x) keeps every
+/// glyph sharp and evenly spaced, at the cost of the UI being slightly larger or smaller.
+fn apply_text_scale(ctx: &egui::Context, crisp: bool) {
+    if !cfg!(target_os = "android") {
+        return;
+    }
+    let Some(native) = ctx.native_pixels_per_point().filter(|p| *p > 0.0) else {
+        return;
+    };
+    let zoom = if crisp { native.round().max(1.0) / native } else { 1.0 };
+    if (ctx.zoom_factor() - zoom).abs() > 0.001 {
+        ctx.set_zoom_factor(zoom);
+    }
 }
 
 fn apply_theme(ctx: &egui::Context, theme: ThemeChoice) {

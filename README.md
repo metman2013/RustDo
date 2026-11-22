@@ -47,6 +47,23 @@ current ones to `Backups\RustDo-before-restore-<time>.json`. A backup file is th
 JSON as `tasks.json`, so it also works as a way to move your tasks to another device:
 export on one, restore on the other.
 
+## Family sharing (RustDo Hub)
+
+Share a list (groceries, chores, packing) with people at home, **without any cloud**.
+You run a tiny **RustDo Hub** on one machine on your network: a Windows exe, or a Docker
+container on a NAS, home server or Raspberry Pi.
+
+```bash
+docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest
+```
+
+Then in RustDo: right-click a list (long-press on a phone) → **👥 Share list…** → enter
+the hub's address → you get a code like `K7QM-2XPD`. Others choose **⚙ → Family sharing →
+Join a shared list…** and enter the code. Shared lists sync every 30 seconds, and My Day
+stays personal. Works in the Windows, Linux and Android apps.
+
+Full guide, including the Windows exe and using it away from home: [docs/hub.md](docs/hub.md).
+
 ## Updates
 
 - **Windows and Android** check this repository's latest GitHub Release at most once a day.
@@ -61,8 +78,8 @@ export on one, restore on the other.
     never updates itself.
   - **Android** opens the new APK download. Install it over the old version.
 - To turn the check off, or check right away, use the **⚙** menu. The check is an anonymous
-  request to GitHub's public API and is the only network request RustDo makes. No task data
-  is sent.
+  request to GitHub's public API. No task data is sent. The only other network traffic is
+  to your own [RustDo Hub](#family-sharing-rustdo-hub), and only if you share a list.
 - **Web** updates itself. Each published build gets a new service-worker cache, and open
   copies reload into the new version.
 
@@ -158,18 +175,18 @@ Each push to `main` runs the tests and all builds, and publishes the web app.
 To release:
 
 1. Set the new version for every platform: `.\tools\set-version.ps1 0.2.0`.
-2. Commit, then tag and push:
+2. Get it onto `main`: merge a pull request, or commit and push.
 
-   ```bash
-   git tag v0.2.0
-   ```
+That's it. When `main` has a version that hasn't been released yet, the workflow creates the
+`v0.2.0` tag and a GitHub Release, and attaches:
+- the Windows installer and portable exe
+- the Linux packages
+- the APK
+- the RustDo Hub exe
 
-   ```bash
-   git push origin main --tags
-   ```
-
-The workflow attaches the Windows installer, the portable exe and the APK to a new GitHub
-Release. Installed copies pick it up through their update check.
+It also publishes the Hub's Docker image as `:0.2.0` and `:latest`. Nothing is released
+unless every build succeeds. Installed copies pick the release up through their update
+check. Pushing a `v0.2.0` tag yourself also works.
 
 ### One-time setup
 
@@ -232,7 +249,8 @@ Only run the app on one machine at a time.
 - Android reminders only show while the app is open. Real Android notifications need a
   build-system change and are planned next. Linux and web notifications also need the app
   running; see [Notifications](#notifications).
-- There's no sync between devices or sharing of lists with other people.
+- Only shared lists sync between devices, through a [RustDo Hub](docs/hub.md); the web
+  app can't use a hub.
 - **Android is the least tested platform.** It's built by CI but hasn't been tried on real
   phones yet. Typing relies on the on-screen keyboard sending key events, and some keyboard
   apps (e.g. predictive or swipe input) may not work fully.
@@ -250,6 +268,8 @@ src/storage.rs     saving: JSON file (desktop/Android) or browser storage (web)
 src/import.rs      Microsoft To Do (Graph JSON) and Outlook CSV import, with tests
 src/update.rs      GitHub Releases update check
 src/platform.rs    Android hooks (data folder, on-screen keyboard)
+src/sync.rs        family sharing: syncing shared lists with a RustDo Hub, with tests
+hub/               RustDo Hub server (Windows exe / Docker image), its own workspace
 android/           APK wrapper crate, launcher icons
 web/               PWA page, manifest, service worker, icons
 installer/         Inno Setup script for the Windows installer

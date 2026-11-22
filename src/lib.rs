@@ -6,6 +6,7 @@ pub mod model;
 pub mod notify;
 pub mod platform;
 pub mod storage;
+pub mod sync;
 pub mod update;
 
 pub use app::TodoApp;

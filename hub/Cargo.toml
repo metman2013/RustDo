@@ -1,0 +1,28 @@
+# RustDo Hub: a tiny sync server for sharing lists with family and friends, on your
+# own network. No cloud, no accounts: whoever has a list's share code can use it.
+# Runs as a Windows exe, a Linux binary or a Docker container (see ../docs/hub.md).
+#
+# Its own workspace (like ../android) so building it, e.g. in Docker, never pulls in
+# the GUI's dependencies.
+[package]
+name = "rustdo-hub"
+# Kept in step with the app's version (tools/set-version.ps1 updates it too).
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+description = "Self-hosted sync server for RustDo shared lists"
+repository = "https://github.com/metman2013/RustDo"
+publish = false
+
+[workspace]
+
+[dependencies]
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+getrandom = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
