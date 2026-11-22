@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.2.0"
+version = "0.2.1"
 
 [package]
 name = "rustdo"
