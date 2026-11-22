@@ -8,8 +8,17 @@ use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Sticky notes need real desktop windows: not available on Android or the web.
+/// Sticky notes as their own desktop windows (Windows and Linux).
 pub const SUPPORTED: bool = cfg!(not(any(target_os = "android", target_arch = "wasm32")));
+
+/// The web app shows sticky notes on a wall inside the page instead.
+pub const WALL: bool = cfg!(target_arch = "wasm32");
+
+/// Sticky notes in any form (desktop windows or the web wall): not on Android yet.
+pub const AVAILABLE: bool = SUPPORTED || WALL;
+
+/// Room between notes (and from the wall's edge) when placing them.
+pub const WALL_GAP: f32 = 16.0;
 
 /// Ready-made note colours (any other colour can be picked too).
 pub const PRESETS: [(&str, [u8; 3]); 8] = [
@@ -144,6 +153,71 @@ impl Notes {
         }
         self.repair();
         (added, updated)
+    }
+
+    /// Web wall: gives notes without a place (new, or from a desktop backup whose positions
+    /// were screen coordinates far off the wall) a free spot. Returns whether any moved.
+    pub fn place_unplaced(&mut self, wall_width: f32) -> bool {
+        let limit = (wall_width * 3.0).max(4000.0);
+        let mut moved = false;
+        for i in 0..self.notes.len() {
+            let ok = self.notes[i].pos.is_some_and(|[x, y]| x >= 0.0 && y >= 0.0 && x < limit && y < limit);
+            if !ok {
+                self.notes[i].pos = Some(self.free_spot(i, wall_width));
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// The first grid slot (left to right, top to bottom) not covered by another note.
+    fn free_spot(&self, skip: usize, wall_width: f32) -> [f32; 2] {
+        let [w, h] = self.notes[skip].size;
+        let step_x = w + WALL_GAP;
+        let cols = ((wall_width - WALL_GAP) / step_x).floor().max(1.0) as usize;
+        for slot in 0.. {
+            let (col, row) = (slot % cols, slot / cols);
+            let x = WALL_GAP + col as f32 * step_x;
+            let y = WALL_GAP + row as f32 * (h + WALL_GAP);
+            let taken = self.notes.iter().enumerate().any(|(j, n)| {
+                j != skip
+                    && n.pos.is_some_and(|[nx, ny]| {
+                        x < nx + n.size[0] && nx < x + w && y < ny + n.size[1] && ny < y + h
+                    })
+            });
+            if !taken {
+                return [x, y];
+            }
+        }
+        unreachable!()
+    }
+
+    /// Web wall: lines every note up in rows that fit `wall_width`, oldest first.
+    pub fn tidy(&mut self, wall_width: f32) {
+        let mut order: Vec<usize> = (0..self.notes.len()).collect();
+        order.sort_by_key(|&i| self.notes[i].created);
+        let (mut x, mut y, mut row_h) = (WALL_GAP, WALL_GAP, 0.0_f32);
+        for i in order {
+            let [w, h] = self.notes[i].size;
+            if x > WALL_GAP && x + w > wall_width - WALL_GAP {
+                x = WALL_GAP;
+                y += row_h + WALL_GAP;
+                row_h = 0.0;
+            }
+            self.notes[i].pos = Some([x, y]);
+            x += w + WALL_GAP;
+            row_h = row_h.max(h);
+        }
+    }
+
+    /// Puts a note on top of the others (the last note is drawn last).
+    pub fn bring_to_front(&mut self, id: Uuid) {
+        if let Some(i) = self.notes.iter().position(|n| n.id == id) {
+            if i + 1 != self.notes.len() {
+                let n = self.notes.remove(i);
+                self.notes.push(n);
+            }
+        }
     }
 
     /// Clamps values that a hand-edited or damaged file could get wrong.
@@ -302,6 +376,43 @@ pub mod file {
     }
 }
 
+// ---------------------------------------------------------------- browser storage (web)
+
+#[cfg(target_arch = "wasm32")]
+pub mod browser {
+    use super::Notes;
+
+    const KEY: &str = "rustdo.notes";
+
+    fn local_storage() -> Option<web_sys::Storage> {
+        web_sys::window()?.local_storage().ok()?
+    }
+
+    /// The notes kept in this browser (none if there are none, or storage is blocked).
+    pub fn load() -> (Notes, Option<String>) {
+        let Some(ls) = local_storage() else { return (Notes::default(), None) };
+        let Ok(Some(text)) = ls.get_item(KEY) else { return (Notes::default(), None) };
+        match serde_json::from_str::<Notes>(&text) {
+            Ok(mut notes) => {
+                notes.repair();
+                let _ = ls.set_item(&format!("{KEY}.bak"), &text);
+                (notes, None)
+            }
+            Err(e) => {
+                let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+                let _ = ls.set_item(&format!("{KEY}.corrupt-{stamp}"), &text);
+                (Notes::default(), Some(format!("Your saved sticky notes were damaged ({e}); a copy was kept in browser storage.")))
+            }
+        }
+    }
+
+    pub fn save(notes: &Notes) -> Result<(), String> {
+        let ls = local_storage().ok_or("browser storage is unavailable")?;
+        let json = serde_json::to_string(notes).map_err(|e| e.to_string())?;
+        ls.set_item(KEY, &json).map_err(|_| "browser storage is full or blocked".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +464,35 @@ mod tests {
         assert_eq!(n.text_color, None);
         assert!(!n.open);
         assert_eq!(n.title(), "Empty note");
+    }
+
+    #[test]
+    fn wall_places_new_notes_in_free_spots_and_tidies_into_rows() {
+        let mut notes = Notes::default();
+        for _ in 0..3 {
+            notes.add(now(), None);
+        }
+        // A note from a desktop backup sits far off at screen coordinates.
+        notes.notes[2].pos = Some([90_000.0, 60.0]);
+        assert!(notes.place_unplaced(1000.0));
+        let pos: Vec<_> = notes.notes.iter().map(|n| n.pos.unwrap()).collect();
+        // 280 px notes, 16 px gaps: three fit side by side in 1000 px.
+        assert_eq!(pos, vec![[16.0, 16.0], [312.0, 16.0], [608.0, 16.0]]);
+        assert!(!notes.place_unplaced(1000.0), "already placed");
+
+        // Tidy into a narrower wall: two per row.
+        notes.tidy(700.0);
+        let pos: Vec<_> = notes.notes.iter().map(|n| n.pos.unwrap()).collect();
+        assert_eq!(pos, vec![[16.0, 16.0], [312.0, 16.0], [16.0, 312.0]]);
+    }
+
+    #[test]
+    fn bring_to_front_moves_a_note_last() {
+        let mut notes = Notes::default();
+        let a = notes.add(now(), None);
+        let b = notes.add(now(), None);
+        notes.bring_to_front(a);
+        assert_eq!(notes.notes.iter().map(|n| n.id).collect::<Vec<_>>(), vec![b, a]);
     }
 
     #[test]

@@ -25,7 +25,7 @@ time. Turn them off under **⚙ → Notify me about reminders**.
 
 | Platform | When you're notified |
 |---|---|
-| **Windows** | **Always, even after you close RustDo.** The background companion (`rustdo.exe --companion`, the same program that keeps [sticky notes](#sticky-notes-windows-and-linux) on the desktop) shows a Windows notification at the reminder time. It starts with RustDo, and the installed version also starts it when you sign in to Windows (even with the tray icon turned off, it then runs quietly for reminders). Turning notifications and background notes off stops it; uninstalling removes it. |
+| **Windows** | **Always, even after you close RustDo.** The background companion (`rustdo.exe --companion`, the same program that keeps [sticky notes](#on-the-desktop-windows-and-linux) on the desktop) shows a Windows notification at the reminder time. It starts with RustDo, and the installed version also starts it when you sign in to Windows (even with the tray icon turned off, it then runs quietly for reminders). Turning notifications and background notes off stops it; uninstalling removes it. |
 | **Linux** | While RustDo is running (minimized is fine). |
 | **Web** | While the app is open, after you click **Allow notifications** in ⚙. Browsers can't notify for a closed web page. |
 | **Android** | In-app popup while the app is open. Real Android notifications are planned. |
@@ -47,7 +47,14 @@ current ones to `Backups\RustDo-before-restore-<time>.json`. A backup file is th
 JSON as `tasks.json`, so it also works as a way to move your tasks to another device:
 export on one, restore on the other.
 
-## Sticky notes (Windows and Linux)
+## Sticky notes
+
+**Web app:** open **Sticky notes** in the sidebar for a wall of notes: drag a note by its top
+bar, resize it from the corner, and **Tidy up** to line them up. Notes are kept in the
+browser and included in **Export backup**; **Back up notes… / Restore notes…** download and
+open a notes file. On a phone-sized screen the wall becomes a column.
+
+### On the desktop (Windows and Linux)
 
 Put notes on your desktop, like Microsoft's Sticky Notes. Open **Desktop notes → Sticky
 notes** in the sidebar and click **+ New note**. Each note is its own small window:
@@ -132,7 +139,7 @@ Full guide, including the Windows exe and using it away from home: [docs/hub.md]
 | Light / dark theme | ✅ System / light / dark (button next to the logo) |
 | Undo delete | ✅ |
 | Bring your tasks over | ✅ Import from Microsoft To Do (see below) |
-| Sticky Notes | ✅ On Windows and Linux (see [Sticky notes](#sticky-notes-windows-and-linux)) |
+| Sticky Notes | ✅ Desktop windows on Windows and Linux, a notes wall in the web app (see [Sticky notes](#sticky-notes)) |
 
 ### Keyboard shortcuts
 

@@ -71,7 +71,9 @@ impl Shared {
         let path = folder.map(|f| f.join("notes.json"));
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         let (notes, warning) = path.as_deref().map_or((Notes::default(), None), notes::file::load);
-        #[cfg(any(target_os = "android", target_arch = "wasm32"))]
+        #[cfg(target_arch = "wasm32")]
+        let (notes, warning) = notes::browser::load();
+        #[cfg(target_os = "android")]
         let (notes, warning) = (Notes::default(), None);
         Arc::new(Mutex::new(Shared {
             notes,
@@ -182,6 +184,15 @@ impl Shared {
                 }
                 Err(e) => self.warning = Some(format!("Couldn't save your sticky notes: {e}")),
             }
+        }
+        #[cfg(target_arch = "wasm32")]
+        match notes::browser::save(&self.notes) {
+            Ok(()) => {
+                if self.warning.as_deref().is_some_and(|w| w.starts_with("Couldn't save")) {
+                    self.warning = None;
+                }
+            }
+            Err(e) => self.warning = Some(format!("Couldn't save your sticky notes: {e}")),
         }
     }
 
@@ -352,7 +363,7 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                 action = NoteAction::Hide;
             }
             ui.menu_button(RichText::new("🎨").color(ink), |ui| {
-                note_menu(ui, &mut edited, &mut action);
+                note_menu(ui, &mut edited, &mut action, true);
             })
             .response
             .on_hover_text("Colour, text and more");
@@ -457,7 +468,9 @@ enum NoteAction {
 }
 
 /// The 🎨 menu: note colour, text colour and size, keep on top, delete.
-fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction) {
+/// `desktop`: offer "Keep on top" (a desktop window can float above others; a note on the
+/// web wall can't).
+fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool) {
     ui.set_min_width(220.0);
     // The menu has its own (theme) background: use normal text colours inside it.
     ui.visuals_mut().override_text_color = None;
@@ -501,7 +514,9 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction) 
         }
     });
     ui.separator();
-    ui.checkbox(&mut note.on_top, "📌 Keep on top of other windows");
+    if desktop {
+        ui.checkbox(&mut note.on_top, "📌 Keep on top of other windows");
+    }
     if ui.button("🗑  Delete note…").clicked() {
         *action = NoteAction::AskDelete;
         ui.close_menu();
@@ -517,7 +532,13 @@ pub enum PageAction {
 }
 
 /// The main window's "Sticky notes" page: every note, to show, hide, create or delete.
+/// The web app shows the notes themselves there instead, on a wall.
 pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
+    // Test hook (debug builds only): show the web wall in the desktop app.
+    let test_wall = cfg!(debug_assertions) && std::env::var_os("RUSTDO_TEST_WALL").is_some();
+    if notes::WALL || test_wall {
+        return wall_page(ui, shared);
+    }
     let mut page_action = PageAction::None;
     let mut s = lock(shared);
     ui.horizontal(|ui| {
@@ -618,4 +639,309 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
     }
     s.save_if_due(false);
     page_action
+}
+
+// ---------------------------------------------------------------- the web wall
+
+/// Below this width the wall becomes a column of full-width notes (dragging notes around a
+/// phone screen would fight with scrolling).
+const WALL_MIN_WIDTH: f32 = 560.0;
+const WALL_HEADER_H: f32 = 28.0;
+
+/// The web app's Sticky notes page: the notes themselves, on a wall you can arrange.
+fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
+    let mut page_action = PageAction::None;
+    let mut s = lock(shared);
+    let narrow = ui.available_width() < WALL_MIN_WIDTH;
+    let mut tidy = false;
+    // Phones: title on its own line, buttons below (they don't fit beside it).
+    let buttons = |ui: &mut egui::Ui, s: &mut Shared, page_action: &mut PageAction, tidy: &mut bool| {
+            if ui.button("Restore notes…").on_hover_text("Bring notes back from a backup file (your current notes are kept)").clicked() {
+                *page_action = PageAction::Restore;
+            }
+            if ui.button("Back up notes…").on_hover_text("Download all sticky notes as a file").clicked() {
+                *page_action = PageAction::Backup;
+            }
+            if !narrow && !s.notes.notes.is_empty() && ui.button("Tidy up").on_hover_text("Line all notes up neatly").clicked() {
+                *tidy = true;
+            }
+            if ui.add(egui::Button::new(RichText::new("+ New note").color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
+                let near = s.notes.notes.last().and_then(|n| n.pos);
+                s.new_note(near.or(Some([-16.0, -16.0])));
+            }
+    };
+    if narrow {
+        ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
+        ui.horizontal(|ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
+        });
+    } else {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
+        });
+    }
+    let hint = if narrow {
+        "Notes are kept in this browser and included in your backups."
+    } else {
+        "Drag a note by its top bar, resize it from the corner. Notes are kept in this browser and included in your backups."
+    };
+    ui.label(RichText::new(hint).weak().small());
+    if let Some(w) = &s.warning {
+        ui.colored_label(Color32::from_rgb(0xE5, 0x48, 0x4D), w);
+    }
+    ui.add_space(6.0);
+
+    if s.notes.notes.is_empty() {
+        ui.add_space(40.0);
+        ui.vertical_centered(|ui| {
+            ui.label(RichText::new("📝").size(40.0));
+            ui.label(RichText::new("No sticky notes yet. Click “+ New note” to pin one to this wall.").weak());
+        });
+        return page_action;
+    }
+
+    let wall_width = ui.available_width();
+    if tidy {
+        s.notes.tidy(wall_width);
+        s.changed();
+    }
+    if !narrow && s.notes.place_unplaced(wall_width) {
+        s.changed();
+    }
+
+    let mut actions: Vec<(Uuid, WallAction)> = Vec::new();
+    if narrow {
+        egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+            let ids: Vec<Uuid> = s.notes.notes.iter().rev().map(|n| n.id).collect();
+            for id in ids {
+                let Shared { notes, confirm_delete, focus, .. } = &mut *s;
+                let Some(note) = notes.get_mut(id) else { continue };
+                let height = note.size[1].clamp(140.0, 420.0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+                let focus_this = *focus == Some(id);
+                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, false) {
+                    actions.push((id, a));
+                }
+                if focus_this {
+                    *focus = None;
+                }
+                ui.add_space(10.0);
+            }
+        });
+    } else {
+        // Dragging is for moving and resizing notes, so the wall scrolls with the wheel and
+        // scrollbars only (drag-to-scroll would move the wall under the note being dragged).
+        egui::ScrollArea::both().auto_shrink([false; 2]).drag_to_scroll(false).show(ui, |ui| {
+            // The wall grows to hold every note, and is at least as big as the page.
+            let extent = s.notes.notes.iter().fold(ui.available_size(), |acc, n| {
+                let [x, y] = n.pos.unwrap_or([0.0, 0.0]);
+                acc.max(Vec2::new(x + n.size[0] + notes::WALL_GAP, y + n.size[1] + notes::WALL_GAP))
+            });
+            let (wall, _) = ui.allocate_exact_size(extent, Sense::hover());
+            // A faint dot grid, like a board.
+            let dot = ui.visuals().weak_text_color().gamma_multiply(0.25);
+            let mut y = wall.top() + 24.0;
+            while y < wall.bottom() {
+                let mut x = wall.left() + 24.0;
+                while x < wall.right() {
+                    ui.painter().circle_filled(Pos2::new(x, y), 1.0, dot);
+                    x += 24.0;
+                }
+                y += 24.0;
+            }
+            // Bottom note first, so the top note is drawn (and takes clicks) last.
+            let ids: Vec<Uuid> = s.notes.notes.iter().map(|n| n.id).collect();
+            for id in ids {
+                let Shared { notes, confirm_delete, focus, .. } = &mut *s;
+                let Some(note) = notes.get_mut(id) else { continue };
+                let [x, y] = note.pos.unwrap_or([0.0, 0.0]);
+                let rect = egui::Rect::from_min_size(wall.min + Vec2::new(x, y), Vec2::from(note.size));
+                let focus_this = *focus == Some(id);
+                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, true) {
+                    actions.push((id, a));
+                }
+                if focus_this {
+                    *focus = None;
+                }
+            }
+        });
+    }
+
+    for (id, action) in actions {
+        match action {
+            WallAction::Edited => s.changed(),
+            WallAction::Moved => {
+                s.notes.bring_to_front(id);
+                s.changed();
+            }
+            WallAction::Front => {
+                if s.notes.notes.last().map(|n| n.id) != Some(id) {
+                    s.notes.bring_to_front(id);
+                    s.changed();
+                }
+            }
+            WallAction::New => {
+                let near = s.notes.notes.iter().find(|n| n.id == id).and_then(|n| n.pos);
+                s.new_note(near);
+            }
+            WallAction::AskDelete => s.confirm_delete = Some(id),
+            WallAction::CancelDelete => s.confirm_delete = None,
+            WallAction::Delete => s.delete(id),
+        }
+    }
+    s.save_if_due(false);
+    if s.dirty {
+        ui.ctx().request_repaint_after(SAVE_DELAY);
+    }
+    page_action
+}
+
+enum WallAction {
+    Edited,
+    Moved,
+    Front,
+    New,
+    AskDelete,
+    CancelDelete,
+    Delete,
+}
+
+/// One note on the wall (or, on a phone, in the column). `movable`: drag the top bar to
+/// move it and the corner to resize it.
+fn wall_card(
+    ui: &mut egui::Ui,
+    note: &mut StickyNote,
+    rect: egui::Rect,
+    confirming: bool,
+    focus_text: bool,
+    movable: bool,
+) -> Option<WallAction> {
+    let id = note.id;
+    let bg = c32(note.color);
+    let ink = c32(note.ink());
+    let header = c32(notes::header_color(note.color));
+    let mut action = None;
+    let before = note.clone();
+
+    // Shadow, paper and top bar.
+    let radius = CornerRadius::same(6);
+    ui.painter().rect_filled(rect.translate(Vec2::new(2.0, 3.0)), radius, Color32::from_black_alpha(60));
+    ui.painter().rect_filled(rect, radius, bg);
+    let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), WALL_HEADER_H));
+    ui.painter().rect_filled(bar, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, header);
+
+    // Clicking anywhere on the note brings it to the front (checked before the widgets).
+    if movable && ui.input(|i| i.pointer.primary_pressed()) && ui.rect_contains_pointer(rect) {
+        action = Some(WallAction::Front);
+    }
+    if movable {
+        let drag = ui.interact(bar, Id::new(("wall_bar", id)), Sense::drag()).on_hover_cursor(CursorIcon::Grab);
+        if drag.dragged() && !drag.drag_started() {
+            let d = drag.drag_delta();
+            let [x, y] = note.pos.unwrap_or([0.0, 0.0]);
+            note.pos = Some([(x + d.x).max(0.0), (y + d.y).max(0.0)]);
+        }
+    }
+
+    let mut card = ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)));
+    let v = card.visuals_mut();
+    v.override_text_color = Some(ink);
+    v.text_cursor.stroke = Stroke::new(2.0_f32, ink);
+    v.selection.bg_fill = ink.gamma_multiply(0.25);
+    v.selection.stroke = Stroke::new(1.0_f32, ink);
+    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.fg_stroke.color = ink;
+    }
+    v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+    v.widgets.hovered.weak_bg_fill = ink.gamma_multiply(0.12);
+    v.widgets.active.weak_bg_fill = ink.gamma_multiply(0.2);
+
+    let mut bar_ui = card.new_child(
+        UiBuilder::new().max_rect(bar.shrink2(Vec2::new(4.0, 1.0))).layout(Layout::left_to_right(Align::Center)),
+    );
+    if bar_ui.add(egui::Button::new(RichText::new("+").size(17.0).color(ink)).frame(false)).on_hover_text("New note").clicked() {
+        action = Some(WallAction::New);
+    }
+    bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        if ui.add(egui::Button::new(RichText::new("🗑").color(ink)).frame(false)).on_hover_text("Delete note").clicked() {
+            action = Some(WallAction::AskDelete);
+        }
+        let mut menu_action = NoteAction::None;
+        ui.menu_button(RichText::new("🎨").color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
+            .response
+            .on_hover_text("Colour and text");
+        if matches!(menu_action, NoteAction::AskDelete) {
+            action = Some(WallAction::AskDelete);
+        }
+    });
+
+    let body = egui::Rect::from_min_max(rect.min + Vec2::new(0.0, WALL_HEADER_H), rect.max);
+    let mut body_ui = card.new_child(UiBuilder::new().max_rect(body.shrink(10.0)).layout(Layout::top_down(Align::Min)));
+    if confirming {
+        body_ui.label(RichText::new("Delete this note?").strong().size(16.0));
+        body_ui.label(RichText::new("This can't be undone.").small());
+        body_ui.horizontal(|ui| {
+            if ui.button(RichText::new("Delete").color(ink)).clicked() {
+                action = Some(WallAction::Delete);
+            }
+            if ui.button(RichText::new("Cancel").color(ink)).clicked() {
+                action = Some(WallAction::CancelDelete);
+            }
+        });
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt(("wall_text", id))
+            .auto_shrink([false; 2])
+            .drag_to_scroll(false)
+            .show(&mut body_ui, |ui| {
+            let r = ui.add(
+                egui::TextEdit::multiline(&mut note.text)
+                    .id(Id::new(("wall_edit", id)))
+                    .font(FontId::proportional(note.text_size))
+                    .text_color(ink)
+                    .hint_text(RichText::new("Take a note…").color(ink.gamma_multiply(0.5)))
+                    .frame(false)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(((body.height() - 20.0) / (note.text_size * 1.3)).max(1.0) as usize),
+            );
+            if focus_text {
+                r.request_focus();
+            }
+        });
+    }
+
+    // Resize from the bottom-right corner.
+    let grip = egui::Rect::from_min_max(rect.max - Vec2::splat(18.0), rect.max);
+    if movable {
+        for i in 1..=3 {
+            let d = i as f32 * 4.0;
+            ui.painter().line_segment(
+                [grip.right_bottom() - Vec2::new(d, 3.0), grip.right_bottom() - Vec2::new(3.0, d)],
+                Stroke::new(1.0_f32, ink.gamma_multiply(0.5)),
+            );
+        }
+        let g = ui.interact(grip, Id::new(("wall_grip", id)), Sense::drag()).on_hover_cursor(CursorIcon::ResizeNwSe);
+        // Not on the frame the drag starts: a finger (or a fast mouse) lands without a hover
+        // first, and that frame's "movement" is the jump from wherever the pointer was.
+        if g.dragged() && !g.drag_started() {
+            let d = g.drag_delta();
+            note.size = [(note.size[0] + d.x).max(160.0), (note.size[1] + d.y).max(120.0)];
+        }
+    }
+
+    if *note != before {
+        if note.text != before.text {
+            note.updated = now();
+        }
+        note.text_size = note.text_size.clamp(MIN_TEXT_SIZE, MAX_TEXT_SIZE);
+        let moved = note.pos != before.pos || note.size != before.size;
+        // A note that was clicked (to the front) and then dragged or typed in: save it,
+        // and keep it on top.
+        let to_front = matches!(action, Some(WallAction::Front));
+        if action.is_none() || to_front {
+            action = Some(if moved || to_front { WallAction::Moved } else { WallAction::Edited });
+        }
+    }
+    action
 }
