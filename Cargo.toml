@@ -50,6 +50,8 @@ ureq = { version = "2", optional = true }
 
 # Windows: scheduled toast notifications for reminders (same version egui already uses).
 [target.'cfg(windows)'.dependencies]
+# The companion's tray icon.
+tray-icon = { version = "0.26", default-features = false }
 windows = { version = "0.58", features = [
     "UI_Notifications", "Data_Xml_Dom", "Foundation", "Foundation_Collections",
 ] }
@@ -57,6 +59,8 @@ windows = { version = "0.58", features = [
 # Linux: desktop notifications over D-Bus.
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = "4"
+# Linux: the companion's tray icon, over D-Bus (StatusNotifierItem; no GTK main loop).
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 
 # Web / PWA
 [target.'cfg(target_arch = "wasm32")'.dependencies]
