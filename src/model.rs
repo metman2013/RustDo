@@ -1,6 +1,6 @@
 //! Core data model and business rules. No UI code lives here so it can be unit-tested.
 
-use chrono::{Datelike, Duration, Months, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Duration, Months, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use uuid::Uuid;
@@ -127,6 +127,9 @@ pub struct Settings {
     /// slightly blurry letters.
     #[serde(default = "yes")]
     pub crisp_text: bool,
+    /// Show and enter times on a 24-hour clock (21:30) instead of 12-hour with AM/PM (9:30 PM).
+    #[serde(default)]
+    pub clock_24h: bool,
     /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
@@ -145,6 +148,7 @@ impl Default for Settings {
             last_export: None,
             last_export_dir: None,
             crisp_text: true,
+            clock_24h: false,
             hub: None,
         }
     }
@@ -550,12 +554,55 @@ pub fn relative_date(date: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
+/// A time of day as the user likes to read it: "9:30 PM" or "21:30".
+pub fn format_time(t: impl Timelike, clock_24h: bool) -> String {
+    if clock_24h {
+        format!("{:02}:{:02}", t.hour(), t.minute())
+    } else {
+        let (h, pm) = to_12h(t.hour());
+        format!("{h}:{:02} {}", t.minute(), if pm { "PM" } else { "AM" })
+    }
+}
+
+/// 24-hour hour (0..=23) to a 12-hour clock: (1..=12, is PM).
+pub fn to_12h(hour: u32) -> (u32, bool) {
+    ((hour + 11) % 12 + 1, hour >= 12)
+}
+
+/// 12-hour clock (1..=12, is PM) back to a 24-hour hour (0..=23).
+pub fn from_12h(hour: u32, pm: bool) -> u32 {
+    hour % 12 + if pm { 12 } else { 0 }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn times_in_12_and_24_hour_clocks() {
+        let at = |h, m| chrono::NaiveTime::from_hms_opt(h, m, 0).unwrap();
+        assert_eq!(format_time(at(0, 5), false), "12:05 AM");
+        assert_eq!(format_time(at(9, 30), false), "9:30 AM");
+        assert_eq!(format_time(at(12, 0), false), "12:00 PM");
+        assert_eq!(format_time(at(21, 30), false), "9:30 PM");
+        assert_eq!(format_time(at(9, 30), true), "09:30");
+        assert_eq!(format_time(at(21, 30), true), "21:30");
+        for h in 0..24 {
+            let (h12, pm) = to_12h(h);
+            assert!((1..=12).contains(&h12));
+            assert_eq!(from_12h(h12, pm), h, "round trip of {h}");
+        }
+    }
+
+    #[test]
+    fn clock_defaults_to_am_pm_for_old_settings_files() {
+        let s: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!s.clock_24h);
+        assert!(!Settings::default().clock_24h);
     }
 
     fn at(date: NaiveDate, h: u32, m: u32) -> NaiveDateTime {

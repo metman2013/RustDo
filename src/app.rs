@@ -1,7 +1,7 @@
 //! The egui user interface.
 
 use crate::model::{
-    relative_date, sort_tasks, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
+    format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
@@ -549,6 +549,14 @@ impl TodoApp {
                 }
             }
             ui.separator();
+            ui.label(RichText::new("Time").strong());
+            let s = &mut self.store.settings;
+            if ui.radio_value(&mut s.clock_24h, false, "12-hour clock (9:30 PM)").changed()
+                | ui.radio_value(&mut s.clock_24h, true, "24-hour clock (21:30)").changed()
+            {
+                self.dirty = true;
+            }
+            ui.separator();
             self.notification_menu_items(ui);
             self.sharing_menu_items(ui);
             self.backup_menu_items(ui);
@@ -634,7 +642,7 @@ impl TodoApp {
             format!(
                 "{shared} shared list{} · {}",
                 if shared == 1 { "" } else { "s" },
-                last.map_or("not synced yet".into(), |t| format!("last synced {}", t.format("%H:%M")))
+                last.map_or("not synced yet".into(), |t| format!("last synced {}", format_time(t, self.store.settings.clock_24h)))
             )
         };
         let color = if self.sync_error.is_some() && shared > 0 { DANGER } else { ui.visuals().weak_text_color() };
@@ -815,7 +823,7 @@ impl TodoApp {
                     ui.label(RichText::new(format!("Hub: {}", share.hub)).weak().small());
                     let status = match (&self.sync_error, share.last_sync) {
                         (Some(e), _) => RichText::new(format!("Can't sync right now: {e}")).color(DANGER),
-                        (None, Some(t)) => RichText::new(format!("Last synced {}", t.format("%H:%M"))).weak(),
+                        (None, Some(t)) => RichText::new(format!("Last synced {}", format_time(t, self.store.settings.clock_24h))).weak(),
                         (None, None) => RichText::new("Syncing…").weak(),
                     };
                     ui.label(status.small());
@@ -1983,6 +1991,7 @@ impl TodoApp {
     /// Task details: a right side panel on wide screens, the whole screen on phones.
     fn detail_panel(&mut self, ctx: &egui::Context, id: Uuid, now: NaiveDateTime, narrow: bool) {
         let today = now.date();
+        let clock_24h = self.store.settings.clock_24h;
         let lists: Vec<(Uuid, String)> =
             self.store.lists.iter().map(|l| (l.id, l.name.clone())).collect();
         let mut toggle_done = false;
@@ -2105,9 +2114,21 @@ impl TodoApp {
                                     let mut h = r.hour();
                                     let mut m = r.minute();
                                     ui.add(egui_extras::DatePickerButton::new(&mut date).id_salt("reminder_date"));
-                                    ui.add(egui::DragValue::new(&mut h).range(0..=23).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    // Hours as the user reads them: 0-23, or 1-12 plus an AM/PM switch.
+                                    let (mut h12, mut pm) = to_12h(h);
+                                    if clock_24h {
+                                        ui.add(egui::DragValue::new(&mut h).range(0..=23).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    } else {
+                                        ui.add(egui::DragValue::new(&mut h12).range(1..=12));
+                                    }
                                     ui.label(":");
                                     ui.add(egui::DragValue::new(&mut m).range(0..=59).speed(0.5).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                                    if !clock_24h {
+                                        if ui.button(if pm { "PM" } else { "AM" }).on_hover_text("Switch AM / PM").clicked() {
+                                            pm = !pm;
+                                        }
+                                        h = from_12h(h12, pm);
+                                    }
                                     let new_r = date.and_hms_opt(h, m, 0).unwrap_or(r);
                                     if new_r != r {
                                         task.reminder = Some(new_r);
@@ -2121,12 +2142,12 @@ impl TodoApp {
                                     }
                                 });
                                 if let Some(r) = task.reminder {
-                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), r.format("%H:%M"))).weak().small());
+                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), format_time(r, clock_24h))).weak().small());
                                 }
                             }
                             None => {
                                 ui.horizontal_wrapped(|ui| {
-                                    for (label, when) in reminder_presets(now) {
+                                    for (label, when) in reminder_presets(now, clock_24h) {
                                         if ui.button(label).clicked() {
                                             task.reminder = Some(when);
                                             task.reminder_fired = false;
@@ -2610,17 +2631,18 @@ fn next_monday(today: NaiveDate) -> NaiveDate {
     today + Duration::days(7 - today.weekday().num_days_from_monday() as i64)
 }
 
-fn reminder_presets(now: NaiveDateTime) -> Vec<(&'static str, NaiveDateTime)> {
+fn reminder_presets(now: NaiveDateTime, clock_24h: bool) -> Vec<(String, NaiveDateTime)> {
     let today = now.date();
     let nine = |d: NaiveDate| d.and_hms_opt(9, 0, 0).unwrap();
     let mut out = Vec::new();
     // "Later today": three hours from now, rounded up to the hour.
     let later = (now + Duration::hours(3)).with_minute(0).and_then(|t| t.with_second(0));
     if let Some(later) = later.filter(|l| l.date() == today) {
-        out.push(("Later today", later));
+        out.push(("Later today".to_string(), later));
     }
-    out.push(("Tomorrow 9:00", nine(today + Duration::days(1))));
-    out.push(("Next week", nine(next_monday(today))));
+    let tomorrow = nine(today + Duration::days(1));
+    out.push((format!("Tomorrow {}", format_time(tomorrow, clock_24h)), tomorrow));
+    out.push(("Next week".to_string(), nine(next_monday(today))));
     out
 }
 
@@ -2773,7 +2795,7 @@ fn task_row(
     }
     if let Some(r) = t.reminder {
         if !t.done && !t.reminder_fired {
-            meta.push((format!("🔔 {}", r.format("%H:%M")), weak));
+            meta.push((format!("🔔 {}", format_time(r, store.settings.clock_24h)), weak));
         }
     }
     if t.recurrence != Recurrence::Never {
