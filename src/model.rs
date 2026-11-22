@@ -122,6 +122,11 @@ pub struct Settings {
     /// Desktop: the folder the last manual export was saved to (the next export starts there).
     #[serde(default)]
     pub last_export_dir: Option<String>,
+    /// Android: round the display scale to a whole number so text is drawn on exact
+    /// pixels. Phones with a fractional density (e.g. 2.625x) otherwise get uneven,
+    /// slightly blurry letters.
+    #[serde(default = "yes")]
+    pub crisp_text: bool,
 }
 
 impl Default for Settings {
@@ -136,6 +141,7 @@ impl Default for Settings {
             backup_dir: None,
             last_export: None,
             last_export_dir: None,
+            crisp_text: true,
         }
     }
 }

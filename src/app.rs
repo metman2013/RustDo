@@ -531,6 +531,19 @@ impl TodoApp {
                         .weak()
                         .small(),
                 );
+                if ui.checkbox(&mut self.store.settings.crisp_text, "Sharp text").changed() {
+                    self.dirty = true;
+                }
+                let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Rounds the screen scale to whole pixels so letters render evenly (screen {:.3}x, drawn at {:.3}x). Turn off if things look too big.",
+                        native,
+                        ui.ctx().pixels_per_point()
+                    ))
+                    .weak()
+                    .small(),
+                );
             }
             ui.separator();
             // The full Releases page: newest version first, with every earlier one below.
@@ -2116,6 +2129,7 @@ impl eframe::App for TodoApp {
             apply_style(ctx, true);
         }
 
+        apply_text_scale(ctx, self.store.settings.crisp_text);
         // Must come before the other panels so it sits at the very edges.
         self.apply_safe_insets(ctx);
 
@@ -2198,6 +2212,23 @@ fn apply_style(ctx: &egui::Context, touch: bool) {
             s.spacing.button_padding = Vec2::new(8.0, 4.0);
         }
     });
+}
+
+/// Android: draw at a whole-number scale. egui places every glyph on the pixel grid, so
+/// at a fractional density (2.625x on many Pixels) letters land up to half a pixel
+/// apart and text looks uneven and fuzzy. Rounding the scale (2.625x -> 3x) keeps every
+/// glyph sharp and evenly spaced, at the cost of the UI being slightly larger or smaller.
+fn apply_text_scale(ctx: &egui::Context, crisp: bool) {
+    if !cfg!(target_os = "android") {
+        return;
+    }
+    let Some(native) = ctx.native_pixels_per_point().filter(|p| *p > 0.0) else {
+        return;
+    };
+    let zoom = if crisp { native.round().max(1.0) / native } else { 1.0 };
+    if (ctx.zoom_factor() - zoom).abs() > 0.001 {
+        ctx.set_zoom_factor(zoom);
+    }
 }
 
 fn apply_theme(ctx: &egui::Context, theme: ThemeChoice) {
