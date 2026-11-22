@@ -31,7 +31,11 @@ const NARROW_WIDTH: f32 = 700.0;
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
 
-const HUB_DOCS: &str = "https://github.com/metman2013/RustDo/blob/main/docs/hub.md";
+/// Built at runtime from `update::REPO` (like the other GitHub links) so the binary never
+/// contains "/RustDo/", which tools/build-release.ps1 treats as a leaked local path.
+fn hub_docs() -> String {
+    format!("https://github.com/{}/blob/main/docs/hub.md", update::REPO)
+}
 
 const ACCENT: Color32 = Color32::from_rgb(70, 125, 230);
 const DANGER: Color32 = Color32::from_rgb(215, 75, 75);
@@ -644,7 +648,7 @@ impl TodoApp {
                 self.last_sync_at = None;
             }
         });
-        ui.hyperlink_to("How to set up a RustDo Hub", HUB_DOCS);
+        ui.hyperlink_to("How to set up a RustDo Hub", hub_docs());
         ui.separator();
     }
 
@@ -866,7 +870,7 @@ impl TodoApp {
                         ui.spinner();
                     }
                 });
-                ui.hyperlink_to(RichText::new("No hub yet? How to set one up").small(), HUB_DOCS);
+                ui.hyperlink_to(RichText::new("No hub yet? How to set one up").small(), hub_docs());
             });
 
         if submit && !dialog.busy {
