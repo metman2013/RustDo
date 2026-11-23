@@ -129,12 +129,12 @@ Full guide, including the Windows exe and using it away from home: [docs/hub.md]
 | Planned | ✅ Grouped into Earlier / Today / Tomorrow / Next 7 days / Later |
 | All, Completed | ✅ |
 | Custom lists | ✅ Create, rename (double-click or right-click), delete |
-| Steps (subtasks) | ✅ Progress shows as "1 of 3" |
+| Steps (subtasks) | ✅ Add them right after a task ("Subtasks for …"), in the task's details, or from the list. Show them under the task with ▸, tick them off there. Progress shows as "1 of 3 subtasks". |
 | Due dates | ✅ Today / Tomorrow / Next week presets, plus a date picker. Overdue tasks show in red. |
 | Reminders | ✅ System notifications (see [Notifications](#notifications)), plus an in-app popup with Complete / Open / Snooze (10 min, 1 h, tomorrow). |
 | Repeat | ✅ Daily, weekdays, weekly, monthly, yearly. Completing a task schedules the next one. |
 | Notes | ✅ |
-| Search | ✅ Searches titles, notes and steps |
+| Search | ✅ Searches titles, notes and subtasks |
 | Sort | ✅ Newest, due date, A–Z, importance |
 | Light / dark theme | ✅ System / light / dark (button next to the logo) |
 | Undo delete | ✅ |
@@ -147,7 +147,7 @@ Full guide, including the Windows exe and using it away from home: [docs/hub.md]
 |---|---|
 | `Ctrl+N` | New task |
 | `Ctrl+F` | Search |
-| `Enter` | Save the task or step you're typing |
+| `Enter` | Save the task or subtask you're typing |
 | `Del` | Delete the selected task (you can undo) |
 | `Esc` | Clear the search, or close the details pane |
 

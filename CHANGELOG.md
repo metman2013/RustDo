@@ -6,6 +6,16 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.2.9 - 2026-11-23
+
+### New
+- Subtasks right from "Add a task": after you add a task (say "Bedroom - Organize underbed storage"), a "Subtasks for" box appears underneath. Type "Put comics away", press Enter, and keep going.
+- Subtasks show under their task in the list: click the small triangle next to the star to show or hide them, tick them off there, or add more. Right-click (long-press on a phone) a task and choose "Add a subtask" for a task that has none yet.
+- Steps are now called subtasks everywhere; your existing steps are your subtasks.
+
+### Fixed
+- Windows and Linux: typing in a task's "Add a subtask" box no longer makes the details panel keep growing wider (and grow back after you resized it).
+
 ## 0.2.8 - 2026-11-22
 
 ### New
