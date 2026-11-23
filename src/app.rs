@@ -48,6 +48,12 @@ const DANGER: Color32 = Color32::from_rgb(215, 75, 75);
 const STAR: Color32 = Color32::from_rgb(240, 170, 30);
 
 enum Action {
+    /// Show or hide a task's subtasks in the list.
+    ToggleExpand(Uuid),
+    /// Tick or untick a subtask (task, subtask).
+    ToggleStep(Uuid, Uuid),
+    /// Add a subtask from the list (task, title).
+    AddStep(Uuid, String),
     ToggleDone(Uuid),
     ToggleImportant(Uuid),
     ToggleMyDay(Uuid),
@@ -154,6 +160,14 @@ pub struct TodoApp {
     new_task: String,
     new_list: String,
     new_step: String,
+    /// Tasks whose subtasks are shown in the list.
+    expanded: std::collections::HashSet<Uuid>,
+    /// What's typed in each list "Add a subtask" box (by task).
+    step_inputs: std::collections::HashMap<Uuid, String>,
+    /// The task just added from "Add a task", offered for quick subtasks underneath.
+    last_added: Option<(Uuid, View)>,
+    /// What's typed in that quick "subtasks for …" box.
+    quick_step: String,
     renaming_list: Option<(Uuid, String)>,
     rename_focus: bool,
     confirm_delete_list: Option<Uuid>,
@@ -263,6 +277,10 @@ impl TodoApp {
             new_task: String::new(),
             new_list: String::new(),
             new_step: String::new(),
+            expanded: Default::default(),
+            step_inputs: Default::default(),
+            last_added: None,
+            quick_step: String::new(),
             renaming_list: None,
             rename_focus: false,
             confirm_delete_list: None,
@@ -1825,6 +1843,24 @@ impl TodoApp {
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
+            Action::ToggleExpand(id) => {
+                if !self.expanded.remove(&id) {
+                    self.expanded.insert(id);
+                }
+            }
+            Action::ToggleStep(task, step) => {
+                if let Some(s) = self.store.task_mut(task).and_then(|t| t.steps.iter_mut().find(|s| s.id == step)) {
+                    s.done = !s.done;
+                    self.dirty = true;
+                }
+            }
+            Action::AddStep(task, title) => {
+                if let Some(t) = self.store.task_mut(task) {
+                    t.steps.push(Step::new(title.trim()));
+                    self.expanded.insert(task);
+                    self.dirty = true;
+                }
+            }
         }
     }
 
@@ -2091,6 +2127,67 @@ impl TodoApp {
         });
     }
 
+    /// Under "Add a task": subtasks for the task just added ("Bedroom" then "Put comics
+    /// away"). Enter adds each one and stays in the box for the next.
+    fn quick_subtasks(&mut self, ui: &mut egui::Ui) {
+        let Some((id, view)) = self.last_added else { return };
+        if view != self.view {
+            return; // only under the list it was added in
+        }
+        let Some(title) = self.store.task(id).filter(|t| !t.done).map(|t| t.title.clone()) else {
+            self.last_added = None;
+            return;
+        };
+        let count = self.store.task(id).map_or(0, |t| t.steps.len());
+        let field_id = Id::new("quick_subtask");
+        let mut add = false;
+        let mut enter = false;
+        let mut close = false;
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let label = if count == 0 {
+                format!("Subtasks for “{title}”")
+            } else {
+                format!("Subtasks for “{title}” ({count})")
+            };
+            ui.add(egui::Label::new(RichText::new(label).weak().small()).truncate());
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            let has_text = !self.quick_step.trim().is_empty();
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                close = small_btn(ui, "✖").on_hover_text("Done adding subtasks").clicked();
+                add = has_text && ui.button("Add").clicked();
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut self.quick_step)
+                        .id(field_id)
+                        .hint_text("+ Add a subtask (Enter after each)")
+                        .min_size(field_height(ui))
+                        .vertical_align(Align::Center)
+                        .desired_width(ui.available_width()),
+                );
+                enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                if r.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+                    close = true;
+                }
+            });
+        });
+        if (add || enter) && !self.quick_step.trim().is_empty() {
+            let text = std::mem::take(&mut self.quick_step);
+            if let Some(t) = self.store.task_mut(id) {
+                t.steps.push(Step::new(text.trim()));
+                self.expanded.insert(id);
+                self.dirty = true;
+            }
+            ui.memory_mut(|m| m.request_focus(field_id));
+        }
+        if close {
+            self.last_added = None;
+            self.quick_step.clear();
+        }
+    }
+
     // ------------------------------------------------------------------ task list
 
     fn main_panel(&mut self, ctx: &egui::Context, now: NaiveDateTime, narrow: bool) {
@@ -2168,12 +2265,15 @@ impl TodoApp {
                     self.focus_add = false;
                 }
                 if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    if self.store.add_task(&self.new_task, self.view, now).is_some() {
+                    if let Some(id) = self.store.add_task(&self.new_task, self.view, now) {
                         self.new_task.clear();
+                        self.last_added = Some((id, self.view));
+                        self.quick_step.clear();
                         self.dirty = true;
                     }
                     r.request_focus();
                 }
+                self.quick_subtasks(ui);
                 ui.add_space(8.0);
             }
 
@@ -2185,8 +2285,14 @@ impl TodoApp {
             let sort = store.settings.sort;
             let show_list = searching || !matches!(view, View::List(_));
             let scroll = egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                let row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>| {
-                    task_row(ui, store, t, view, show_list, selected == Some(t.id), today, actions)
+                let expanded = &self.expanded;
+                let step_inputs = &mut self.step_inputs;
+                let mut row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>| {
+                    let open = expanded.contains(&t.id);
+                    task_row(ui, store, t, view, show_list, selected == Some(t.id), today, open, actions);
+                    if open {
+                        subtask_rows(ui, t, step_inputs.entry(t.id).or_default(), actions);
+                    }
                 };
 
                 if searching {
@@ -2498,7 +2604,7 @@ impl TodoApp {
                                     changed = true;
                                 }
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if small_btn(ui, "✖").on_hover_text("Delete step").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text("Delete subtask").clicked() {
                                         remove = Some(i);
                                     }
                                     let r = ui.add(
@@ -2514,27 +2620,33 @@ impl TodoApp {
                             task.steps.remove(i);
                             changed = true;
                         }
-                        // New step: a visible field, a clickable "+", and an Add button once
-                        // there's text (so nobody has to know that Enter saves).
+                        // New subtask: a visible field, a clickable "+", and an Add button once
+                        // there's text (so nobody has to know that Enter saves). Laid out from
+                        // the right so the field takes exactly the room left: a fixed guess for
+                        // the button's width made the row overflow, and the details panel then
+                        // widened itself a little more every frame.
                         ui.horizontal(|ui| {
                             let field_id = Id::new(("new_step", id));
                             let touch = is_touch(ui);
                             let plus = egui::Button::new(RichText::new("+").color(ACCENT).strong().size(if touch { 22.0 } else { 18.0 }))
                                 .frame(false)
                                 .min_size(Vec2::splat(if touch { 40.0 } else { 24.0 }));
-                            let plus = ui.add(plus).on_hover_text("Add a step");
+                            let plus = ui.add(plus).on_hover_text("Add a subtask");
                             let has_text = !new_step.trim().is_empty();
-                            let add_w = if has_text { if touch { 76.0 } else { 56.0 } } else { 0.0 };
-                            let r = ui.add(
-                                egui::TextEdit::singleline(new_step)
-                                    .id(field_id)
-                                    .hint_text(if task.steps.is_empty() { "Add a step" } else { "Add another step" })
-                                    .min_size(field_height(ui))
-                                    .vertical_align(Align::Center)
-                                    .desired_width((ui.available_width() - add_w).max(80.0)),
-                            );
-                            let add = has_text && ui.button("Add").clicked();
-                            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            let mut add = false;
+                            let mut enter = false;
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                add = has_text && ui.button("Add").clicked();
+                                let r = ui.add(
+                                    egui::TextEdit::singleline(new_step)
+                                        .id(field_id)
+                                        .hint_text(if task.steps.is_empty() { "Add a subtask" } else { "Add another subtask" })
+                                        .min_size(field_height(ui))
+                                        .vertical_align(Align::Center)
+                                        .desired_width(ui.available_width()),
+                                );
+                                enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                            });
                             if (plus.clicked() || add || enter) && !new_step.trim().is_empty() {
                                 task.steps.push(Step::new(new_step.trim()));
                                 new_step.clear();
@@ -3309,6 +3421,7 @@ fn task_row(
     show_list: bool,
     selected: bool,
     today: NaiveDate,
+    expanded: bool,
     actions: &mut Vec<Action>,
 ) {
     let vis = ui.visuals().clone();
@@ -3324,7 +3437,7 @@ fn task_row(
     }
     if !t.steps.is_empty() {
         let n = t.steps.iter().filter(|s| s.done).count();
-        meta.push((format!("{n} of {}", t.steps.len()), weak));
+        meta.push((format!("{n} of {} subtasks", t.steps.len()), weak));
     }
     if let Some(due) = t.due {
         let color = if t.is_overdue(today) {
@@ -3372,12 +3485,23 @@ fn task_row(
     let check = ui.interact(check_rect, Id::new(("check", t.id)), Sense::click());
     let star_rect = Rect::from_center_size(Pos2::new(rect.right() - inset, rect.center().y), Vec2::splat(hit));
     let star = ui.interact(star_rect, Id::new(("star", t.id)), Sense::click());
+    // Subtasks: a ▸ / ▾ toggle beside the star shows them under the task.
+    let expand = (!t.steps.is_empty()).then(|| {
+        let r = Rect::from_center_size(Pos2::new(star_rect.left() - hit / 2.0 - 2.0, rect.center().y), Vec2::splat(hit));
+        let resp = ui.interact(r, Id::new(("expand", t.id)), Sense::click());
+        // The icon fills the rect it's given: draw it small inside the larger tap area.
+        let mut icon = resp.clone();
+        icon.rect = Rect::from_center_size(r.center(), Vec2::splat(if touch { 16.0 } else { 12.0 }));
+        egui::collapsing_header::paint_default_icon(ui, if expanded { 1.0 } else { 0.0 }, &icon);
+        resp
+    });
 
     paint_check(ui.painter(), check_rect.center(), radius, t.done, check.hovered(), &vis);
     paint_star(ui, star_rect.center(), t.important, star.hovered());
 
     let text_left = rect.left() + text_gap;
-    let text_width = (star_rect.left() - 8.0 - text_left).max(10.0);
+    let right_edge = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
+    let text_width = (right_edge - 8.0 - text_left).max(10.0);
 
     let mut title_job = LayoutJob::single_section(
         t.title.clone(),
@@ -3411,7 +3535,12 @@ fn task_row(
         ui.painter().galley(Pos2::new(text_left, top + title_h + 3.0), meta_galley, weak);
     }
 
-    if check.on_hover_cursor(CursorIcon::PointingHand).clicked() {
+    let expand_clicked = expand.is_some_and(|e| {
+        e.on_hover_text(if expanded { "Hide subtasks" } else { "Show subtasks" }).on_hover_cursor(CursorIcon::PointingHand).clicked()
+    });
+    if expand_clicked {
+        actions.push(Action::ToggleExpand(t.id));
+    } else if check.on_hover_cursor(CursorIcon::PointingHand).clicked() {
         actions.push(Action::ToggleDone(t.id));
     } else if star.on_hover_cursor(CursorIcon::PointingHand).clicked() {
         actions.push(Action::ToggleImportant(t.id));
@@ -3430,6 +3559,11 @@ fn task_row(
             actions.push(Action::ToggleImportant(t.id));
             ui.close_menu();
         }
+        if ui.button("+  Add a subtask").clicked() {
+            actions.push(Action::ToggleExpand(t.id));
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(("focus_subtask", t.id)), true));
+            ui.close_menu();
+        }
         let done = if t.done { "○  Mark as not completed" } else { "✔  Mark as completed" };
         if ui.button(done).clicked() {
             actions.push(Action::ToggleDone(t.id));
@@ -3441,6 +3575,72 @@ fn task_row(
             ui.close_menu();
         }
     });
+}
+
+/// A task's subtasks under its row in the list: tick them off, or add more.
+fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut Vec<Action>) {
+    let vis = ui.visuals().clone();
+    let weak = vis.weak_text_color();
+    let touch = is_touch(ui);
+    let (indent, line_h, radius, size) = if touch { (56.0, 44.0, 9.0, 15.5) } else { (44.0, 28.0, 7.0, 13.5) };
+    for step in &t.steps {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), line_h), Sense::click());
+        let center = Pos2::new(rect.left() + indent, rect.center().y);
+        let hovered = resp.hovered();
+        paint_check(ui.painter(), center, radius, step.done, hovered, &vis);
+        let mut job = LayoutJob::single_section(
+            step.title.clone(),
+            TextFormat {
+                font_id: FontId::proportional(size),
+                color: if step.done { weak } else { vis.text_color() },
+                strikethrough: if step.done { Stroke::new(1.0_f32, weak) } else { Stroke::NONE },
+                ..Default::default()
+            },
+        );
+        let left = center.x + radius + 10.0;
+        job.wrap = TextWrapping::truncate_at_width((rect.right() - 12.0 - left).max(10.0));
+        let galley = ui.fonts(|f| f.layout_job(job));
+        ui.painter().galley(Pos2::new(left, rect.center().y - galley.size().y / 2.0), galley, vis.text_color());
+        if resp
+            .on_hover_text(if step.done { "Mark as not done" } else { "Mark as done" })
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .clicked()
+        {
+            actions.push(Action::ToggleStep(t.id, step.id));
+        }
+    }
+    // "Add a subtask" under them, laid out from the right like the details panel's.
+    let field_id = Id::new(("list_subtask", t.id));
+    let focus_flag = Id::new(("focus_subtask", t.id));
+    if ui.ctx().data_mut(|d| d.remove_temp::<bool>(focus_flag)).unwrap_or(false) {
+        ui.memory_mut(|m| m.request_focus(field_id));
+    }
+    ui.horizontal(|ui| {
+        ui.add_space(indent - radius - 4.0);
+        let has_text = !input.trim().is_empty();
+        let mut add = false;
+        let mut enter = false;
+        let mut lost = false;
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            add = has_text && ui.small_button("Add").clicked();
+            let r = ui.add(
+                egui::TextEdit::singleline(input)
+                    .id(field_id)
+                    .hint_text("+ Add a subtask")
+                    .desired_width(ui.available_width()),
+            );
+            enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+            lost = r.lost_focus();
+        });
+        if (add || enter) && !input.trim().is_empty() {
+            actions.push(Action::AddStep(t.id, std::mem::take(input)));
+            ui.memory_mut(|m| m.request_focus(field_id));
+        } else if lost && t.steps.is_empty() && input.trim().is_empty() {
+            // Opened from "Add a subtask" in the menu but left empty: fold it away again.
+            actions.push(Action::ToggleExpand(t.id));
+        }
+    });
+    ui.add_space(4.0);
 }
 
 #[cfg(test)]
