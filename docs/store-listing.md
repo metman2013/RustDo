@@ -151,7 +151,7 @@ KoebleEffect
 
 ## Images to make
 
-Take screenshots at 1920×1080 or larger, in light or dark mode (dark looks best with the
+Ready-made screenshots (1920×1080, sample data) are in `docs/store-screenshots/`. To take new ones: shoot at 1920×1080 or larger, in light or dark mode (dark looks best with the
 current colours). Hide any personal tasks first. The Store needs at least one screenshot;
 four to six works best. Suggested shots, in this order:
 
@@ -172,10 +172,30 @@ Partner Center asks for one, can be made from `assets/rustdo.png` (512×512).
 
 ## Submitting each new version
 
-1. Release the version as usual (merge the version bump to `main`).
-2. Open that release's CI run on GitHub (Actions › Build › the run on `main`) and download
+**Automatic.** When a release is published, the `store-submit` job in
+`.github/workflows/build.yml` sends that version's `.msix` to the Store as a new submission
+(using the Microsoft Store CLI, `msstore publish`). Certification usually takes a few hours to
+a few days; Partner Center emails you. The listing, including "What's new in this version",
+carries over from the previous submission, so update "What's new" in Partner Center if you
+want it to describe the new version.
+
+It needs, in the repository's Settings › Secrets and variables › Actions:
+
+- Secrets `STORE_TENANT_ID`, `STORE_CLIENT_ID`, `STORE_CLIENT_SECRET`: a Partner Center
+  Microsoft Entra application (Account settings › User management › Microsoft Entra
+  applications) with the Manager role, and one of its keys. Keys expire: when the job fails
+  to sign in, add a new key there and update `STORE_CLIENT_SECRET`.
+- Secret `STORE_SELLER_ID`: Account settings › Legal info › Developer.
+- Variable `STORE_PRODUCT_ID`: RustDo's Store ID (Product management › Product identity,
+  starts with 9).
+
+Without them the job does nothing. If it fails (for example the previous submission is still
+in certification), the GitHub release is unaffected.
+
+**By hand** (if the job failed or isn't set up):
+
+1. Open that release's CI run on GitHub (Actions › Build › the run on `main`) and download
    the **store** artifact. It contains `RustDo-<version>.msix`.
-3. In Partner Center, open RustDo, choose **Start update** (or **Start submission**), and
-   upload the `.msix` under **Packages**. Add the version's changelog lines under "What's
-   new in this version", then **Submit to the Store**.
-4. Certification usually takes a few hours to a few days; Partner Center emails you.
+2. In Partner Center, open RustDo, choose **Start update**, and upload the `.msix` under
+   **Packages**. Add the version's changelog lines under "What's new in this version", then
+   **Submit to the Store**.

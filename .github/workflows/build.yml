@@ -390,3 +390,53 @@ jobs:
           V="${{ needs.version.outputs.version }}"
           tools/announce-discord.sh "$V" "$RUNNER_TEMP/notes.md" \
             "https://github.com/${{ github.repository }}/releases/tag/v$V"
+
+  # Sends the new version's Store package to the Microsoft Store as a new submission (it
+  # goes through certification, then the Store updates everyone). Needs the repository
+  # secrets STORE_TENANT_ID, STORE_CLIENT_ID, STORE_CLIENT_SECRET and STORE_SELLER_ID (a
+  # Partner Center "Microsoft Entra application" with the Manager role) and the repository
+  # variable STORE_PRODUCT_ID (the Store ID, e.g. 9N...); without them it does nothing. A
+  # failure here (e.g. the previous submission is still in certification) doesn't affect
+  # the GitHub release; the package can then be uploaded by hand from the "store" artifact.
+  store-submit:
+    if: needs.version.outputs.release == 'true'
+    needs: [version, store, release]
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      STORE_TENANT_ID: ${{ secrets.STORE_TENANT_ID }}
+      STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
+      STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
+      STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
+      STORE_PRODUCT_ID: ${{ vars.STORE_PRODUCT_ID }}
+    steps:
+      - name: Check the Store settings
+        id: cfg
+        shell: pwsh
+        run: |
+          $missing = @('STORE_TENANT_ID','STORE_CLIENT_ID','STORE_CLIENT_SECRET','STORE_SELLER_ID','STORE_PRODUCT_ID') |
+            Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+          if ($missing) {
+            Write-Host "::notice::Not submitting to the Microsoft Store: $($missing -join ', ') not set."
+            "ready=false" >> $env:GITHUB_OUTPUT
+          } else {
+            "ready=true" >> $env:GITHUB_OUTPUT
+          }
+      - if: steps.cfg.outputs.ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: store
+          path: store
+      - if: steps.cfg.outputs.ready == 'true'
+        uses: microsoft/setup-msstore-cli@v1
+      - name: Submit to the Microsoft Store
+        if: steps.cfg.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          msstore reconfigure --tenantId $env:STORE_TENANT_ID --sellerId $env:STORE_SELLER_ID --clientId $env:STORE_CLIENT_ID --clientSecret $env:STORE_CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) { throw 'msstore sign-in failed (check the four STORE_* secrets; the key may have expired)' }
+          $msix = Get-ChildItem store -Filter *.msix | Select-Object -First 1
+          if (-not $msix) { throw 'no .msix in the store artifact' }
+          Write-Host "Submitting $($msix.Name) to product $env:STORE_PRODUCT_ID"
+          msstore publish $msix.FullName -id $env:STORE_PRODUCT_ID -v
+          if ($LASTEXITCODE -ne 0) { throw 'msstore publish failed' }
