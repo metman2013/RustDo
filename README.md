@@ -227,7 +227,9 @@ That's it. When `main` has a version that hasn't been released yet, the workflow
 - the APK
 - the RustDo Hub exe
 
-It also publishes the Hub's Docker image as `:0.2.0` and `:latest`. Nothing is released
+It also publishes the Hub's Docker image as `:0.2.0` and `:latest`, and, if the
+`DISCORD_WEBHOOK_URL` repository secret is set, posts "RustDo 0.2.0 is out" with the
+release notes to that Discord channel. Nothing is released
 unless every build succeeds. Installed copies pick the release up through their update
 check. Pushing a `v0.2.0` tag yourself also works.
 

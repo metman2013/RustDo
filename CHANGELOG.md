@@ -10,7 +10,6 @@ Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, 
 
 ### New
 - The bottom of the menu now shows the RustDo version, a "What's new" link and a link to the RustDo Discord (they're still in Settings too).
-
 - Windows and Linux: Settings has a new Help section. "Copy diagnostic info" copies your RustDo version, system details and recent log lines to paste into a report; "Open logs folder" shows the log files.
 - Windows and Linux: RustDo keeps a small log of each start and of any problems (in RustDo's logs folder), and if it ever has to close because of an error, it says so and where the details are, instead of disappearing.
 
