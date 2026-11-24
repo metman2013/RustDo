@@ -33,6 +33,8 @@ const AUTO_UPDATE_WINDOW: StdDuration = StdDuration::from_secs(120);
 const NARROW_WIDTH: f32 = 700.0;
 /// Sidebar room for the "Desktop notes" section below the lists.
 const NOTES_SECTION_H: f32 = 62.0;
+/// Sidebar room for the footer: version, What's new, Discord.
+const SIDEBAR_FOOTER_H: f32 = 34.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
@@ -2004,7 +2006,8 @@ impl TodoApp {
                     (false, true) => 80.0,
                     (true, false) => 86.0,
                     (false, false) => 52.0,
-                } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 };
+                } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 }
+                    + SIDEBAR_FOOTER_H;
                 // Phone layout: the whole screen scrolls as one page, so show every list.
                 let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
@@ -2099,7 +2102,9 @@ impl TodoApp {
                 if notes::AVAILABLE {
                     ui.add_space(4.0);
                     ui.separator();
-                    let (heading, tip) = if notes::WALL {
+                    let (heading, tip) = if cfg!(target_os = "android") {
+                        ("STICKY NOTES", "Sticky notes, kept on this phone")
+                    } else if notes::WALL {
                         ("STICKY NOTES", "A wall of sticky notes, kept in this browser")
                     } else {
                         ("DESKTOP NOTES", "Notes on your desktop, kept on this computer")
@@ -2115,6 +2120,34 @@ impl TodoApp {
                         self.search.clear();
                         self.show_nav = false;
                     }
+                }
+
+                // Footer: version, What's new and the Discord (also in Settings). Wide
+                // screens pin it to the bottom of the sidebar; on a phone it ends the page.
+                let footer = |ui: &mut egui::Ui, whats_new: &mut Option<Vec<changelog::Release>>| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).small().weak());
+                        if ui.add(egui::Label::new(RichText::new("What's new").small().color(ACCENT)).sense(Sense::click()))
+                            .on_hover_cursor(CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            *whats_new = Some(changelog::releases());
+                        }
+                        ui.hyperlink_to(RichText::new("💬 Discord").small(), update::DISCORD)
+                            .on_hover_text("Chat, ideas and help: opens in your browser");
+                    });
+                };
+                if narrow {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    footer(ui, &mut self.whats_new);
+                    ui.add_space(8.0);
+                } else {
+                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                        ui.add_space(4.0);
+                        footer(ui, &mut self.whats_new);
+                        ui.separator();
+                    });
                 }
         };
         if narrow {

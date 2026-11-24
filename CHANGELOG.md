@@ -6,6 +6,15 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.3.1 - 2026-11-24
+
+### New
+- The bottom of the menu now shows the RustDo version, a "What's new" link and a link to the RustDo Discord (they're still in Settings too).
+
+### Fixed
+- Phones: the Sticky notes buttons fit on the screen (they ran off the left edge), and the text under them wraps instead of being cut off.
+- Android: the Sticky notes page says notes are kept on this phone (not "in this browser") and asks you to tap, not click.
+
 ## 0.3.0 - 2026-11-24
 
 ### New

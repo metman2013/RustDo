@@ -669,9 +669,20 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
             }
     };
     if narrow {
+        // Phones: title, then the buttons left to right ("+ New note" first), wrapping
+        // onto a second line when they don't fit.
         ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
-        ui.horizontal(|ui| {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
+        ui.horizontal_wrapped(|ui| {
+            if ui.add(egui::Button::new(RichText::new("+ New note").color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
+                let near = s.notes.notes.last().and_then(|n| n.pos);
+                s.new_note(near.or(Some([-16.0, -16.0])));
+            }
+            if ui.button("Back up").clicked() {
+                page_action = PageAction::Backup;
+            }
+            if ui.button("Restore").clicked() {
+                page_action = PageAction::Restore;
+            }
         });
     } else {
         ui.horizontal(|ui| {
@@ -679,12 +690,13 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
         });
     }
+    let kept = if cfg!(target_os = "android") { "on this phone" } else { "in this browser" };
     let hint = if narrow {
-        "Notes are kept in this browser and included in your backups."
+        format!("Notes are kept {kept} and included in your backups.")
     } else {
-        "Drag a note by its top bar, resize it from the corner. Notes are kept in this browser and included in your backups."
+        format!("Drag a note by its top bar, resize it from the corner. Notes are kept {kept} and included in your backups.")
     };
-    ui.label(RichText::new(hint).weak().small());
+    ui.add(egui::Label::new(RichText::new(hint).weak().small()).wrap());
     if let Some(w) = &s.warning {
         ui.colored_label(Color32::from_rgb(0xE5, 0x48, 0x4D), w);
     }
@@ -694,7 +706,8 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("📝").size(40.0));
-            ui.label(RichText::new("No sticky notes yet. Click “+ New note” to pin one to this wall.").weak());
+            let verb = if crate::platform::IS_MOBILE_OR_WEB && cfg!(target_os = "android") { "Tap" } else { "Click" };
+            ui.add(egui::Label::new(RichText::new(format!("No sticky notes yet. {verb} “+ New note” to add one.")).weak()).wrap());
         });
         return page_action;
     }
