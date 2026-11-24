@@ -7,6 +7,8 @@ use crate::model::{
 use crate::import::{self, Import};
 use crate::changelog;
 use crate::companion;
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+use crate::diagnostics;
 use crate::notes;
 use crate::notes_ui;
 use crate::notify;
@@ -33,6 +35,8 @@ const AUTO_UPDATE_WINDOW: StdDuration = StdDuration::from_secs(120);
 const NARROW_WIDTH: f32 = 700.0;
 /// Sidebar room for the "Desktop notes" section below the lists.
 const NOTES_SECTION_H: f32 = 62.0;
+/// Sidebar room for the footer: version, What's new, Discord.
+const SIDEBAR_FOOTER_H: f32 = 34.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
@@ -200,6 +204,16 @@ impl TodoApp {
         if loaded.warning.is_none() {
             loaded.warning = moved_notice;
         }
+        if let Some(w) = &loaded.warning {
+            log::warn!(target: "rustdo", "loading tasks: {w}");
+        }
+        log::info!(
+            target: "rustdo",
+            "{} lists, {} tasks; can save: {}",
+            loaded.store.lists.len(),
+            loaded.store.tasks.len(),
+            loaded.can_save
+        );
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         let touch_mode = platform::prefers_touch();
         apply_style(&cc.egui_ctx, touch_mode);
@@ -536,6 +550,7 @@ impl TodoApp {
         if let Some(dir) = self.storage.folder() {
             args.push(format!("/LOG={}", dir.join("update-install.log").display()));
         }
+        log::info!(target: "rustdo", "running the installer {} {args:?}", installer.display());
         match std::process::Command::new(&installer).args(&args).spawn() {
             Ok(_) => {
                 // The installer replaces this program, so get out of its way.
@@ -723,6 +738,7 @@ impl TodoApp {
         self.companion_menu_items(ui);
         self.sharing_menu_items(ui);
         self.backup_menu_items(ui);
+        self.help_menu_items(ui);
         #[cfg(target_os = "android")]
         {
             ui.separator();
@@ -781,6 +797,38 @@ impl TodoApp {
         } else if cfg!(windows) {
             notify::register_app();
         }
+    }
+
+    /// Settings › Help (desktop): the log, and a summary to paste into a problem report.
+    fn help_menu_items(&mut self, ui: &mut egui::Ui) {
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        {
+            ui.separator();
+            ui.label(RichText::new("Help").strong());
+            ui.add(
+                egui::Label::new(
+                    RichText::new("Something not working? Copy the diagnostic info and send it with your report.")
+                        .weak()
+                        .small(),
+                )
+                .wrap(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Copy diagnostic info").on_hover_text("Version, system and the last lines of the log").clicked() {
+                    ui.ctx().copy_text(diagnostic_report());
+                    self.close_settings(ui);
+                    self.notify("Diagnostic info copied. Paste it into your message or the Discord.");
+                }
+                if let Some(dir) = diagnostics::log_dir() {
+                    if ui.button("Open logs folder").on_hover_text(dir.display().to_string()).clicked() {
+                        let _ = std::fs::create_dir_all(&dir);
+                        self.close_settings(ui);
+                        platform::open_folder(&dir);
+                    }
+                }
+            });
+        }
+        let _ = ui;
     }
 
     /// Desktop: once a second, see whether the companion runs, pick up notes it saved, and
@@ -1378,7 +1426,10 @@ impl TodoApp {
         self.sync_soon = true;
         match self.storage.save(&self.store) {
             Ok(()) => self.backup_pending = true,
-            Err(e) => self.notify(format!("Couldn't save: {e}")),
+            Err(e) => {
+                log::error!(target: "rustdo", "saving tasks failed: {e}");
+                self.notify(format!("Couldn't save: {e}"));
+            }
         }
     }
 
@@ -1407,6 +1458,7 @@ impl TodoApp {
         if let Err(e) = result {
             if !self.backup_error_shown {
                 self.backup_error_shown = true;
+                log::warn!(target: "rustdo", "automatic backup failed: {e}");
                 self.notify(format!("Automatic backup failed: {e}"));
             }
         }
@@ -2004,7 +2056,8 @@ impl TodoApp {
                     (false, true) => 80.0,
                     (true, false) => 86.0,
                     (false, false) => 52.0,
-                } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 };
+                } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 }
+                    + SIDEBAR_FOOTER_H;
                 // Phone layout: the whole screen scrolls as one page, so show every list.
                 let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
@@ -2099,7 +2152,9 @@ impl TodoApp {
                 if notes::AVAILABLE {
                     ui.add_space(4.0);
                     ui.separator();
-                    let (heading, tip) = if notes::WALL {
+                    let (heading, tip) = if cfg!(target_os = "android") {
+                        ("STICKY NOTES", "Sticky notes, kept on this phone")
+                    } else if notes::WALL {
                         ("STICKY NOTES", "A wall of sticky notes, kept in this browser")
                     } else {
                         ("DESKTOP NOTES", "Notes on your desktop, kept on this computer")
@@ -2115,6 +2170,34 @@ impl TodoApp {
                         self.search.clear();
                         self.show_nav = false;
                     }
+                }
+
+                // Footer: version, What's new and the Discord (also in Settings). Wide
+                // screens pin it to the bottom of the sidebar; on a phone it ends the page.
+                let footer = |ui: &mut egui::Ui, whats_new: &mut Option<Vec<changelog::Release>>| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).small().weak());
+                        if ui.add(egui::Label::new(RichText::new("What's new").small().color(ACCENT)).sense(Sense::click()))
+                            .on_hover_cursor(CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            *whats_new = Some(changelog::releases());
+                        }
+                        ui.hyperlink_to(RichText::new("💬 Discord").small(), update::DISCORD)
+                            .on_hover_text("Chat, ideas and help: opens in your browser");
+                    });
+                };
+                if narrow {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    footer(ui, &mut self.whats_new);
+                    ui.add_space(8.0);
+                } else {
+                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                        ui.add_space(4.0);
+                        footer(ui, &mut self.whats_new);
+                        ui.separator();
+                    });
                 }
         };
         if narrow {
@@ -3599,6 +3682,20 @@ fn task_row(
             ui.close_menu();
         }
     });
+}
+
+/// Version, system, paths and the end of each log: what's needed to look into a problem.
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+fn diagnostic_report() -> String {
+    let mut out = format!("RustDo diagnostic info\n{}\n", diagnostics::system_summary());
+    for role in ["rustdo", "companion"] {
+        let Some(path) = diagnostics::log_path(role) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let lines: Vec<&str> = text.lines().collect();
+        let tail = &lines[lines.len().saturating_sub(60)..];
+        out.push_str(&format!("\n--- {} (last {} lines) ---\n{}\n", path.display(), tail.len(), tail.join("\n")));
+    }
+    out
 }
 
 /// A task's subtasks under its row in the list: tick them off, or add more.

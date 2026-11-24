@@ -227,7 +227,9 @@ That's it. When `main` has a version that hasn't been released yet, the workflow
 - the APK
 - the RustDo Hub exe
 
-It also publishes the Hub's Docker image as `:0.2.0` and `:latest`. Nothing is released
+It also publishes the Hub's Docker image as `:0.2.0` and `:latest`, and, if the
+`DISCORD_WEBHOOK_URL` repository secret is set, posts "RustDo 0.2.0 is out" with the
+release notes to that Discord channel. Nothing is released
 unless every build succeeds. Installed copies pick the release up through their update
 check. Pushing a `v0.2.0` tag yourself also works.
 
@@ -274,6 +276,21 @@ You need Rust (<https://rustup.rs>). On Windows, either toolchain works:
 
 By default Rust embeds source paths that include your Windows user folder in binaries.
 `build-release.ps1` and `build-web.ps1` rewrite those paths to neutral names.
+
+## Requirements and troubleshooting
+
+- **Windows 10 or 11** (64-bit). Windows 7 and 8 aren't supported: current Rust programs
+  don't run there, and the installer says so. No Visual C++ Redistributable is needed.
+- **Linux**: any recent 64-bit distribution with X11 or Wayland.
+- **Graphics**: RustDo draws with OpenGL. On Windows, if that isn't available (virtual
+  machines, Remote Desktop, a missing graphics driver), it switches to Direct3D by itself.
+  Set `RUSTDO_RENDERER=wgpu` to use Direct3D from the start.
+
+**Logs.** Each start and any problem are written to `rustdo.log` (and `companion.log` for
+the background companion) in `%LOCALAPPDATA%\RustDo\logs` on Windows or
+`~/.local/share/rustdo/logs` on Linux. If RustDo has to close because of an error, it shows
+a message saying so. **Settings › Help › Copy diagnostic info** copies the version, system
+details and the end of the logs, ready to paste into a report.
 
 ## Your data
 

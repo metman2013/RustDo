@@ -6,6 +6,20 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.3.1 - 2026-11-24
+
+### New
+- The bottom of the menu now shows the RustDo version, a "What's new" link and a link to the RustDo Discord (they're still in Settings too).
+- Windows and Linux: Settings has a new Help section. "Copy diagnostic info" copies your RustDo version, system details and recent log lines to paste into a report; "Open logs folder" shows the log files.
+- Windows and Linux: RustDo keeps a small log of each start and of any problems (in RustDo's logs folder), and if it ever has to close because of an error, it says so and where the details are, instead of disappearing.
+
+### Fixed
+- Windows: RustDo no longer needs the Microsoft Visual C++ Redistributable. Without it, RustDo 0.3.0 and earlier couldn't start on some PCs.
+- Windows: if the graphics driver can't run RustDo with OpenGL (common in virtual machines, over Remote Desktop, or with a missing driver), RustDo now switches to Direct3D instead of not opening, and remembers that for next time.
+- Windows: the installer now says that RustDo needs Windows 10 or later, instead of installing on Windows 7 or 8 where it can't run.
+- Phones: the Sticky notes buttons fit on the screen (they ran off the left edge), and the text under them wraps instead of being cut off.
+- Android: the Sticky notes page says notes are kept on this phone (not "in this browser") and asks you to tap, not click.
+
 ## 0.3.0 - 2026-11-24
 
 ### New

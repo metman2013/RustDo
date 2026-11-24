@@ -351,3 +351,13 @@ jobs:
           body_path: ${{ runner.temp }}/notes.md
           generate_release_notes: true
           files: artifacts/*
+      # Tell the RustDo Discord channel. Needs the DISCORD_WEBHOOK_URL repository secret
+      # (without it this does nothing); a Discord hiccup never fails the release.
+      - name: Announce on Discord
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          tools/announce-discord.sh "$V" "$RUNNER_TEMP/notes.md" \
+            "https://github.com/${{ github.repository }}/releases/tag/v$V"
