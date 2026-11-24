@@ -34,12 +34,14 @@ $publisherName = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DIS
 Write-Host "Package identity: $name / $publisher / $publisherName"
 
 # The newest Windows SDK's tools.
-$sdkBin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64" -Directory |
+$sdkVersion = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Directory -Filter '10.*' |
+    Where-Object { Test-Path (Join-Path $_.FullName 'x64\makeappx.exe') } |
     Sort-Object { [version]$_.Name } | Select-Object -Last 1
-if (-not $sdkBin) { throw 'Windows SDK not found (makeappx/makepri)' }
-$makeappx = Join-Path $sdkBin.FullName 'makeappx.exe'
-$makepri = Join-Path $sdkBin.FullName 'makepri.exe'
-Write-Host "Using Windows SDK tools from $($sdkBin.FullName)"
+if (-not $sdkVersion) { throw 'Windows SDK not found (makeappx/makepri)' }
+$sdkBin = Join-Path $sdkVersion.FullName 'x64'
+$makeappx = Join-Path $sdkBin 'makeappx.exe'
+$makepri = Join-Path $sdkBin 'makepri.exe'
+Write-Host "Using Windows SDK tools from $sdkBin"
 
 $layout = Join-Path $root 'target\msix-layout'
 if (Test-Path $layout) { Remove-Item -Recurse -Force $layout }
