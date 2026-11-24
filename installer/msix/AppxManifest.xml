@@ -2,9 +2,8 @@
 <!--
   Microsoft Store package (MSIX) for RustDo. Built by the `store` job in
   .github/workflows/build.yml with tools/build-msix.ps1, which fills in:
-    __NAME__, __PUBLISHER__, __PUBLISHER_DISPLAY_NAME__  from Partner Center
-        (Product management > Product identity), set as repository variables
-        MSIX_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY_NAME;
+    __NAME__, __PUBLISHER__, __PUBLISHER_DISPLAY_NAME__  RustDo's identity from Partner
+        Center (Product management > Product identity), kept in build-msix.ps1;
     __VERSION__  the app version as x.y.z.0 (the Store requires the last part to be 0).
   The Store signs the package when it's published, so there's no certificate here.
 -->

@@ -290,10 +290,10 @@ Store install shows no SmartScreen warning. The Store copy:
 
 **Publishing a version:** every CI run uploads the package as the **store** artifact. Download
 `RustDo-<version>.msix` from the run on `main`, then in Partner Center open the app, create a
-submission, and upload it under **Packages**. The package identity comes from Partner Center ›
-Product management › Product identity, set as repository variables `MSIX_NAME`,
-`MSIX_PUBLISHER` and `MSIX_PUBLISHER_DISPLAY_NAME` (without them the package builds with
-placeholders the Store won't accept). The listing's privacy policy URL is
+submission, and upload it under **Packages**. The package identity (`KoebleEffect.RustDo`, publisher
+KoebleEffect) comes from Partner Center › Product management › Product identity and is kept
+in `tools/build-msix.ps1`. The listing text is drafted in
+[docs/store-listing.md](docs/store-listing.md). The listing's privacy policy URL is
 https://rustdo.app/privacy.html.
 
 ## Requirements and troubleshooting

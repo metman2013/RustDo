@@ -8,13 +8,11 @@
     manifest. The result is unsigned: the Store signs it when it's published. Upload it in
     Partner Center (your app > Packages).
 
-    The package identity comes from Partner Center > Product management > Product
-    identity, through these environment variables (CI: repository variables):
+    The package identity is RustDo's, from Partner Center > Product management > Product
+    identity (KoebleEffect.RustDo). These environment variables override it:
       MSIX_NAME                   Package/Identity/Name
       MSIX_PUBLISHER              Package/Identity/Publisher (CN=...)
       MSIX_PUBLISHER_DISPLAY_NAME Package/Properties/PublisherDisplayName
-    Without them it builds with placeholder values, fine for checking the build but not
-    accepted by the Store.
 
 .EXAMPLE
     .\tools\build-msix.ps1 -Exe target\release\rustdo.exe -Version 0.3.2 -Out target\store
@@ -28,12 +26,12 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $src = Join-Path $root 'installer\msix'
 
-$name = if ($env:MSIX_NAME) { $env:MSIX_NAME } else { 'RustDo.Placeholder' }
-$publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER } else { 'CN=00000000-0000-0000-0000-000000000000' }
-$publisherName = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME } else { 'RustDo (placeholder)' }
-if (-not $env:MSIX_NAME) {
-    Write-Host "::warning::MSIX_NAME / MSIX_PUBLISHER / MSIX_PUBLISHER_DISPLAY_NAME aren't set: building with placeholders (not accepted by the Store)."
-}
+# RustDo's identity in Partner Center (not secret). The environment variables override it,
+# e.g. to build a test package under another identity.
+$name = if ($env:MSIX_NAME) { $env:MSIX_NAME } else { 'KoebleEffect.RustDo' }
+$publisher = if ($env:MSIX_PUBLISHER) { $env:MSIX_PUBLISHER } else { 'CN=B91A4D6C-087A-4954-86E2-2B5ECE9D9079' }
+$publisherName = if ($env:MSIX_PUBLISHER_DISPLAY_NAME) { $env:MSIX_PUBLISHER_DISPLAY_NAME } else { 'KoebleEffect' }
+Write-Host "Package identity: $name / $publisher / $publisherName"
 
 # The newest Windows SDK's tools.
 $sdkBin = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\10.*\x64" -Directory |
