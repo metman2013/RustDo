@@ -151,7 +151,7 @@ KoebleEffect
 
 ## Images to make
 
-Take screenshots at 1920×1080 or larger, in light or dark mode (dark looks best with the
+Ready-made screenshots (1920×1080, sample data) are in `docs/store-screenshots/`. To take new ones: shoot at 1920×1080 or larger, in light or dark mode (dark looks best with the
 current colours). Hide any personal tasks first. The Store needs at least one screenshot;
 four to six works best. Suggested shots, in this order:
 
