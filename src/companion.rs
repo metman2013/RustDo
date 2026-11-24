@@ -241,7 +241,7 @@ mod process {
         if !wanted(&settings) {
             return;
         }
-        let options = eframe::NativeOptions {
+        let options = || eframe::NativeOptions {
             // A hidden window: the notes are separate windows, the tray icon is the way in.
             viewport: egui::ViewportBuilder::default()
                 .with_title("RustDo companion")
@@ -252,11 +252,20 @@ mod process {
                 .with_visible(false),
             ..Default::default()
         };
-        let _ = eframe::run_native(
-            "RustDo companion",
-            options,
-            Box::new(move |cc| Ok(Box::new(Companion::new(cc, settings, started_at_sign_in, lock)))),
-        );
+        log::info!(target: "rustdo", "companion starting (at sign-in: {started_at_sign_in})");
+        // The lock and settings move into the app the first time it's created; a second
+        // attempt (Direct3D fallback) gets fresh ones.
+        let mut first = Some((settings, lock));
+        let result = crate::diagnostics::run_native("RustDo companion", options, |cc| {
+            let (settings, lock) = first.take().unwrap_or_else(|| {
+                (read_settings().unwrap_or_default(), lock_companion().expect("companion lock"))
+            });
+            Box::new(Companion::new(cc, settings, started_at_sign_in, lock))
+        });
+        match result {
+            Ok(()) => log::info!(target: "rustdo", "companion stopped"),
+            Err(e) => log::error!(target: "rustdo", "companion couldn't start: {e}"),
+        }
     }
 
     /// The settings saved by RustDo (read-only: the companion never writes the task file).

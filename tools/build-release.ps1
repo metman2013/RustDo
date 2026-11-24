@@ -14,7 +14,9 @@ $homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
 $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $homeDir '.cargo' }
 
 # rustc applies the LAST matching rule, so list the most general prefix first.
+# +crt-static: no VCRUNTIME140.dll needed (RUSTFLAGS replaces .cargo/config.toml's flags).
 $env:RUSTFLAGS = @(
+    "-C target-feature=+crt-static",
     "--remap-path-prefix=$homeDir=home",
     "--remap-path-prefix=$cargoHome=cargo",
     "--remap-path-prefix=$root=rustdo"

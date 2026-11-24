@@ -1,0 +1,5 @@
+# Windows: link the C runtime into the exe, so RustDo (and the Hub) start on PCs that
+# don't have the Microsoft Visual C++ Redistributable (VCRUNTIME140.dll) installed.
+# tools/build-release.ps1 sets RUSTFLAGS, which replaces these, so it adds the same flag.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

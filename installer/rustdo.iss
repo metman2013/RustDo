@@ -33,6 +33,9 @@ LicenseFile=..\LICENSE
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+; Windows 10 or later: Rust programs no longer run on Windows 7 or 8. Setup says so
+; instead of installing something that can't start.
+MinVersion=10.0
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Close a running RustDo before replacing it, and reopen it afterwards. "force": the
