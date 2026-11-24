@@ -203,7 +203,7 @@ impl TodoApp {
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
         let touch_mode = platform::prefers_touch();
         apply_style(&cc.egui_ctx, touch_mode);
-        let notes = notes_ui::Shared::load(if notes::SUPPORTED { storage.folder() } else { None });
+        let notes = notes_ui::Shared::load(if notes::AVAILABLE { storage.folder() } else { None });
 
         // An automatic update that did finish: forget the attempt.
         if loaded.store.settings.update_attempt.as_deref().is_some_and(|v| {
@@ -1212,7 +1212,8 @@ impl TodoApp {
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Back up sticky notes…").on_hover_text("Save just your sticky notes to a file").clicked() {
                     self.close_settings(ui);
-                    self.backup_notes(now.date());
+                    let ctx = ui.ctx().clone();
+                    self.backup_notes(&ctx, now.date());
                 }
                 if ui.button("Restore sticky notes…").on_hover_text("Bring notes back from a backup (your current notes are kept)").clicked() {
                     self.close_settings(ui);
@@ -1399,7 +1400,7 @@ impl TodoApp {
         self.last_backup = Some(Instant::now());
         self.backup_pending = false;
         let mut result = self.storage.auto_backup(&self.store, today);
-        if notes::SUPPORTED && result.is_ok() {
+        if notes::AVAILABLE && result.is_ok() {
             let snapshot = notes_ui::lock(&self.notes).notes.clone();
             result = self.storage.auto_backup_notes(&snapshot, &self.store.settings, today);
         }
@@ -1580,7 +1581,7 @@ impl TodoApp {
 
     /// Desktop: saves every sticky note to a file of the user's choosing.
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-    fn backup_notes(&mut self, today: NaiveDate) {
+    fn backup_notes(&mut self, _ctx: &egui::Context, today: NaiveDate) {
         let snapshot = notes_ui::lock(&self.notes).notes.clone();
         if snapshot.notes.is_empty() {
             self.notify("There are no sticky notes to back up yet.");
@@ -1633,7 +1634,7 @@ impl TodoApp {
 
     /// Web: downloads every sticky note as a file.
     #[cfg(target_arch = "wasm32")]
-    fn backup_notes(&mut self, today: NaiveDate) {
+    fn backup_notes(&mut self, _ctx: &egui::Context, today: NaiveDate) {
         let snapshot = notes_ui::lock(&self.notes).notes.clone();
         if snapshot.notes.is_empty() {
             self.notify("There are no sticky notes to back up yet.");
@@ -1653,11 +1654,28 @@ impl TodoApp {
         self.pick_import_file(ctx);
     }
 
+    /// Android: copies every sticky note to the clipboard (paste it somewhere safe; paste it
+    /// back with "Restore from pasted backup").
     #[cfg(target_os = "android")]
-    fn backup_notes(&mut self, _today: NaiveDate) {}
+    fn backup_notes(&mut self, ctx: &egui::Context, _today: NaiveDate) {
+        let snapshot = notes_ui::lock(&self.notes).notes.clone();
+        if snapshot.notes.is_empty() {
+            self.notify("There are no sticky notes to back up yet.");
+            return;
+        }
+        ctx.copy_text(serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+        let n = snapshot.notes.len();
+        self.notify(format!(
+            "{n} sticky note{} copied. Paste them into a note or email to keep them safe.",
+            if n == 1 { "" } else { "s" }
+        ));
+    }
 
+    /// Android: paste a notes backup (or a full backup) into the restore box.
     #[cfg(target_os = "android")]
-    fn pick_notes_restore_file(&mut self, _ctx: &egui::Context) {}
+    fn pick_notes_restore_file(&mut self, _ctx: &egui::Context) {
+        self.paste_restore = Some(String::new());
+    }
 
     fn restore_dialog(&mut self, ctx: &egui::Context) {
         // Android: paste a backup that was exported to the clipboard.
@@ -1686,6 +1704,12 @@ impl TodoApp {
                     Ok(store) => {
                         let carried = notes::parse_backup(text.as_bytes()).ok().filter(|_| notes::AVAILABLE);
                         self.pending_restore = Some(("pasted backup".into(), store, carried));
+                    }
+                    // A sticky notes backup: merged in, after confirmation.
+                    Err(_) if notes::AVAILABLE && notes::parse_backup(text.as_bytes()).is_ok() => {
+                        if let Ok(found) = notes::parse_backup(text.as_bytes()) {
+                            self.pending_notes_restore = Some(("pasted notes".into(), found));
+                        }
                     }
                     Err(e) => self.notify(e),
                 }
@@ -2120,7 +2144,7 @@ impl TodoApp {
                 }
             }
             match notes_ui::notes_page(ui, &self.notes) {
-                notes_ui::PageAction::Backup => self.backup_notes(Local::now().date_naive()),
+                notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::None => {}
             }
@@ -3166,7 +3190,7 @@ impl eframe::App for TodoApp {
         if !(self.store.settings.companion && self.companion_running) {
             notes_ui::show_windows(ctx, &self.notes);
         }
-        if notes::SUPPORTED && notes_ui::lock(&self.notes).take_backup_pending() {
+        if notes::AVAILABLE && notes_ui::lock(&self.notes).take_backup_pending() {
             self.backup_pending = true;
         }
         self.alert_windows(ctx, now);

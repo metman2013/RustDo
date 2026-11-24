@@ -11,10 +11,11 @@ use uuid::Uuid;
 /// Sticky notes as their own desktop windows (Windows and Linux).
 pub const SUPPORTED: bool = cfg!(not(any(target_os = "android", target_arch = "wasm32")));
 
-/// The web app shows sticky notes on a wall inside the page instead.
-pub const WALL: bool = cfg!(target_arch = "wasm32");
+/// The web app and the Android app show sticky notes on a wall inside the app instead
+/// (a column of notes on a phone).
+pub const WALL: bool = cfg!(any(target_arch = "wasm32", target_os = "android"));
 
-/// Sticky notes in any form (desktop windows or the web wall): not on Android yet.
+/// Sticky notes in any form: desktop windows, or the wall (web, Android).
 pub const AVAILABLE: bool = SUPPORTED || WALL;
 
 /// Room between notes (and from the wall's edge) when placing them.
@@ -308,7 +309,7 @@ pub fn header_color(background: [u8; 3]) -> [u8; 3] {
 
 // ---------------------------------------------------------------- the notes file
 
-#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod file {
     use super::Notes;
     use std::fs;
@@ -546,7 +547,7 @@ mod tests {
         assert!(parse_backup(b"not json").is_err());
     }
 
-    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn daily_notes_backups_keep_the_newest() {
         let dir = std::env::temp_dir().join(format!("rustdo-notes-bk-{}", Uuid::new_v4()));
@@ -571,7 +572,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn notes_file_round_trips() {
         let dir = std::env::temp_dir().join(format!("rustdo-notes-{}", Uuid::new_v4()));

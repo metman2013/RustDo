@@ -49,10 +49,12 @@ export on one, restore on the other.
 
 ## Sticky notes
 
-**Web app:** open **Sticky notes** in the sidebar for a wall of notes: drag a note by its top
-bar, resize it from the corner, and **Tidy up** to line them up. Notes are kept in the
-browser and included in **Export backup**; **Back up notes… / Restore notes…** download and
-open a notes file. On a phone-sized screen the wall becomes a column.
+**Web app and Android:** open **Sticky notes** for a wall of notes: drag a note by its top
+bar, resize it from the corner, and **Tidy up** to line them up. On a phone-sized screen the
+wall becomes a column of notes. The web app keeps notes in the browser (**Back up notes… /
+Restore notes…** download and open a notes file); Android keeps them in `notes.json` on the
+phone, in the daily backups, and **Back up notes** copies them to the clipboard (paste them
+back with **Restore from pasted backup**). Both include notes in the full backup.
 
 ### On the desktop (Windows and Linux)
 
@@ -139,7 +141,7 @@ Full guide, including the Windows exe and using it away from home: [docs/hub.md]
 | Light / dark theme | ✅ System / light / dark (button next to the logo) |
 | Undo delete | ✅ |
 | Bring your tasks over | ✅ Import from Microsoft To Do (see below) |
-| Sticky Notes | ✅ Desktop windows on Windows and Linux, a notes wall in the web app (see [Sticky notes](#sticky-notes)) |
+| Sticky Notes | ✅ Desktop windows on Windows and Linux, a notes wall in the web app and on Android (see [Sticky notes](#sticky-notes)) |
 
 ### Keyboard shortcuts
 

@@ -127,14 +127,14 @@ impl Storage {
         }
     }
 
-    /// Desktop: today's sticky notes backup, next to the task backups.
+    /// Desktop and Android: today's sticky notes backup, next to the task backups.
     pub fn auto_backup_notes(
         &self,
         notes: &crate::notes::Notes,
         settings: &crate::model::Settings,
         today: chrono::NaiveDate,
     ) -> Result<(), String> {
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         for dir in self.backup_dirs(settings) {
             crate::notes::file::write_daily_backup(&dir, notes, today, KEEP_BACKUPS)
                 .map_err(|e| format!("couldn't back up your sticky notes to {}: {e}", dir.display()))?;

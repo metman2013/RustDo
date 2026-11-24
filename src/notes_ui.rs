@@ -22,8 +22,8 @@ const SAVE_DELAY: Duration = Duration::from_millis(600);
 
 pub struct Shared {
     pub notes: Notes,
-    /// `notes.json` (desktop only: the web and Android have no sticky notes).
-    #[cfg_attr(any(target_os = "android", target_arch = "wasm32"), allow(dead_code))]
+    /// `notes.json` next to the tasks (desktop and Android; the web app uses browser storage).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     path: Option<PathBuf>,
     dirty: bool,
     last_change: Instant,
@@ -69,12 +69,10 @@ impl Shared {
     /// Loads `notes.json` from `folder` (desktop), or starts empty in memory.
     pub fn load(folder: Option<PathBuf>) -> SharedNotes {
         let path = folder.map(|f| f.join("notes.json"));
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         let (notes, warning) = path.as_deref().map_or((Notes::default(), None), notes::file::load);
         #[cfg(target_arch = "wasm32")]
         let (notes, warning) = notes::browser::load();
-        #[cfg(target_os = "android")]
-        let (notes, warning) = (Notes::default(), None);
         Arc::new(Mutex::new(Shared {
             notes,
             path,
@@ -106,7 +104,7 @@ impl Shared {
         if stamp.is_none() || stamp == self.file_stamp {
             return false;
         }
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &self.path {
             let (fresh, warning) = notes::file::load(path);
             if warning.is_none() {
@@ -142,7 +140,7 @@ impl Shared {
     /// A full restore: the backup's notes replace these. A copy of the current notes is
     /// saved in `safety_dir` first (`RustDo-notes-before-restore-<time>.json`).
     pub fn replace_all(&mut self, notes: Notes, safety_dir: Option<&std::path::Path>) -> Result<(), String> {
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(dir) = safety_dir.filter(|_| !self.notes.notes.is_empty()) {
             let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
             let copy = dir.join(format!("{}before-restore-{stamp}.json", notes::BACKUP_PREFIX));
@@ -173,7 +171,7 @@ impl Shared {
             return;
         }
         self.dirty = false;
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &self.path {
             match notes::file::save(path, &self.notes) {
                 Ok(()) => {
