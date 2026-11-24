@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store package (MSIX) for RustDo. Built by the `store` job in
+  .github/workflows/build.yml with tools/build-msix.ps1, which fills in:
+    __NAME__, __PUBLISHER__, __PUBLISHER_DISPLAY_NAME__  from Partner Center
+        (Product management > Product identity), set as repository variables
+        MSIX_NAME, MSIX_PUBLISHER and MSIX_PUBLISHER_DISPLAY_NAME;
+    __VERSION__  the app version as x.y.z.0 (the Store requires the last part to be 0).
+  The Store signs the package when it's published, so there's no certificate here.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity Name="__NAME__" Publisher="__PUBLISHER__" Version="__VERSION__" ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>RustDo</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>A fast, local-first to-do app with sticky notes.</Description>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 1809 or later. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application Id="RustDo" Executable="rustdo.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="RustDo"
+        Description="A fast, local-first to-do app with sticky notes."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- The background companion (tray icon, sticky notes, reminders) at sign-in.
+             Windows starts rustdo.exe without arguments; store_package.rs recognises it.
+             Settings > Background > Start with Windows turns it on and off. -->
+        <uap5:Extension Category="windows.startupTask" Executable="rustdo.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="RustDoCompanion" Enabled="true" DisplayName="RustDo (sticky notes and reminders)" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Update checks are off in the Store copy; this is for family sharing (RustDo Hub)
+         and the links RustDo opens. -->
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+    <!-- A regular desktop app (not sandboxed): needed for its own windows, the tray icon,
+         and the tasks file in Documents\RustDo. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -6,6 +6,12 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.3.2 - 2026-11-24
+
+### New
+- Getting ready for the Microsoft Store: RustDo can now be installed as a Store app, which Windows trusts without the "Windows protected your PC" warning. The Store version updates through the Store, and its tray icon starts at sign-in the Store way. The regular installer and portable download stay as they are.
+- A privacy policy at rustdo.app/privacy.html: RustDo has no accounts, analytics or tracking, and your tasks and notes stay on your devices.
+
 ## 0.3.1 - 2026-11-24
 
 ### New

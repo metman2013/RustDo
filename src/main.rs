@@ -7,6 +7,12 @@ fn main() -> eframe::Result<()> {
     // The background companion: tray icon, sticky notes, reminders (see companion.rs).
     // `--reminders` is how versions before 0.2.7 started it at sign-in.
     let args: Vec<String> = std::env::args().collect();
+    let mut args = args;
+    // The Store package's startup task starts RustDo without arguments: it's the companion,
+    // started at sign-in.
+    if rustdo_app::store_package::launched_at_sign_in() {
+        args.extend(["--companion".to_string(), "--at-sign-in".to_string()]);
+    }
     let companion = rustdo_app::companion::is_companion_launch(&args);
     // A log file and a crash handler: a desktop RustDo has no console to show errors in.
     rustdo_app::diagnostics::init(if companion { "companion" } else { "rustdo" });

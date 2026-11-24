@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.3.1"
+version = "0.3.2"
 
 [package]
 name = "rustdo"
@@ -55,6 +55,8 @@ tray-icon = { version = "0.26", default-features = false }
 windows = { version = "0.58", features = [
     "UI_Notifications", "Data_Xml_Dom", "Foundation", "Foundation_Collections",
     "Win32_UI_WindowsAndMessaging",
+    # Microsoft Store package: detect it, its startup task (store_package.rs).
+    "Win32_Storage_Packaging_Appx", "ApplicationModel", "ApplicationModel_Activation",
 ] }
 # Windows: Direct3D (wgpu) as a fallback when OpenGL can't start (virtual machines,
 # Remote Desktop, missing graphics drivers). See diagnostics.rs.

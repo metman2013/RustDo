@@ -277,6 +277,25 @@ You need Rust (<https://rustup.rs>). On Windows, either toolchain works:
 By default Rust embeds source paths that include your Windows user folder in binaries.
 `build-release.ps1` and `build-web.ps1` rewrite those paths to neutral names.
 
+## Microsoft Store
+
+RustDo is packaged for the Microsoft Store as an MSIX (`installer/msix/AppxManifest.xml`,
+built by `tools/build-msix.ps1` in the `store` CI job). The Store signs the package, so a
+Store install shows no SmartScreen warning. The Store copy:
+
+- doesn't check for or install updates itself (the Store does);
+- starts the background companion at sign-in through the package's startup task (Settings ›
+  Background › Start with Windows turns it on and off) instead of the registry;
+- keeps tasks and notes in `Documents\RustDo`, the same place as the installer version.
+
+**Publishing a version:** every CI run uploads the package as the **store** artifact. Download
+`RustDo-<version>.msix` from the run on `main`, then in Partner Center open the app, create a
+submission, and upload it under **Packages**. The package identity comes from Partner Center ›
+Product management › Product identity, set as repository variables `MSIX_NAME`,
+`MSIX_PUBLISHER` and `MSIX_PUBLISHER_DISPLAY_NAME` (without them the package builds with
+placeholders the Store won't accept). The listing's privacy policy URL is
+https://rustdo.app/privacy.html.
+
 ## Requirements and troubleshooting
 
 - **Windows 10 or 11** (64-bit). Windows 7 and 8 aren't supported: current Rust programs
