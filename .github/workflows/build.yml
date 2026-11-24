@@ -82,6 +82,35 @@ jobs:
           name: windows
           path: target/installer/*.exe
 
+  # Microsoft Store package (MSIX) from the Windows build's exe. Not attached to the GitHub
+  # release (an unsigned MSIX can't be installed directly): download the "store" artifact
+  # from the run and upload it in Partner Center, which signs and publishes it.
+  # Identity: repository variables MSIX_NAME, MSIX_PUBLISHER, MSIX_PUBLISHER_DISPLAY_NAME.
+  store:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: windows
+      - name: Build the Store package
+        shell: pwsh
+        env:
+          MSIX_NAME: ${{ vars.MSIX_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $v = (Select-String Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $exe = Get-ChildItem windows -Filter "*-portable.exe" | Select-Object -First 1
+          if (-not $exe) { throw "portable exe not found in the windows artifact" }
+          ./tools/build-msix.ps1 -Exe $exe.FullName -Version $v -Out out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: store
+          path: out/*.msix
+
   linux:
     needs: test
     # Built on an older Ubuntu so the binary also runs on older distros (glibc).

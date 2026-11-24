@@ -72,8 +72,11 @@ pub fn show_now(title: &str, body: &str) {
 
 /// Windows: registers RustDo as a notification sender (name and icon). Elsewhere: nothing.
 pub fn register_app() {
+    // A Store package already has its name and icon from its manifest.
     #[cfg(windows)]
-    win::register_app();
+    if !crate::store_package::is_packaged() {
+        win::register_app();
+    }
 }
 
 /// Windows: the sign-in entry that starts the companion (`None` removes it).
@@ -188,7 +191,13 @@ mod win {
             escape(body)
         )))?;
         let toast = ToastNotification::CreateToastNotification(&xml)?;
-        ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(AUMID))?.Show(&toast)
+        // A Store package notifies under its own identity; otherwise under the id that
+        // register_app() and the installer's Start menu shortcut give RustDo.
+        if crate::store_package::is_packaged() {
+            ToastNotificationManager::CreateToastNotifier()?.Show(&toast)
+        } else {
+            ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(AUMID))?.Show(&toast)
+        }
     }
 
     /// One helper per user: holds an exclusive lock on a file while it runs.

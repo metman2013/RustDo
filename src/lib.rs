@@ -11,6 +11,7 @@ pub mod notes_ui;
 pub mod notify;
 pub mod platform;
 pub mod storage;
+pub mod store_package;
 pub mod sync;
 pub mod update;
 

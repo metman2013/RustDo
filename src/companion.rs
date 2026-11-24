@@ -171,7 +171,10 @@ fn sign_in_command() -> Option<String> {
 #[allow(unused_variables)]
 fn set_sign_in_entry(on: bool) {
     #[cfg(windows)]
-    {
+    if crate::store_package::is_packaged() {
+        // A Store package can't use the Run key: it has a startup task instead.
+        crate::store_package::set_startup_task(on);
+    } else {
         // Only the installed copy: a portable exe may move or be deleted.
         if on && crate::update::is_installed_copy() {
             crate::notify::set_run_entry(sign_in_command().as_deref());

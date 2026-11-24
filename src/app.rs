@@ -7,6 +7,7 @@ use crate::model::{
 use crate::import::{self, Import};
 use crate::changelog;
 use crate::companion;
+use crate::store_package;
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 use crate::diagnostics;
 use crate::notes;
@@ -427,7 +428,12 @@ impl TodoApp {
     /// Starts an update check: at launch when auto-update is on (Windows), otherwise at
     /// most once a day (desktop and Android; the web app updates itself).
     fn maybe_check_updates(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
-        if cfg!(target_arch = "wasm32") || self.update_rx.is_some() || self.update_available.is_some() {
+        // The web app updates itself, and the Store updates a Store copy.
+        if cfg!(target_arch = "wasm32")
+            || store_package::is_packaged()
+            || self.update_rx.is_some()
+            || self.update_available.is_some()
+        {
             return;
         }
         let at_launch = self.can_auto_update() && !self.startup_checked;
@@ -693,6 +699,8 @@ impl TodoApp {
         ui.separator();
         if cfg!(target_arch = "wasm32") {
             ui.label(RichText::new("The web app updates itself automatically.").weak());
+        } else if store_package::is_packaged() {
+            ui.label(RichText::new("Updates come from the Microsoft Store.").weak());
         } else {
             if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
                 self.dirty = true;
