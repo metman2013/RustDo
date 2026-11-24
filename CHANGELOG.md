@@ -6,6 +6,12 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.3.0 - 2026-11-24
+
+### New
+- Sticky notes on Android. Open "Sticky notes" in the menu: on a phone your notes are a column of colourful cards you can type in, recolour, resize the text of, and delete; on a tablet they're a wall you can arrange by dragging, like the web app.
+- Android notes are saved on your phone and included in the daily automatic backups. "Copy backup to clipboard" includes them, "Back up notes" copies just your notes, and "Restore from pasted backup" accepts either.
+
 ## 0.2.9 - 2026-11-23
 
 ### New
