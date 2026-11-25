@@ -1,9 +1,10 @@
-//! The app's languages: English (built in) and German (`de.rs`).
+//! The app's languages: English (built in), German (`de.rs`), Spanish (`es.rs`) and
+//! French (`fr.rs`).
 //!
 //! Every piece of text people see goes through [`tr`] (or [`trf`] when it has values in
-//! it), with the English text itself as the key. German comes from the table in `de.rs`;
+//! it), with the English text itself as the key. Other languages come from their tables;
 //! anything missing there shows in English. A test checks that every `tr`/`trf` text in
-//! the source has a German version, so new features can't ship half-translated.
+//! the source is in every table, so new features can't ship half-translated.
 //!
 //! The language is the device's (Settings › Language › Automatic) unless chosen.
 
@@ -13,6 +14,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 
 mod de;
+mod es;
+mod fr;
 
 /// Settings › Language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -22,10 +25,12 @@ pub enum Language {
     Automatic,
     English,
     German,
+    Spanish,
+    French,
 }
 
 impl Language {
-    pub const ALL: [Language; 3] = [Self::Automatic, Self::English, Self::German];
+    pub const ALL: [Language; 5] = [Self::Automatic, Self::English, Self::German, Self::Spanish, Self::French];
 
     /// Each language in its own words (so it can be found whatever is showing).
     pub fn label(self) -> &'static str {
@@ -33,45 +38,78 @@ impl Language {
             Self::Automatic => tr("Automatic"),
             Self::English => "English",
             Self::German => "Deutsch",
+            Self::Spanish => "Español",
+            Self::French => "Français",
         }
     }
 }
 
-const EN: u8 = 0;
-const DE: u8 = 1;
-static CURRENT: AtomicU8 = AtomicU8::new(EN);
+/// The language showing (never "automatic").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lang {
+    En = 0,
+    De = 1,
+    Es = 2,
+    Fr = 3,
+}
+
+static CURRENT: AtomicU8 = AtomicU8::new(Lang::En as u8);
 
 /// Switches the app's language (at start-up and when the setting changes).
 pub fn set(language: Language) {
-    let german = match language {
-        Language::German => true,
-        Language::English => false,
-        Language::Automatic => device_language().is_some_and(|l| l.to_ascii_lowercase().starts_with("de")),
+    let lang = match language {
+        Language::English => Lang::En,
+        Language::German => Lang::De,
+        Language::Spanish => Lang::Es,
+        Language::French => Lang::Fr,
+        Language::Automatic => device_language().map_or(Lang::En, |l| from_locale(&l)),
     };
-    CURRENT.store(if german { DE } else { EN }, Ordering::Relaxed);
+    CURRENT.store(lang as u8, Ordering::Relaxed);
+}
+
+/// "de-AT", "es_MX", "fr-CA"… → the language RustDo has for it.
+fn from_locale(locale: &str) -> Lang {
+    match locale.get(..2).map(str::to_ascii_lowercase).as_deref() {
+        Some("de") => Lang::De,
+        Some("es") => Lang::Es,
+        Some("fr") => Lang::Fr,
+        _ => Lang::En,
+    }
+}
+
+fn current() -> Lang {
+    match CURRENT.load(Ordering::Relaxed) {
+        1 => Lang::De,
+        2 => Lang::Es,
+        3 => Lang::Fr,
+        _ => Lang::En,
+    }
 }
 
 /// True while German is showing.
 pub fn german() -> bool {
-    CURRENT.load(Ordering::Relaxed) == DE
+    current() == Lang::De
 }
 
 fn device_language() -> Option<String> {
     sys_locale::get_locale()
 }
 
-fn german_table() -> &'static HashMap<&'static str, &'static str> {
-    static TABLE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
-    TABLE.get_or_init(|| de::TEXTS.iter().copied().collect())
+fn table(lang: Lang) -> Option<&'static HashMap<&'static str, &'static str>> {
+    static DE: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    static ES: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    static FR: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    match lang {
+        Lang::En => None,
+        Lang::De => Some(DE.get_or_init(|| de::TEXTS.iter().copied().collect())),
+        Lang::Es => Some(ES.get_or_init(|| es::TEXTS.iter().copied().collect())),
+        Lang::Fr => Some(FR.get_or_init(|| fr::TEXTS.iter().copied().collect())),
+    }
 }
 
 /// `text` in the current language.
 pub fn tr(text: &'static str) -> &'static str {
-    if german() {
-        german_table().get(text).copied().unwrap_or(text)
-    } else {
-        text
-    }
+    table(current()).and_then(|t| t.get(text).copied()).unwrap_or(text)
 }
 
 /// `text` in the current language, with each `{name}` replaced by its value.
@@ -91,73 +129,108 @@ pub fn plural(n: usize, one: &'static str, many: &'static str) -> String {
 
 // ------------------------------------------------------------------ dates
 
-const WEEKDAYS_DE: [&str; 7] = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
-const WEEKDAYS_SHORT_DE: [&str; 7] = ["Mo.", "Di.", "Mi.", "Do.", "Fr.", "Sa.", "So."];
-const MONTHS_DE: [&str; 12] =
-    ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
-const MONTHS_SHORT_DE: [&str; 12] =
-    ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."];
-
-fn weekday_index(date: chrono::NaiveDate) -> usize {
-    use chrono::Datelike;
-    date.weekday().num_days_from_monday() as usize
+struct DateWords {
+    weekdays: [&'static str; 7],
+    weekdays_short: [&'static str; 7],
+    months: [&'static str; 12],
+    months_short: [&'static str; 12],
 }
 
-fn month_index(date: chrono::NaiveDate) -> usize {
-    use chrono::Datelike;
-    date.month0() as usize
+const DE_DATES: DateWords = DateWords {
+    weekdays: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"],
+    weekdays_short: ["Mo.", "Di.", "Mi.", "Do.", "Fr.", "Sa.", "So."],
+    months: ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
+    months_short: ["Jan.", "Feb.", "März", "Apr.", "Mai", "Juni", "Juli", "Aug.", "Sept.", "Okt.", "Nov.", "Dez."],
+};
+
+const ES_DATES: DateWords = DateWords {
+    weekdays: ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"],
+    weekdays_short: ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"],
+    months: ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
+    months_short: ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"],
+};
+
+const FR_DATES: DateWords = DateWords {
+    weekdays: ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"],
+    weekdays_short: ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."],
+    months: ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"],
+    months_short: ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."],
+};
+
+fn date_words(lang: Lang) -> Option<&'static DateWords> {
+    match lang {
+        Lang::En => None,
+        Lang::De => Some(&DE_DATES),
+        Lang::Es => Some(&ES_DATES),
+        Lang::Fr => Some(&FR_DATES),
+    }
 }
 
-/// "Wednesday, November 25" / "Mittwoch, 25. November".
+/// Capitalizes the first letter (Spanish and French write weekdays in lower case, except
+/// at the start of a line).
+fn capitalized(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or_else(String::new, |f| f.to_uppercase().chain(c).collect())
+}
+
+fn parts(date: chrono::NaiveDate) -> (usize, u32, usize, i32) {
+    use chrono::Datelike;
+    (date.weekday().num_days_from_monday() as usize, date.day(), date.month0() as usize, date.year())
+}
+
+/// "Wednesday, November 25" / "Mittwoch, 25. November" / "Miércoles, 25 de noviembre" /
+/// "Mercredi 25 novembre".
 pub fn date_long(date: chrono::NaiveDate) -> String {
-    date_long_in(date, german())
+    date_long_in(date, current())
 }
 
-fn date_long_in(date: chrono::NaiveDate, german: bool) -> String {
-    use chrono::Datelike;
-    if german {
-        format!("{}, {}. {}", WEEKDAYS_DE[weekday_index(date)], date.day(), MONTHS_DE[month_index(date)])
-    } else {
-        date.format("%A, %B %-d").to_string()
+fn date_long_in(date: chrono::NaiveDate, lang: Lang) -> String {
+    let (wd, day, m, _) = parts(date);
+    let Some(w) = date_words(lang) else { return date.format("%A, %B %-d").to_string() };
+    match lang {
+        Lang::De => format!("{}, {day}. {}", w.weekdays[wd], w.months[m]),
+        Lang::Es => capitalized(&format!("{}, {day} de {}", w.weekdays[wd], w.months[m])),
+        _ => capitalized(&format!("{} {day} {}", w.weekdays[wd], w.months[m])),
     }
 }
 
-/// "Friday" / "Freitag".
+/// "Friday" / "Freitag" / "Viernes" / "Vendredi".
 pub fn weekday(date: chrono::NaiveDate) -> String {
-    if german() {
-        WEEKDAYS_DE[weekday_index(date)].to_string()
-    } else {
-        date.format("%A").to_string()
+    let (wd, ..) = parts(date);
+    match date_words(current()) {
+        Some(w) => capitalized(w.weekdays[wd]),
+        None => date.format("%A").to_string(),
     }
 }
 
-/// "Mon, Dec 1" / "Mo., 1. Dez." (with the year: "Mon, Dec 1, 2027" / "Mo., 1. Dez. 2027").
+/// "Mon, Dec 1" / "Mo., 1. Dez." / "Lun, 1 dic" / "Lun. 1 déc." (optionally with the year).
 pub fn date_short(date: chrono::NaiveDate, with_year: bool) -> String {
-    date_short_in(date, with_year, german())
+    date_short_in(date, with_year, current())
 }
 
-fn date_short_in(date: chrono::NaiveDate, with_year: bool, german: bool) -> String {
-    use chrono::Datelike;
-    if german {
-        let mut s = format!("{}, {}. {}", WEEKDAYS_SHORT_DE[weekday_index(date)], date.day(), MONTHS_SHORT_DE[month_index(date)]);
-        if with_year {
-            s.push_str(&format!(" {}", date.year()));
-        }
-        s
-    } else if with_year {
-        date.format("%a, %b %-d, %Y").to_string()
-    } else {
-        date.format("%a, %b %-d").to_string()
+fn date_short_in(date: chrono::NaiveDate, with_year: bool, lang: Lang) -> String {
+    let (wd, day, m, year) = parts(date);
+    let Some(w) = date_words(lang) else {
+        return date.format(if with_year { "%a, %b %-d, %Y" } else { "%a, %b %-d" }).to_string();
+    };
+    let mut s = match lang {
+        Lang::De => format!("{}, {day}. {}", w.weekdays_short[wd], w.months_short[m]),
+        Lang::Es => capitalized(&format!("{}, {day} {}", w.weekdays_short[wd], w.months_short[m])),
+        _ => capitalized(&format!("{} {day} {}", w.weekdays_short[wd], w.months_short[m])),
+    };
+    if with_year {
+        s.push_str(&format!(" {year}"));
     }
+    s
 }
 
-/// "Nov 25, 2026" / "25. Nov. 2026".
+/// "Nov 25, 2026" / "25. Nov. 2026" / "25 nov 2026" / "25 nov. 2026".
 pub fn date_medium(date: chrono::NaiveDate) -> String {
-    use chrono::Datelike;
-    if german() {
-        format!("{}. {} {}", date.day(), MONTHS_SHORT_DE[month_index(date)], date.year())
-    } else {
-        date.format("%b %-d, %Y").to_string()
+    let (_, day, m, year) = parts(date);
+    match (current(), date_words(current())) {
+        (Lang::De, Some(w)) => format!("{day}. {} {year}", w.months_short[m]),
+        (_, Some(w)) => format!("{day} {} {year}", w.months_short[m]),
+        _ => date.format("%b %-d, %Y").to_string(),
     }
 }
 
@@ -243,16 +316,26 @@ mod tests {
         bytes.len()
     }
 
+    const TABLES: [(&str, &[(&str, &str)]); 3] = [("de", de::TEXTS), ("es", es::TEXTS), ("fr", fr::TEXTS)];
+
     #[test]
-    fn every_text_has_a_german_version() {
-        let table = german_table();
-        let missing: Vec<String> = texts_in_source().into_iter().filter(|t| !table.contains_key(t.as_str())).collect();
-        assert!(missing.is_empty(), "{} texts have no German version in src/i18n/de.rs:\n{}", missing.len(), missing.join("\n"));
+    fn every_text_is_translated() {
+        let used = texts_in_source();
+        for (code, texts) in TABLES {
+            let table: HashMap<&str, &str> = texts.iter().copied().collect();
+            let missing: Vec<&String> = used.iter().filter(|t| !table.contains_key(t.as_str())).collect();
+            assert!(
+                missing.is_empty(),
+                "{} texts have no translation in src/i18n/{code}.rs:\n{}",
+                missing.len(),
+                missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n")
+            );
+        }
     }
 
     #[test]
-    fn german_keeps_placeholders() {
-        for (en, de) in de::TEXTS {
+    fn translations_keep_placeholders() {
+        for (en, de) in TABLES.iter().flat_map(|(_, t)| t.iter()) {
             let names = |s: &str| {
                 let mut v: Vec<String> = s.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(n, _)| n.to_string())).collect();
                 v.sort();
@@ -265,20 +348,35 @@ mod tests {
     #[test]
     fn no_duplicate_or_unused_entries() {
         let used = texts_in_source();
-        let mut seen = BTreeSet::new();
-        for (en, _) in de::TEXTS {
-            assert!(seen.insert(*en), "listed twice in de.rs: {en:?}");
+        for (code, texts) in TABLES {
+            let mut seen = BTreeSet::new();
+            for (en, _) in texts {
+                assert!(seen.insert(*en), "listed twice in {code}.rs: {en:?}");
+            }
+            let unused: Vec<&&str> = seen.iter().filter(|t| !used.contains(**t)).collect();
+            assert!(unused.is_empty(), "no longer used, remove from {code}.rs: {unused:?}");
         }
-        let unused: Vec<&&str> = seen.iter().filter(|t| !used.contains(**t)).collect();
-        assert!(unused.is_empty(), "no longer used, remove from de.rs: {unused:?}");
     }
 
     #[test]
-    fn dates_in_german() {
+    fn dates_in_each_language() {
         let d = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
-        assert_eq!(date_long_in(d, true), "Mittwoch, 25. November");
-        assert_eq!(date_short_in(d, false, true), "Mi., 25. Nov.");
-        assert_eq!(date_short_in(d, true, true), "Mi., 25. Nov. 2026");
-        assert_eq!(date_long_in(d, false), "Wednesday, November 25");
+        assert_eq!(date_long_in(d, Lang::De), "Mittwoch, 25. November");
+        assert_eq!(date_short_in(d, false, Lang::De), "Mi., 25. Nov.");
+        assert_eq!(date_short_in(d, true, Lang::De), "Mi., 25. Nov. 2026");
+        assert_eq!(date_long_in(d, Lang::Es), "Miércoles, 25 de noviembre");
+        assert_eq!(date_short_in(d, false, Lang::Es), "Mié, 25 nov");
+        assert_eq!(date_long_in(d, Lang::Fr), "Mercredi 25 novembre");
+        assert_eq!(date_short_in(d, false, Lang::Fr), "Mer. 25 nov.");
+        assert_eq!(date_long_in(d, Lang::En), "Wednesday, November 25");
+    }
+
+    #[test]
+    fn device_languages() {
+        assert_eq!(from_locale("de-AT"), Lang::De);
+        assert_eq!(from_locale("es_MX"), Lang::Es);
+        assert_eq!(from_locale("fr-CA"), Lang::Fr);
+        assert_eq!(from_locale("en-US"), Lang::En);
+        assert_eq!(from_locale("pt-BR"), Lang::En);
     }
 }
