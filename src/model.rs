@@ -342,6 +342,9 @@ pub struct Store {
     /// Lists shared with family and friends through a RustDo Hub.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shares: Vec<crate::sync::Share>,
+    /// "Sync my devices": this device's link to the person's account on their hub.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<crate::account::Account>,
 }
 
 impl Default for Store {
@@ -363,6 +366,7 @@ impl Store {
             tasks: Vec::new(),
             settings: Settings::default(),
             shares: Vec::new(),
+            account: None,
         }
     }
 

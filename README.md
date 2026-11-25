@@ -88,11 +88,16 @@ Backups: each day's automatic backup also writes `Backups\RustDo-notes-<date>.js
 up or restore only notes, use **Back up notes… / Restore notes…** on the Sticky notes page or
 in Settings › Backups; restoring notes merges them with the ones you have.
 
-## Family sharing (RustDo Hub)
+## Sync and family sharing (RustDo Hub)
 
-Share a list (groceries, chores, packing) with people at home, **without any cloud**.
-You run a tiny **RustDo Hub** on one machine on your network: a Windows exe, or a Docker
-container on a NAS, home server or Raspberry Pi.
+You run a tiny **RustDo Hub** yourself: a Windows exe, or a Docker container on a NAS,
+home server or Raspberry Pi (optionally behind your own HTTPS subdomain). No cloud.
+
+- **Sync my devices:** your lists, tasks, sticky notes and settings stay the same on all
+  your devices, including the web app (which needs the hub on `https://`). Settings ›
+  Sync my devices; the first device gets a sync key for the others.
+- **Family sharing:** share a list (groceries, chores, packing) with people at home. A
+  shared list has its own code, separate from your sync key.
 
 ```bash
 docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest

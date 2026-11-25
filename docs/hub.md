@@ -9,8 +9,10 @@ up on the other devices within about 30 seconds.
 - **Only the lists you share.** Every other list stays on your own device.
 - **My Day stays personal.** Adding a shared task to *your* My Day doesn't put it in
   anyone else's.
-- Works in the **Windows, Linux and Android** apps. (The web app at rustdo.app can't: a
-  secure web page isn't allowed to talk to a plain address on your home network.)
+- Sync my devices works in every RustDo app, including the web app at rustdo.app, which
+  needs the hub on an `https://` address ([reverse proxy](#your-own-subdomain-behind-a-reverse-proxy)):
+  a secure web page isn't allowed to talk to a plain `http://` address.
+- Family sharing works in the **Windows, Linux and Android** apps.
 
 ## 1. Start a hub
 
@@ -57,7 +59,29 @@ Build it with `cargo build --release` in the `hub/` folder, then run
 `hub/target/release/rustdo-hub`. Shared lists are stored in `./data`. You can change
 that with `--data <folder>`, and the port with `--port <n>`.
 
-## 2. Share a list
+## 2. Sync your own devices
+
+1. On your first device: **⚙ → Sync my devices → Turn on sync…**, enter the hub address,
+   choose **This is my first device**, then **Turn on sync**. RustDo shows your **sync key**,
+   e.g. `ABCDE-FGHJK-MNPQR-STUVW` (also under **Sync key…** later).
+2. On each other device: **Turn on sync…**, choose **I already have a sync key**, and enter
+   the same hub address and the key. A device that has no tasks yet takes everything from
+   your account; one that already has tasks adds them to it.
+
+What syncs: lists (and their order), tasks with their steps, notes, due dates, reminders
+and My Day, sticky notes (text, colour, size), and the theme, clock and sort settings.
+What stays on each device: where sticky notes sit on the screen, whether a note is showing
+there, reminder pop-ups already shown, backups and the background/startup settings.
+
+- Lists you share with family keep using their share code: their tasks never go into your
+  account, so the people you share with see only that list. Your other devices join the
+  shared list by themselves.
+- **Your sync key is like a password.** Anyone who has it and can reach your hub can see and
+  change your tasks and notes. **Turn off** (in Sync my devices) unlinks a device and keeps
+  its tasks.
+- Each person in the family can have their own account (their own key) on the same hub.
+
+## 3. Share a list
 
 1. In RustDo, right-click the list (on a phone, long-press it), then choose **👥 Share list…**.
 2. Enter the hub address. Just the IP is fine, e.g. `192.168.1.20`; port 7979 is assumed.
@@ -66,12 +90,15 @@ that with `--data <folder>`, and the port with `--port <n>`.
 
 Shared lists show a 👥 icon. To see the code again, right-click the list and choose **👥 Sharing…**.
 
-## 3. Join a shared list
+## 4. Join a shared list
 
 **⚙ → Family sharing → Join a shared list…**, enter the hub address and the code. The
 list appears in your lists and stays in sync from then on.
 
 ## How syncing works
+
+These rules apply to both Sync my devices and shared lists.
+
 
 - RustDo syncs every 30 seconds while it's open, and a couple of seconds after you change
   something. **⚙ → Family sharing → Sync now** syncs straight away.
@@ -133,6 +160,8 @@ then reach your lists, and the hub has no encryption of its own.
 | Problem | Fix |
 |---|---|
 | "Can't reach the hub" | Open `http://<hub address>:7979/` in the phone's or PC's browser. If the page doesn't load, the device is on another network (guest Wi-Fi, mobile data), or a firewall is blocking port 7979. |
+| "This RustDo Hub is too old for Sync my devices" | Update the hub to 0.4.0 or later (Docker: pull the new image and recreate the container; Windows: download the new hub exe). |
+| Web app: "can't reach the hub" | The web app needs the hub on an `https://` address: see the reverse proxy section. |
 | "No shared list has that code" | Check the code. It ignores case and dashes. Was the hub's data reset? Then share the list again. |
 | Windows hub works only on the same PC | Allow `rustdo-hub.exe` on Private networks: Windows Security → Firewall → Allow an app. Also check your Wi-Fi is set to *Private*, not *Public*. |
 | `docker pull` says "denied" | The image isn't public yet. The repository owner needs to set it to public once on GitHub: Packages → rustdo-hub → Package settings → Change visibility. |

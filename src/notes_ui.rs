@@ -126,6 +126,11 @@ impl Shared {
         self.save_if_due(true);
     }
 
+    /// When the notes last changed in this process (for "Sync my devices").
+    pub fn last_change(&self) -> Instant {
+        self.last_change
+    }
+
     pub fn changed(&mut self) {
         self.dirty = true;
         self.backup_pending = true;

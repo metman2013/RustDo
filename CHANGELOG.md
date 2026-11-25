@@ -6,6 +6,14 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.4.0 - 2026-11-25
+
+### New
+- Sync my devices: keep your lists, tasks, sticky notes and settings (theme, clock, sort order) the same on all your devices, including the web app, through your own RustDo Hub. Turn it on in Settings under Sync my devices: your first device gets a sync key, and your other devices use the same hub address and key. Each device keeps its own reminder pop-ups and where its sticky notes sit on screen.
+- Lists you share with family stay separate from your own sync: the people you share with see only the shared list, and your other devices join it by themselves.
+- RustDo Hub 0.4.0 is needed for Sync my devices (update the Docker image or the Windows hub). It also lets the web app connect when the hub is on an https:// address.
+- The hub guide in Settings now covers syncing your own devices as well as sharing lists.
+
 ## 0.3.3 - 2026-11-25
 
 ### New

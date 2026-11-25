@@ -1,5 +1,6 @@
 //! The egui user interface.
 
+use crate::account;
 use crate::model::{
     format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
     ThemeChoice, View,
@@ -77,6 +78,18 @@ struct PendingImport {
     file_name: String,
     import: Import,
     include_completed: bool,
+}
+
+/// "Sync my devices": turning sync on, or showing the sync key.
+struct AccountDialog {
+    hub: String,
+    /// Joining an account another device started (else: start a new one).
+    join: bool,
+    key: String,
+    busy: bool,
+    error: Option<String>,
+    /// The key to show (just created, or "Sync key…" in Settings).
+    show_key: Option<String>,
 }
 
 /// The "Share list" / "Join a shared list" dialog.
@@ -195,6 +208,14 @@ pub struct TodoApp {
     share_dialog: Option<ShareDialog>,
     /// The "How family sharing works" guide is open.
     hub_guide: bool,
+    // "Sync my devices"
+    account_rx: Option<Receiver<account::Done>>,
+    account_last: Option<Instant>,
+    account_soon: bool,
+    account_error: Option<String>,
+    account_dialog: Option<AccountDialog>,
+    /// Notes changes up to here are already known to the account sync.
+    account_notes_seen: Option<Instant>,
     /// The "What's new" dialog: the releases to describe, newest first.
     whats_new: Option<Vec<changelog::Release>>,
 }
@@ -316,6 +337,12 @@ impl TodoApp {
             sync_error: None,
             share_dialog: None,
             hub_guide: false,
+            account_rx: None,
+            account_last: None,
+            account_soon: false,
+            account_error: None,
+            account_dialog: None,
+            account_notes_seen: None,
             whats_new,
         }
     }
@@ -747,6 +774,7 @@ impl TodoApp {
         ui.separator();
         self.notification_menu_items(ui);
         self.companion_menu_items(ui);
+        self.account_menu_items(ui);
         self.sharing_menu_items(ui);
         self.backup_menu_items(ui);
         self.help_menu_items(ui);
@@ -892,6 +920,306 @@ impl TodoApp {
         ui.separator();
     }
 
+    // ------------------------------------------------------------------ sync my devices
+
+    fn account_menu_items(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Sync my devices").strong());
+        match &self.store.account {
+            None => {
+                ui.label(
+                    RichText::new("Keep your lists, tasks and sticky notes the same on all your devices, through your own RustDo Hub.")
+                        .weak()
+                        .small(),
+                );
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Turn on sync…").clicked() {
+                        self.account_dialog = Some(AccountDialog {
+                            hub: self.store.settings.hub.clone().unwrap_or_default(),
+                            join: false,
+                            key: String::new(),
+                            busy: false,
+                            error: None,
+                            show_key: None,
+                        });
+                        self.close_settings(ui);
+                    }
+                });
+            }
+            Some(acc) => {
+                let (text, color) = match &self.account_error {
+                    Some(err) => (format!("Can't sync right now: {err}"), DANGER),
+                    None => (
+                        format!(
+                            "On · {} · {}",
+                            acc.hub.trim_start_matches("https://").trim_start_matches("http://"),
+                            acc.last_sync.map_or("not synced yet".into(), |t| format!("last synced {}", format_time(t, self.store.settings.clock_24h)))
+                        ),
+                        ui.visuals().weak_text_color(),
+                    ),
+                };
+                ui.label(RichText::new(text).color(color).small());
+                let (hub, key) = (acc.hub.clone(), acc.key.clone());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Sync now").clicked() {
+                        self.account_last = None;
+                    }
+                    if ui.button("Sync key…").on_hover_text("Show the key to turn on sync on another device").clicked() {
+                        self.account_dialog = Some(AccountDialog { hub, join: true, key: String::new(), busy: false, error: None, show_key: Some(key) });
+                        self.close_settings(ui);
+                    }
+                    if ui.button("Turn off").on_hover_text("Stop syncing this device. Your tasks and notes stay here.").clicked() {
+                        self.store.account = None;
+                        self.account_error = None;
+                        self.dirty = true;
+                        self.notify("Sync is off on this device. Your tasks and notes stay here.");
+                    }
+                });
+            }
+        }
+        if ui.button("❓ How syncing and sharing work").clicked() {
+            self.hub_guide = true;
+            self.close_settings(ui);
+        }
+        ui.separator();
+    }
+
+    /// Collects a finished sync round and starts the next: every 30 seconds, or a couple
+    /// of seconds after a change here.
+    fn account_tick(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.account_rx {
+            match rx.try_recv() {
+                Ok(done) => {
+                    self.account_rx = None;
+                    let theme = self.store.settings.theme;
+                    self.account_done(done);
+                    if self.store.settings.theme != theme {
+                        apply_theme(ctx, self.store.settings.theme);
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.account_rx = None,
+            }
+        }
+        if self.account_rx.is_some() {
+            return;
+        }
+        let Some(acc) = &self.store.account else { return };
+        // Notes edited since the last round count as a change too.
+        if notes::AVAILABLE {
+            let changed = notes_ui::lock(&self.notes).last_change();
+            if self.account_notes_seen.is_none_or(|seen| changed > seen) {
+                self.account_notes_seen = Some(changed);
+                self.account_soon = true;
+            }
+        }
+        let since = self.account_last.map(|t| t.elapsed());
+        let due = since.is_none_or(|e| e >= StdDuration::from_secs(30) || (self.account_soon && e >= StdDuration::from_secs(2)));
+        if !due {
+            return;
+        }
+        self.account_soon = false;
+        self.account_last = Some(Instant::now());
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let out = if notes::AVAILABLE {
+            let s = notes_ui::lock(&self.notes);
+            account::outgoing(&self.store, Some(&s.notes), acc, now_ms)
+        } else {
+            account::outgoing(&self.store, None, acc, now_ms)
+        };
+        self.account_rx = Some(account::sync(&acc.hub, out, ctx));
+    }
+
+    fn account_done(&mut self, done: account::Done) {
+        match done {
+            account::Done::Created { hub, result } => {
+                let Some(dialog) = self.account_dialog.as_mut() else { return };
+                dialog.busy = false;
+                match result {
+                    Ok(key) => {
+                        dialog.show_key = Some(key.clone());
+                        self.store.account = Some(account::Account::new(hub.clone(), key));
+                        self.store.settings.hub = Some(hub);
+                        self.account_error = None;
+                        self.account_last = None;
+                        self.dirty = true;
+                    }
+                    Err(e) => dialog.error = Some(e),
+                }
+            }
+            account::Done::Synced(out, result) => {
+                let Some(mut acc) = self.store.account.take().filter(|a| a.key == out.request.key) else { return };
+                let joining = self.account_dialog.as_ref().is_some_and(|d| d.busy);
+                match result {
+                    Ok(resp) => {
+                        if acc.pull_only {
+                            let fresh = account::is_fresh(&self.store, (notes::AVAILABLE).then(|| notes_ui::lock(&self.notes).notes.clone()).as_ref());
+                            if fresh {
+                                account::clear_for_pull(&mut self.store);
+                            } else {
+                                acc.pull_only = false;
+                            }
+                        }
+                        let applied = if notes::AVAILABLE {
+                            let mut s = notes_ui::lock(&self.notes);
+                            let applied = account::apply(&mut self.store, Some(&mut s.notes), &mut acc, &out, &resp);
+                            if applied.notes > 0 {
+                                s.changed();
+                                s.save_if_due(true);
+                            }
+                            self.account_notes_seen = Some(s.last_change());
+                            applied
+                        } else {
+                            account::apply(&mut self.store, None, &mut acc, &out, &resp)
+                        };
+                        acc.last_sync = Some(Local::now().naive_local());
+                        self.store.account = Some(acc);
+                        self.account_error = None;
+                        if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
+                            self.selected = None;
+                        }
+                        if let View::List(id) = self.view {
+                            if !self.store.lists.iter().any(|l| l.id == id) {
+                                self.view = View::MyDay;
+                            }
+                        }
+                        if applied.joined > 0 {
+                            // Fetch the shared lists' tasks straight away.
+                            self.last_sync_at = None;
+                        }
+                        self.dirty = true;
+                        if joining {
+                            self.account_dialog = None;
+                            self.notify("Sync is on. This device now has your lists and notes.");
+                        }
+                    }
+                    Err(e) => {
+                        if joining {
+                            // The key or hub didn't work: this device isn't linked after all.
+                            if let Some(d) = self.account_dialog.as_mut() {
+                                d.busy = false;
+                                d.error = Some(e);
+                            }
+                            self.dirty = true;
+                        } else {
+                            self.account_error = Some(e);
+                            self.store.account = Some(acc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn account_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.account_dialog.as_mut() else { return };
+        let mut close = false;
+        let mut submit = false;
+        let mut guide = false;
+        let title = if dialog.show_key.is_some() { "Your sync key" } else { "Turn on sync" };
+        dialog_window(ctx, title, self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 440.0));
+            if let Some(key) = &dialog.show_key {
+                ui.add(egui::Label::new("To sync another device, open Settings there, choose Turn on sync, pick \"I already have a sync key\", and enter the hub address and this key.").wrap());
+                ui.add_space(6.0);
+                ui.label(RichText::new("Hub address").small());
+                ui.label(RichText::new(&dialog.hub).monospace());
+                ui.label(RichText::new("Sync key").small());
+                ui.label(RichText::new(key).monospace().size(20.0).strong());
+                ui.add_space(4.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("Keep it private: anyone who has this key and can reach your hub can see and change your tasks and notes.")
+                            .weak()
+                            .small(),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button("📋 Copy key").clicked() {
+                        ui.ctx().copy_text(key.clone());
+                    }
+                    if ui.button("Done").clicked() {
+                        close = true;
+                    }
+                });
+                return;
+            }
+            ui.add(egui::Label::new("Your lists, tasks, sticky notes and settings stay the same on every device that uses the same RustDo Hub and sync key. Lists you share with family keep their own codes.").wrap());
+            ui.add_space(6.0);
+            ui.label(RichText::new("Hub address").small());
+            ui.add(
+                egui::TextEdit::singleline(&mut dialog.hub)
+                    .hint_text("e.g. https://todo.example.com or 192.168.1.20")
+                    .desired_width(f32::INFINITY),
+            );
+            ui.add_space(4.0);
+            ui.radio_value(&mut dialog.join, false, "This is my first device: start syncing");
+            ui.radio_value(&mut dialog.join, true, "I already have a sync key");
+            if dialog.join {
+                ui.add(egui::TextEdit::singleline(&mut dialog.key).hint_text("ABCDE-FGHJK-MNPQR-STUVW").desired_width(f32::INFINITY));
+            }
+            if let Some(err) = &dialog.error {
+                ui.label(RichText::new(err).color(DANGER).small());
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!dialog.busy, egui::Button::new("Turn on sync")).clicked() {
+                    submit = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    close = true;
+                }
+                if dialog.busy {
+                    ui.spinner();
+                }
+            });
+            if ui.add(egui::Button::new(RichText::new("No hub yet? How syncing works").small()).frame(false)).clicked() {
+                guide = true;
+            }
+        });
+        if guide {
+            self.hub_guide = true;
+        }
+        if close {
+            // Cancelled while joining: don't stay half-linked.
+            if dialog.busy && dialog.show_key.is_none() {
+                self.store.account = None;
+                self.account_rx = None;
+            }
+            self.account_dialog = None;
+            return;
+        }
+        if !submit || dialog.busy {
+            return;
+        }
+        dialog.error = None;
+        let Some(hub) = sync::normalize_hub(&dialog.hub) else {
+            dialog.error = Some("Enter the hub's address, e.g. https://todo.example.com or 192.168.1.20".into());
+            return;
+        };
+        dialog.hub = hub.clone();
+        if dialog.join {
+            let Some(key) = account::normalize_key(&dialog.key) else {
+                dialog.error = Some("A sync key has 20 letters and numbers, like ABCDE-FGHJK-MNPQR-STUVW.".into());
+                return;
+            };
+            let fresh = account::is_fresh(&self.store, (notes::AVAILABLE).then(|| notes_ui::lock(&self.notes).notes.clone()).as_ref());
+            let mut acc = account::Account::new(hub.clone(), key);
+            // An empty device takes the account as it is; otherwise both are combined.
+            acc.pull_only = fresh;
+            self.store.account = Some(acc);
+            self.store.settings.hub = Some(hub);
+            self.account_rx = None;
+            self.account_last = None;
+            self.account_error = None;
+            dialog.busy = true;
+        } else {
+            dialog.busy = true;
+            self.account_rx = Some(account::create(hub, ctx));
+        }
+    }
+
     // ------------------------------------------------------------------ family sharing
 
     fn sharing_menu_items(&mut self, ui: &mut egui::Ui) {
@@ -931,7 +1259,7 @@ impl TodoApp {
                 self.last_sync_at = None;
             }
         });
-        if ui.button("❓ How family sharing works").clicked() {
+        if ui.button("❓ How to share a list").clicked() {
             self.hub_guide = true;
             self.close_settings(ui);
         }
@@ -1155,7 +1483,7 @@ impl TodoApp {
                         ui.spinner();
                     }
                 });
-                if ui.add(egui::Button::new(RichText::new("No hub yet? How family sharing works").small()).frame(false)).clicked() {
+                if ui.add(egui::Button::new(RichText::new("No hub yet? How syncing and sharing work").small()).frame(false)).clicked() {
                     open_guide = true;
                 }
             });
@@ -1444,6 +1772,7 @@ impl TodoApp {
             return;
         }
         self.sync_soon = true;
+        self.account_soon = true;
         match self.storage.save(&self.store) {
             Ok(()) => self.backup_pending = true,
             Err(e) => {
@@ -1566,7 +1895,7 @@ impl TodoApp {
         let mut close = false;
         let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 520.0);
         let releases = format!("https://github.com/{}/releases", update::REPO);
-        dialog_window(ctx, "How family sharing works", self.insets).show(ctx, |ui| {
+        dialog_window(ctx, "Syncing and sharing with RustDo Hub", self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 500.0));
             egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
                 let para = |ui: &mut egui::Ui, text: &str| {
@@ -1576,7 +1905,7 @@ impl TodoApp {
                     ui.add_space(8.0);
                     ui.label(RichText::new(format!("{n}. {title}")).strong().color(ACCENT));
                 };
-                para(ui, "Share lists such as groceries or chores with the people you live with. Everyone sees the same list, and changes show up on the other devices within about 30 seconds. Your lists go through a small RustDo Hub that you run yourself, never through anyone's cloud. Only the lists you share are sent; everything else stays on your device.");
+                para(ui, "A RustDo Hub is a small program you run yourself, on a PC, a NAS or a home server. RustDo uses it to keep your own devices in sync, and to share lists with the people you live with. Nothing goes through anyone's cloud.");
 
                 step(ui, "1", "Start a RustDo Hub (once, on one machine)");
                 para(ui, "Pick a PC, NAS or home server that's usually on. One hub is enough for the whole family.");
@@ -1591,19 +1920,23 @@ impl TodoApp {
                 }
                 para(ui, "The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979.");
 
-                step(ui, "2", "Share a list");
-                let how = if is_touch(ui) { "Long-press" } else { "Right-click" };
-                para(ui, &format!("{how} the list in the menu, choose Share list, enter the hub's address (just the IP is fine, e.g. 192.168.1.20) and press Share. You get a code like K7QM-2XPD: send it to the people you're sharing with."));
+                step(ui, "2", "Sync your own devices");
+                para(ui, "On your first device: Settings, Sync my devices, Turn on sync. Enter the hub's address and choose \"This is my first device\". RustDo shows a sync key.");
+                para(ui, "On each other device: Turn on sync, choose \"I already have a sync key\", and enter the same hub address and the key. Your lists, tasks, sticky notes and a few settings (theme, clock, sort order) then stay the same everywhere, within about 30 seconds.");
+                para(ui, "Each device keeps its own reminder pop-ups and where its sticky notes sit on screen. The web app needs the hub on an https:// address (see below).");
 
-                step(ui, "3", "Join it on the other devices");
-                para(ui, "In Settings, under Family sharing, choose Join a shared list, then enter the hub's address and the code. The list appears and stays in sync from then on.");
+                step(ui, "3", "Share a list with family");
+                let how = if is_touch(ui) { "Long-press" } else { "Right-click" };
+                para(ui, &format!("{how} the list in the menu, choose Share list, enter the hub's address (just the IP is fine, e.g. 192.168.1.20) and press Share. You get a code like K7QM-2XPD: send it to the people you're sharing with. They choose Join a shared list in Settings, under Family sharing, and enter the address and the code."));
+                para(ui, "A shared list uses its own code, separate from your sync key: they see only that list, never your other lists. Your other devices join it by themselves when sync is on.");
 
                 step(ui, "?", "Good to know");
                 for item in [
-                    "Shared lists show a 👥 icon. If two people change the same task at the same time, the later change wins.",
+                    "If the same task is changed in two places at the same time, the later change wins. Shared lists show a 👥 icon.",
                     "Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again.",
                     "To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly.",
-                    "Sharing works in the Windows, Linux and Android apps.",
+                    "Sync my devices works everywhere, including the web app. Sharing a list works in the Windows, Linux and Android apps.",
+                    "Keep your sync key private, like a password: anyone with it who can reach your hub can see and change your tasks.",
                 ] {
                     ui.horizontal_top(|ui| {
                         ui.label("•");
@@ -3292,6 +3625,7 @@ impl eframe::App for TodoApp {
 
         self.maybe_check_updates(ctx, now);
         self.sync_tick(ctx);
+        self.account_tick(ctx);
         self.poll_updates(ctx);
         self.handle_dropped_files(ctx);
         #[cfg(target_arch = "wasm32")]
@@ -3368,6 +3702,7 @@ impl eframe::App for TodoApp {
         self.restore_dialog(ctx);
         self.whats_new_dialog(ctx);
         self.hub_guide_dialog(ctx);
+        self.account_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {
