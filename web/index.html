@@ -21,12 +21,56 @@
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       font: 16px system-ui, sans-serif; color: var(--fg); padding: 16px; text-align: center;
     }
+    /* "Get it from Microsoft": Windows visitors in a browser tab only; dismissible. */
+    #store-badge {
+      position: fixed; right: 16px; bottom: 16px; z-index: 10; display: none;
+      align-items: center; gap: 4px; padding: 6px; border-radius: 10px;
+      background: var(--bg); box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+      font: 14px system-ui, sans-serif;
+    }
+    #store-badge a { display: block; line-height: 0; }
+    #store-badge img { height: 48px; width: auto; }
+    #store-badge .fallback {
+      display: inline-block; padding: 12px 14px; border-radius: 8px; line-height: 1.2;
+      background: #000; color: #fff; text-decoration: none;
+    }
+    #store-badge a { text-decoration: none; }
+    #store-badge button {
+      border: 0; background: none; color: var(--fg); font-size: 18px; cursor: pointer;
+      width: 28px; height: 28px; border-radius: 6px; align-self: flex-start;
+    }
+    #store-badge button:hover { background: rgba(127, 127, 127, 0.2); }
   </style>
 </head>
 <body>
   <canvas id="rustdo_canvas"></canvas>
   <div id="loading">Loading RustDo…</div>
   <noscript>RustDo needs JavaScript and WebAssembly.</noscript>
+  <div id="store-badge" role="complementary" aria-label="RustDo for Windows">
+    <a href="https://apps.microsoft.com/detail/9PK0DF0QBWWM?mode=direct" target="_blank" rel="noopener"
+       title="Install RustDo for Windows from the Microsoft Store">
+      <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft"
+           onerror="this.outerHTML='<span class=&quot;fallback&quot;>Get RustDo from the Microsoft Store</span>'">
+    </a>
+    <button type="button" aria-label="Hide" title="Hide">×</button>
+  </div>
+  <script>
+    // The Microsoft Store badge: Windows desktop browsers only, not the installed web app,
+    // and not after the visitor hides it.
+    (() => {
+      const badge = document.getElementById('store-badge');
+      const windows = /Windows NT/.test(navigator.userAgent) && !/Xbox|Windows Phone/.test(navigator.userAgent);
+      const installed = matchMedia('(display-mode: standalone)').matches;
+      let hidden = false;
+      try { hidden = localStorage.getItem('rustdo.storeBadgeHidden') === '1'; } catch (_) {}
+      if (!windows || installed || hidden) return;
+      badge.style.display = 'flex';
+      badge.querySelector('button').addEventListener('click', () => {
+        badge.style.display = 'none';
+        try { localStorage.setItem('rustdo.storeBadgeHidden', '1'); } catch (_) {}
+      });
+    })();
+  </script>
   <script type="module">
     import init from './pkg/rustdo_app.js';
     init().catch((e) => {

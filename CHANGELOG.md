@@ -6,6 +6,16 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.3.3 - 2026-11-25
+
+### New
+- RustDo is in the Microsoft Store: search for RustDo or use the "Get it from Microsoft" button on rustdo.app. The Store version installs without a security warning and updates itself through the Store.
+
+- Settings › Family sharing has a new "How family sharing works" guide: how to start a RustDo Hub (Windows or Docker, with a button to copy the Docker command), share a list and join it on other devices. The share dialog links to it too.
+
+### Fixed
+- Sticky notes: choosing a custom note or text colour now opens the colour picker inside the note's menu, with a Done button, and the menu opens on its usual options again next time. A small note grows while its menu is open so everything fits, then goes back to its size.
+
 ## 0.3.2 - 2026-11-24
 
 ### New

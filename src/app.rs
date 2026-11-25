@@ -193,6 +193,8 @@ pub struct TodoApp {
     sync_soon: bool,
     sync_error: Option<String>,
     share_dialog: Option<ShareDialog>,
+    /// The "How family sharing works" guide is open.
+    hub_guide: bool,
     /// The "What's new" dialog: the releases to describe, newest first.
     whats_new: Option<Vec<changelog::Release>>,
 }
@@ -313,6 +315,7 @@ impl TodoApp {
             sync_soon: false,
             sync_error: None,
             share_dialog: None,
+            hub_guide: false,
             whats_new,
         }
     }
@@ -928,7 +931,10 @@ impl TodoApp {
                 self.last_sync_at = None;
             }
         });
-        ui.hyperlink_to("How to set up a RustDo Hub", hub_docs());
+        if ui.button("❓ How family sharing works").clicked() {
+            self.hub_guide = true;
+            self.close_settings(ui);
+        }
         ui.separator();
     }
 
@@ -1067,6 +1073,7 @@ impl TodoApp {
 
     fn share_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = self.share_dialog.as_mut() else { return };
+        let mut open_guide = false;
         let list = dialog.list;
         let existing = list.and_then(|id| self.store.shares.iter().find(|s| s.list_id == id)).cloned();
         let title = match (list, &existing) {
@@ -1148,7 +1155,9 @@ impl TodoApp {
                         ui.spinner();
                     }
                 });
-                ui.hyperlink_to(RichText::new("No hub yet? How to set one up").small(), hub_docs());
+                if ui.add(egui::Button::new(RichText::new("No hub yet? How family sharing works").small()).frame(false)).clicked() {
+                    open_guide = true;
+                }
             });
 
         if submit && !dialog.busy {
@@ -1181,6 +1190,9 @@ impl TodoApp {
                 self.notify("This list no longer syncs on this device. It stays here as a normal list.");
             }
             close = true;
+        }
+        if open_guide {
+            self.hub_guide = true;
         }
         if close {
             self.share_dialog = None;
@@ -1546,6 +1558,71 @@ impl TodoApp {
     }
 
     /// "What's new": the changelog for the releases since the user last looked.
+    /// "How family sharing works": setting up a RustDo Hub and sharing a list, in the app.
+    fn hub_guide_dialog(&mut self, ctx: &egui::Context) {
+        if !self.hub_guide {
+            return;
+        }
+        let mut close = false;
+        let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 520.0);
+        let releases = format!("https://github.com/{}/releases", update::REPO);
+        dialog_window(ctx, "How family sharing works", self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 500.0));
+            egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
+                let para = |ui: &mut egui::Ui, text: &str| {
+                    ui.add(egui::Label::new(text).wrap());
+                };
+                let step = |ui: &mut egui::Ui, n: &str, title: &str| {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new(format!("{n}. {title}")).strong().color(ACCENT));
+                };
+                para(ui, "Share lists such as groceries or chores with the people you live with. Everyone sees the same list, and changes show up on the other devices within about 30 seconds. Your lists go through a small RustDo Hub that you run yourself, never through anyone's cloud. Only the lists you share are sent; everything else stays on your device.");
+
+                step(ui, "1", "Start a RustDo Hub (once, on one machine)");
+                para(ui, "Pick a PC, NAS or home server that's usually on. One hub is enough for the whole family.");
+                ui.label(RichText::new("On Windows").strong());
+                para(ui, "Download RustDo-Hub-<version>-windows.exe from the RustDo releases page and run it. It shows the hub's address, e.g. http://192.168.1.20:7979. When Windows Firewall asks, allow it on Private networks.");
+                ui.hyperlink_to("RustDo releases", releases);
+                ui.label(RichText::new("With Docker (Synology and other NAS, Raspberry Pi, Linux)").strong());
+                let cmd = "docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest";
+                ui.add(egui::Label::new(RichText::new(cmd).monospace().small()).wrap());
+                if ui.small_button("📋 Copy command").clicked() {
+                    ui.ctx().copy_text(cmd.to_string());
+                }
+                para(ui, "The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979.");
+
+                step(ui, "2", "Share a list");
+                let how = if is_touch(ui) { "Long-press" } else { "Right-click" };
+                para(ui, &format!("{how} the list in the menu, choose Share list, enter the hub's address (just the IP is fine, e.g. 192.168.1.20) and press Share. You get a code like K7QM-2XPD: send it to the people you're sharing with."));
+
+                step(ui, "3", "Join it on the other devices");
+                para(ui, "In Settings, under Family sharing, choose Join a shared list, then enter the hub's address and the code. The list appears and stays in sync from then on.");
+
+                step(ui, "?", "Good to know");
+                for item in [
+                    "Shared lists show a 👥 icon. If two people change the same task at the same time, the later change wins.",
+                    "Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again.",
+                    "To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly.",
+                    "Sharing works in the Windows, Linux and Android apps.",
+                ] {
+                    ui.horizontal_top(|ui| {
+                        ui.label("•");
+                        ui.add(egui::Label::new(item).wrap());
+                    });
+                }
+                ui.add_space(4.0);
+                ui.hyperlink_to("Full guide, troubleshooting and reverse proxy setup", hub_docs());
+            });
+            ui.add_space(6.0);
+            if ui.button("Got it").clicked() {
+                close = true;
+            }
+        });
+        if close || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.hub_guide = false;
+        }
+    }
+
     fn whats_new_dialog(&mut self, ctx: &egui::Context) {
         let Some(releases) = &self.whats_new else { return };
         let mut close = false;
@@ -3290,6 +3367,7 @@ impl eframe::App for TodoApp {
         self.import_dialog(ctx, now);
         self.restore_dialog(ctx);
         self.whats_new_dialog(ctx);
+        self.hub_guide_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {

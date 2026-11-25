@@ -91,6 +91,30 @@ router to the internet, install [Tailscale](https://tailscale.com) (free for per
 on the hub machine and on each phone or PC. Then use the hub machine's Tailscale address
 (`100.x.y.z:7979`) in RustDo. Your lists still never pass through anyone's cloud storage.
 
+### Your own subdomain behind a reverse proxy
+
+Already run a reverse proxy with HTTPS (Synology's built-in one, Nginx Proxy Manager,
+Caddy, Traefik, nginx)? Point a subdomain such as `todo.example.com` at the hub, then
+enter `https://todo.example.com` as the hub address in RustDo. Any path works the same
+behind the proxy; the hub needs no extra settings.
+
+- **Synology:** Control Panel › Login Portal › Advanced › **Reverse Proxy** › Create.
+  Source: HTTPS, your subdomain, port 443. Destination: HTTP, `localhost`, port 7979 (the
+  container's published port). Add a certificate for the subdomain under Control Panel ›
+  Security › Certificate (Let's Encrypt works).
+- **Caddy** (gets the certificate itself):
+
+  ```
+  todo.example.com {
+      reverse_proxy localhost:7979
+  }
+  ```
+- **nginx:** a `server` block for the subdomain with your certificate and
+  `location / { proxy_pass http://127.0.0.1:7979; }`.
+
+The share code is still the only key to a list, so keep the proxy on HTTPS (never plain
+HTTP over the internet) and don't post codes publicly.
+
 **Don't** forward port 7979 on your router: anyone on the internet who guessed a code could
 then reach your lists, and the hub has no encryption of its own.
 

@@ -294,6 +294,48 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
 
     // Remember where the note is and how big, to reopen it there next time.
     let (outer, inner) = ctx.input(|i| (i.viewport().outer_rect, i.viewport().inner_rect));
+
+    // A small note grows while its 🎨 menu is open, so the menu and its colour picker fit,
+    // and goes back to its own size when the menu closes. That size is what's remembered.
+    let restore_id = Id::new(("note_restore_size", id));
+    let restore: Option<(Vec2, Option<Pos2>)> = ctx.data(|d| d.get_temp(restore_id));
+    let menu_open = ctx
+        .data(|d| d.get_temp::<u64>(menu_seen_id(id)))
+        .is_some_and(|pass| pass + 1 >= ctx.cumulative_pass_nr());
+    match (menu_open, restore) {
+        (true, None) => {
+            if let Some(r) = inner {
+                if r.width() < MENU_ROOM.x || r.height() < MENU_ROOM.y {
+                    let grown = r.size().max(MENU_ROOM);
+                    // Near the bottom or right of the screen, move up/left so it stays visible.
+                    let monitor = ctx.input(|i| i.viewport().monitor_size);
+                    let moved = outer.zip(monitor).and_then(|(o, m)| {
+                        let extra = o.size() - r.size();
+                        let to = Pos2::new(
+                            o.min.x.min(m.x - grown.x - extra.x).max(0.0),
+                            o.min.y.min(m.y - grown.y - extra.y - 48.0).max(0.0),
+                        );
+                        (to != o.min).then_some((o.min, to))
+                    });
+                    ctx.data_mut(|d| d.insert_temp(restore_id, (r.size(), moved.map(|(from, _)| from))));
+                    if let Some((_, to)) = moved {
+                        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(to));
+                    }
+                    ctx.send_viewport_cmd(ViewportCommand::InnerSize(grown));
+                }
+            }
+        }
+        (false, Some((size, pos))) => {
+            ctx.data_mut(|d| d.remove::<(Vec2, Option<Pos2>)>(restore_id));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+            if let Some(pos) = pos {
+                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+            }
+        }
+        _ => {}
+    }
+    // While grown (or moved) for the menu, don't remember that size or place.
+    let (outer, inner) = if restore.is_some() { (None, None) } else { (outer, inner) };
     {
         let note = &mut s.notes.notes[index];
         let mut moved = false;
@@ -472,35 +514,114 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
     ui.set_min_width(220.0);
     // The menu has its own (theme) background: use normal text colours inside it.
     ui.visuals_mut().override_text_color = None;
-    ui.label(RichText::new("Note colour").strong());
-    ui.horizontal_wrapped(|ui| {
-        for (name, color) in PRESETS {
-            let (rect, r) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
-            let selected = note.color == color;
-            ui.painter().rect_filled(rect, CornerRadius::same(4), c32(color));
-            let outline = if selected || r.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
-            ui.painter().rect_stroke(rect, CornerRadius::same(4), Stroke::new(if selected { 2.0_f32 } else { 1.0 }, outline), egui::StrokeKind::Inside);
-            if r.on_hover_text(name).clicked() {
-                note.color = color;
+
+    // Which page of the menu is showing: the options, or a colour picker. A picker takes the
+    // whole menu (a note window is too small for egui's picker to pop up beside it), and the
+    // menu always opens on the options page.
+    let ctx = ui.ctx().clone();
+    let page_id = Id::new(("note_menu_page", note.id));
+    let seen_id = menu_seen_id(note.id);
+    let pass = ctx.cumulative_pass_nr();
+    let last_seen: Option<u64> = ctx.data(|d| d.get_temp(seen_id));
+    let just_opened = last_seen.is_none_or(|last| last + 1 < pass);
+    let mut page: MenuPage = if just_opened { MenuPage::Options } else { ctx.data(|d| d.get_temp(page_id)).unwrap_or_default() };
+    ctx.data_mut(|d| d.insert_temp(seen_id, pass));
+    // Clicking another window closes the menu (and the note shrinks back), as clicking
+    // anywhere else in the note does.
+    if desktop && !just_opened && ctx.input(|i| i.viewport().focused == Some(false)) {
+        ui.close_menu();
+    }
+
+    match page {
+        MenuPage::NoteColour | MenuPage::TextColour => {
+            let (title, rgb) = if page == MenuPage::NoteColour {
+                ("Note colour", note.color)
+            } else {
+                ("Text colour", note.ink())
+            };
+            ui.label(RichText::new(title).strong());
+            // Fit the picker's square in the window; scroll if it's smaller still.
+            let side = (ctx.screen_rect().height() - HEADER_H - 150.0).clamp(90.0, 200.0);
+            egui::ScrollArea::vertical().max_height(ctx.screen_rect().height() - HEADER_H - 60.0).show(ui, |ui| {
+                ui.spacing_mut().slider_width = side;
+                let mut c = c32(rgb);
+                if egui::color_picker::color_picker_color32(ui, &mut c, egui::color_picker::Alpha::Opaque) {
+                    let picked = [c.r(), c.g(), c.b()];
+                    if page == MenuPage::NoteColour {
+                        note.color = picked;
+                    } else {
+                        note.text_color = Some(picked);
+                    }
+                }
+            });
+            if ui.button("✔  Done").on_hover_text("Keep this colour and go back").clicked() {
+                page = MenuPage::Options;
             }
         }
-    });
+        MenuPage::Options => {
+            ui.label(RichText::new("Note colour").strong());
+            ui.horizontal_wrapped(|ui| {
+                for (name, color) in PRESETS {
+                    let (rect, r) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+                    let selected = note.color == color;
+                    ui.painter().rect_filled(rect, CornerRadius::same(4), c32(color));
+                    let outline = if selected || r.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+                    ui.painter().rect_stroke(rect, CornerRadius::same(4), Stroke::new(if selected { 2.0_f32 } else { 1.0 }, outline), egui::StrokeKind::Inside);
+                    if r.on_hover_text(name).clicked() {
+                        note.color = color;
+                    }
+                }
+            });
+            if colour_row(ui, "Any colour:", note.color) {
+                page = MenuPage::NoteColour;
+            }
+            ui.separator();
+            ui.label(RichText::new("Text").strong());
+            let mut auto = note.text_color.is_none();
+            if ui.checkbox(&mut auto, "Automatic colour (suits the note)").changed() {
+                note.text_color = if auto { None } else { Some(note.ink()) };
+            }
+            if !auto && colour_row(ui, "Text colour:", note.ink()) {
+                page = MenuPage::TextColour;
+            }
+            note_menu_rest(ui, note, action, desktop);
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(page_id, page));
+}
+
+/// Where a note's 🎨 menu records the last pass it was shown (so: whether it's open).
+fn menu_seen_id(note: Uuid) -> Id {
+    Id::new(("note_menu_seen", note))
+}
+
+/// The room (in points) a note window needs while its 🎨 menu is open.
+const MENU_ROOM: Vec2 = Vec2::new(270.0, 420.0);
+
+/// The pages of a note's 🎨 menu.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum MenuPage {
+    #[default]
+    Options,
+    NoteColour,
+    TextColour,
+}
+
+/// "Label: [swatch] Change…"; true when the user asks to change the colour.
+fn colour_row(ui: &mut egui::Ui, label: &str, rgb: [u8; 3]) -> bool {
     ui.horizontal(|ui| {
-        ui.label("Any colour:");
-        egui::color_picker::color_edit_button_srgb(ui, &mut note.color);
-    });
-    ui.separator();
-    ui.label(RichText::new("Text").strong());
-    let mut auto = note.text_color.is_none();
-    if ui.checkbox(&mut auto, "Automatic colour (suits the note)").changed() {
-        note.text_color = if auto { None } else { Some(note.ink()) };
-    }
-    if let Some(color) = note.text_color.as_mut() {
-        ui.horizontal(|ui| {
-            ui.label("Text colour:");
-            egui::color_picker::color_edit_button_srgb(ui, color);
-        });
-    }
+        ui.label(label);
+        let (rect, swatch) = ui.allocate_exact_size(Vec2::new(32.0, 20.0), Sense::click());
+        ui.painter().rect_filled(rect, CornerRadius::same(3), c32(rgb));
+        ui.painter().rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.0_f32, ui.visuals().weak_text_color()), egui::StrokeKind::Inside);
+        let button = ui.button("Change…");
+        swatch.on_hover_text("Pick any colour").clicked() | button.clicked()
+    })
+    .inner
+}
+
+/// Text size, keep on top and delete (the rest of the options page).
+fn note_menu_rest(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool) {
     ui.horizontal(|ui| {
         ui.label("Size:");
         if ui.small_button("A−").on_hover_text("Smaller").clicked() {
