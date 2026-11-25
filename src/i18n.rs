@@ -181,17 +181,21 @@ mod tests {
             let src = std::fs::read_to_string(&path).unwrap();
             // The tests' own example strings aren't app text.
             let src = src.split("#[cfg(test)]").next().unwrap_or_default().to_string();
-            for marker in ["tr(\"", "trf(\"", "tr_label(\""] {
+            for marker in ["tr(", "trf(", "tr_label("] {
                 let mut rest = src.as_str();
                 while let Some(i) = rest.find(marker) {
-                    // Not part of a longer name (e.g. `attr("`).
+                    // Not part of a longer name (e.g. `attr(`).
                     let before = rest[..i].chars().last();
                     rest = &rest[i + marker.len()..];
                     if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
                         continue;
                     }
-                    if let Some(text) = read_literal(rest) {
-                        out.insert(text);
+                    // The text may start on the next line.
+                    let after = rest.trim_start();
+                    if let Some(lit) = after.strip_prefix('"') {
+                        if let Some(text) = read_literal(lit) {
+                            out.insert(text);
+                        }
                     }
                 }
             }

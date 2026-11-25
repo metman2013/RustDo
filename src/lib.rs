@@ -8,6 +8,7 @@ pub mod diagnostics;
 pub mod i18n;
 pub mod import;
 pub mod model;
+pub mod mstodo;
 pub mod notes;
 pub mod notes_ui;
 pub mod notify;

@@ -6,6 +6,15 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.4.2 - 2026-11-25
+
+### New
+- Import straight from Microsoft To Do: choose Import from Microsoft To Do in the menu, then Sign in with Microsoft. RustDo reads all your lists, tasks, steps, notes, due dates and reminders and shows what it will import. It only reads your To Do data and never changes it. Works on Windows, Linux, Android and the web app, with personal and work or school Microsoft accounts.
+- Android can now import from Microsoft To Do too (by signing in).
+
+### Fixed
+- German: a few longer messages that still showed in English are now translated.
+
 ## 0.4.1 - 2026-11-25
 
 ### New
