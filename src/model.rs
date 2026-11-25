@@ -1,5 +1,6 @@
 //! Core data model and business rules. No UI code lives here so it can be unit-tested.
 
+use crate::i18n::{tr, trf};
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -28,12 +29,12 @@ impl Recurrence {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Never => "Doesn't repeat",
-            Self::Daily => "Daily",
-            Self::Weekdays => "Weekdays",
-            Self::Weekly => "Weekly",
-            Self::Monthly => "Monthly",
-            Self::Yearly => "Yearly",
+            Self::Never => tr("Doesn't repeat"),
+            Self::Daily => tr("Daily"),
+            Self::Weekdays => tr("Weekdays"),
+            Self::Weekly => tr("Weekly"),
+            Self::Monthly => tr("Monthly"),
+            Self::Yearly => tr("Yearly"),
         }
     }
 
@@ -76,10 +77,10 @@ impl SortMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Created => "Newest first",
-            Self::DueDate => "Due date",
-            Self::Alphabetical => "Alphabetical",
-            Self::Importance => "Importance",
+            Self::Created => tr("Newest first"),
+            Self::DueDate => tr("Due date"),
+            Self::Alphabetical => tr("Alphabetical"),
+            Self::Importance => tr("Importance"),
         }
     }
 }
@@ -145,6 +146,9 @@ pub struct Settings {
     /// (that would close RustDo at every start); offer "Update & restart" instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_attempt: Option<String>,
+    /// Settings › Language.
+    #[serde(default)]
+    pub language: crate::i18n::Language,
     /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
@@ -168,6 +172,7 @@ impl Default for Settings {
             update_attempt: None,
             companion: true,
             companion_autostart: true,
+            language: crate::i18n::Language::Automatic,
             hub: None,
         }
     }
@@ -316,11 +321,11 @@ impl PlannedBucket {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Overdue => "Earlier",
-            Self::Today => "Today",
-            Self::Tomorrow => "Tomorrow",
-            Self::NextSevenDays => "Next 7 days",
-            Self::Later => "Later",
+            Self::Overdue => tr("Earlier"),
+            Self::Today => tr("Today"),
+            Self::Tomorrow => tr("Tomorrow"),
+            Self::NextSevenDays => tr("Next 7 days"),
+            Self::Later => tr("Later"),
         }
     }
 }
@@ -361,7 +366,7 @@ impl Store {
             default_list: id,
             lists: vec![TaskList {
                 id,
-                name: "Tasks".into(),
+                name: tr("Tasks").into(),
             }],
             tasks: Vec::new(),
             settings: Settings::default(),
@@ -379,7 +384,7 @@ impl Store {
                 let id = Uuid::new_v4();
                 self.lists.push(TaskList {
                     id,
-                    name: "Tasks".into(),
+                    name: tr("Tasks").into(),
                 });
                 self.default_list = id;
             }
@@ -568,12 +573,11 @@ pub fn sort_tasks(tasks: &mut [&Task], mode: SortMode) {
 pub fn relative_date(date: NaiveDate, today: NaiveDate) -> String {
     let days = (date - today).num_days();
     match days {
-        0 => "Today".into(),
-        1 => "Tomorrow".into(),
-        -1 => "Yesterday".into(),
-        2..=6 => date.format("%A").to_string(),
-        _ if date.year() == today.year() => date.format("%a, %b %-d").to_string(),
-        _ => date.format("%a, %b %-d, %Y").to_string(),
+        0 => tr("Today").into(),
+        1 => tr("Tomorrow").into(),
+        -1 => tr("Yesterday").into(),
+        2..=6 => crate::i18n::weekday(date),
+        _ => crate::i18n::date_short(date, date.year() != today.year()),
     }
 }
 

@@ -7,6 +7,7 @@
 //!
 //! "My Day" and whether a reminder already fired stay personal to each device.
 
+use crate::i18n::{tr, trf};
 use crate::model::{Store, Task, TaskList};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -209,7 +210,7 @@ pub fn join(store: &mut Store, hub: &str, code: &str, resp: &SyncResponse) -> Op
         .find(|i| i.kind == "list")
         .and_then(|i| i.data.get("name").and_then(Value::as_str))
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or("Shared list")
+        .unwrap_or(tr("Shared list"))
         .to_string();
     let list = TaskList { id: resp.list_id, name };
     let mut share = Share {
@@ -324,16 +325,16 @@ pub fn run(_jobs: Vec<Job>, _ctx: eframe::egui::Context) -> std::sync::mpsc::Rec
 fn post(agent: &ureq::Agent, hub: &str, path: &str, body: Value) -> Result<Value, String> {
     let read = |r: ureq::Response| -> Result<Value, String> {
         let text = r.into_string().map_err(|e| e.to_string())?;
-        serde_json::from_str(&text).map_err(|e| format!("unexpected answer from the hub: {e}"))
+        serde_json::from_str(&text).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)]))
     };
     let request = agent.post(&format!("{hub}{path}")).set("Content-Type", "application/json");
     match request.send_string(&body.to_string()) {
         Ok(r) => read(r),
         Err(ureq::Error::Status(_, r)) => {
             let msg = read(r).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
-            Err(msg.unwrap_or_else(|| "the hub refused the request".into()))
+            Err(msg.unwrap_or_else(|| tr("the hub refused the request").into()))
         }
-        Err(ureq::Error::Transport(_)) => Err(format!("can't reach the hub at {hub}. Is it running, and are you on the same network?")),
+        Err(ureq::Error::Transport(_)) => Err(trf("can't reach the hub at {hub}. Is it running, and are you on the same network?", &[("hub", &hub)])),
     }
 }
 
@@ -341,7 +342,7 @@ fn post(agent: &ureq::Agent, hub: &str, path: &str, body: Value) -> Result<Value
 fn run_one(agent: &ureq::Agent, job: Job) -> Done {
     let sync = |hub: &str, req: &SyncRequest| -> Result<SyncResponse, String> {
         let v = post(agent, hub, "/api/sync", serde_json::to_value(req).map_err(|e| e.to_string())?)?;
-        serde_json::from_value(v).map_err(|e| format!("unexpected answer from the hub: {e}"))
+        serde_json::from_value(v).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)]))
     };
     match job {
         Job::Sync { hub, out } => {
@@ -350,7 +351,7 @@ fn run_one(agent: &ureq::Agent, job: Job) -> Done {
         }
         Job::Share { hub, list_id } => {
             let result = post(agent, &hub, "/api/share", serde_json::json!({ "list_id": list_id })).and_then(|v| {
-                v.get("code").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "unexpected answer from the hub".into())
+                v.get("code").and_then(Value::as_str).map(str::to_string).ok_or_else(|| tr("unexpected answer from the hub").into())
             });
             Done::Shared { list_id, hub, result }
         }

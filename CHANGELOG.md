@@ -6,6 +6,12 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.4.1 - 2026-11-25
+
+### New
+- RustDo speaks German: Settings › Language (Sprache) offers Automatic, English and Deutsch. Automatic follows your device's language. Dates read the German way too, like "Mittwoch, 25. November".
+- Language support is built in from here on, so more languages can follow.
+
 ## 0.4.0 - 2026-11-25
 
 ### New

@@ -1,6 +1,7 @@
 //! Persistence. Desktop and Android save a JSON file (atomic writes, a backup of the last
 //! good file); the web app saves the same JSON in the browser's localStorage.
 
+use crate::i18n::{tr, trf};
 use crate::model::Store;
 use std::fs;
 use std::io;
@@ -50,13 +51,13 @@ impl Storage {
                 Some(old) => match migrate(&old, &path) {
                     Ok(true) => (
                         Storage::File(path.clone()),
-                        Some(format!("Your tasks now live in {} so they're easy to find.", path.parent().unwrap_or(&path).display())),
+                        Some(trf("Your tasks now live in {path} so they're easy to find.", &[("path", &path.parent().unwrap_or(&path).display())])),
                     ),
                     Ok(false) => (Storage::File(path), None),
                     // Couldn't move: keep using the old location rather than starting empty.
                     Err(e) => (
                         Storage::File(old.clone()),
-                        Some(format!("Couldn't move your tasks to Documents ({e}); still using {}.", old.display())),
+                        Some(trf("Couldn't move your tasks to Documents ({e}); still using {path}.", &[("e", &e), ("path", &old.display())])),
                     ),
                 },
                 None => (Storage::File(path), None),
@@ -102,7 +103,7 @@ impl Storage {
                 write_daily_backup(&backups_dir(path), store, today, KEEP_BACKUPS).map_err(|e| e.to_string())?;
                 if let Some(extra) = store.settings.backup_dir.as_deref().filter(|d| !d.trim().is_empty()) {
                     write_daily_backup(Path::new(extra), store, today, KEEP_BACKUPS)
-                        .map_err(|e| format!("couldn't write to your backup folder {extra}: {e}"))?;
+                        .map_err(|e| trf("couldn't write to your backup folder {extra}: {e}", &[("extra", &extra), ("e", &e)]))?;
                 }
                 Ok(())
             }
@@ -137,7 +138,7 @@ impl Storage {
         #[cfg(not(target_arch = "wasm32"))]
         for dir in self.backup_dirs(settings) {
             crate::notes::file::write_daily_backup(&dir, notes, today, KEEP_BACKUPS)
-                .map_err(|e| format!("couldn't back up your sticky notes to {}: {e}", dir.display()))?;
+                .map_err(|e| trf("couldn't back up your sticky notes to {path}: {e}", &[("path", &dir.display()), ("e", &e)]))?;
         }
         let _ = (notes, settings, today);
         Ok(())
@@ -148,7 +149,7 @@ impl Storage {
         match self {
             Storage::File(path) => backups_dir(path).display().to_string(),
             #[cfg(target_arch = "wasm32")]
-            Storage::Browser => "this browser's storage (last 7 days)".into(),
+            Storage::Browser => tr("this browser's storage (last 7 days)").into(),
         }
     }
 
@@ -200,9 +201,9 @@ pub fn parse_backup(bytes: &[u8]) -> Result<Store, String> {
     let text = String::from_utf8_lossy(bytes);
     let trimmed = text.trim_start_matches('\u{feff}').trim_start();
     if !trimmed.starts_with('{') || !trimmed.contains("\"default_list\"") {
-        return Err("This isn't a RustDo backup.".into());
+        return Err(tr("This isn't a RustDo backup.").into());
     }
-    parse(trimmed).map_err(|e| format!("This backup is damaged ({e})."))
+    parse(trimmed).map_err(|e| trf("This backup is damaged ({e}).", &[("e", &e)]))
 }
 
 /// Writes `RustDo-backup-<today>.json` into `dir` and deletes all but the newest `keep`.
@@ -302,7 +303,7 @@ pub fn load(path: &Path) -> Loaded {
             let _ = fs::write(path.with_extension("json.bak"), &text);
             Loaded { store, warning: None, can_save: true }
         }
-        Err(e) => set_aside(path, format!("Your task file was damaged ({e}).")),
+        Err(e) => set_aside(path, trf("Your task file was damaged ({e}).", &[("e", &e)])),
     }
 }
 
@@ -312,12 +313,12 @@ fn set_aside(path: &Path, reason: String) -> Loaded {
     match fs::rename(path, &aside) {
         Ok(()) => Loaded {
             store: Store::new(),
-            warning: Some(format!("{reason} It was saved as {}.", aside.display())),
+            warning: Some(format!("{reason} {}", trf("It was saved as {path}.", &[("path", &aside.display())]))),
             can_save: true,
         },
         Err(_) => Loaded {
             store: Store::new(),
-            warning: Some(format!("{reason} Saving is disabled to protect it.")),
+            warning: Some(trf("{reason} Saving is disabled to protect it.", &[("reason", &reason)])),
             can_save: false,
         },
     }
@@ -356,7 +357,7 @@ mod browser {
         let Some(ls) = local_storage() else {
             return Loaded {
                 store: Store::new(),
-                warning: Some("This browser won't let RustDo store data, so your tasks won't be saved.".into()),
+                warning: Some(tr("This browser won't let RustDo store data, so your tasks won't be saved.").into()),
                 can_save: false,
             };
         };
@@ -374,9 +375,9 @@ mod browser {
                 Loaded {
                     store: Store::new(),
                     warning: Some(if kept {
-                        format!("Your saved tasks were damaged ({e}). A copy was kept in browser storage as “{aside}”.")
+                        trf("Your saved tasks were damaged ({e}). A copy was kept in browser storage as “{aside}”.", &[("e", &e), ("aside", &aside)])
                     } else {
-                        format!("Your saved tasks were damaged ({e}). Saving is disabled to protect them.")
+                        trf("Your saved tasks were damaged ({e}). Saving is disabled to protect them.", &[("e", &e)])
                     }),
                     can_save: kept,
                 }

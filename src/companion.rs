@@ -13,6 +13,7 @@
 //! (Windows), it runs quietly for reminders only: no tray icon, no notes, until RustDo is
 //! opened and asks it to wake up.
 
+use crate::i18n::{tr, trf};
 use crate::model::Settings;
 use std::fs::File;
 use std::path::PathBuf;
@@ -263,6 +264,7 @@ mod process {
             let (settings, lock) = first.take().unwrap_or_else(|| {
                 (read_settings().unwrap_or_default(), lock_companion().expect("companion lock"))
             });
+            crate::i18n::set(settings.language);
             Box::new(Companion::new(cc, settings, started_at_sign_in, lock))
         });
         match result {
@@ -437,14 +439,14 @@ mod process {
     fn build_tray() -> Result<TrayIcon, String> {
         let menu = Menu::new();
         let items = [
-            MenuItem::with_id("open", "Open RustDo", true, None),
-            MenuItem::with_id("new", "New sticky note", true, None),
+            MenuItem::with_id("open", tr("Open RustDo"), true, None),
+            MenuItem::with_id("new", tr("New sticky note"), true, None),
         ];
         let notes_items = [
-            MenuItem::with_id("show", "Show all notes", true, None),
-            MenuItem::with_id("hide", "Hide all notes", true, None),
+            MenuItem::with_id("show", tr("Show all notes"), true, None),
+            MenuItem::with_id("hide", tr("Hide all notes"), true, None),
         ];
-        let quit = MenuItem::with_id("quit", "Quit RustDo companion", true, None);
+        let quit = MenuItem::with_id("quit", tr("Quit RustDo companion"), true, None);
         menu.append_items(&[&items[0], &items[1], &PredefinedMenuItem::separator(), &notes_items[0], &notes_items[1]])
             .map_err(|e| e.to_string())?;
         menu.append_items(&[&PredefinedMenuItem::separator(), &quit]).map_err(|e| e.to_string())?;
@@ -452,7 +454,7 @@ mod process {
         let icon = tray_icon::Icon::from_rgba(png.rgba, png.width, png.height).map_err(|e| e.to_string())?;
         TrayIconBuilder::new()
             .with_id("rustdo")
-            .with_tooltip("RustDo: sticky notes and reminders")
+            .with_tooltip(tr("RustDo: sticky notes and reminders"))
             .with_title("RustDo")
             .with_icon(icon)
             .with_menu(Box::new(menu))
