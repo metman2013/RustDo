@@ -1,10 +1,15 @@
 //! The hub's data and sync rules (no networking here, so it's easy to test).
 //!
-//! Each shared list holds items: one `list` item (its name) and one `task` item per task.
-//! The hub doesn't look inside an item's `data`; RustDo apps own that format. Every
-//! accepted change gets the list's next revision number, so an app asks only for what
-//! changed since the revision it last saw. Deletions stay as small "tombstones" so
-//! devices that were offline learn about them too.
+//! Two kinds of collections, both made of items the hub doesn't look inside (RustDo apps
+//! own the format of an item's `data`):
+//! * a **shared list** (family sharing), found by its share code: one `list` item (its
+//!   name) and one `task` item per task;
+//! * an **account** (one person's devices), found by its sync key: all their lists, tasks,
+//!   sticky notes, settings, and which shared lists they're in.
+//!
+//! Every accepted change gets the collection's next revision number, so an app asks only
+//! for what changed since the revision it last saw. Deletions stay as small "tombstones"
+//! so devices that were offline learn about them too. The newest edit of an item wins.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -72,10 +77,81 @@ struct SharedList {
     items: BTreeMap<String, Item>,
 }
 
+/// One person's synced data, found by its sync key.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct Account {
+    #[serde(default)]
+    rev: u64,
+    #[serde(default)]
+    items: BTreeMap<String, Item>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountSyncRequest {
+    pub key: String,
+    #[serde(default)]
+    pub since: u64,
+    #[serde(default)]
+    pub changes: Vec<Item>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct AccountSyncResponse {
+    pub rev: u64,
+    pub changes: Vec<Item>,
+}
+
+/// What an account may hold.
+const ACCOUNT_KINDS: [&str; 5] = ["list", "task", "note", "settings", "share"];
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Db {
     #[serde(default)]
     lists: BTreeMap<String, SharedList>,
+    /// Sync key (normalized) → account.
+    #[serde(default)]
+    accounts: BTreeMap<String, Account>,
+}
+
+/// Applies `changes` to a collection (newest edit of each item wins) and returns what a
+/// device that has revision `since` is missing, and whether anything changed.
+fn merge(
+    rev: &mut u64,
+    items: &mut BTreeMap<String, Item>,
+    since: u64,
+    changes: Vec<Item>,
+    allowed: &[&str],
+    mut fix: impl FnMut(&mut Item),
+) -> (Vec<Item>, bool) {
+    // A device that's ahead of the hub (e.g. the hub's data was restored from an older
+    // copy) gets everything again.
+    let since = if since > *rev { 0 } else { since };
+    let mut turned_down = HashSet::new();
+    let mut changed = false;
+    for mut item in changes {
+        if !allowed.contains(&item.kind.as_str()) || item.id.is_empty() || item.id.len() > 64 {
+            continue;
+        }
+        fix(&mut item);
+        let key = item.key();
+        if items.get(&key).is_some_and(|old| old.modified > item.modified) {
+            turned_down.insert(key);
+            continue;
+        }
+        *rev += 1;
+        item.rev = *rev;
+        if item.deleted {
+            item.data = Value::Null;
+        }
+        items.insert(key, item);
+        changed = true;
+    }
+    let out = items
+        .iter()
+        .filter(|(key, item)| item.rev > since || turned_down.contains(*key))
+        .map(|(_, item)| item.clone())
+        .collect();
+    (out, changed)
 }
 
 pub struct Hub {
@@ -144,39 +220,48 @@ impl Hub {
         let Some(list) = self.db.lists.get_mut(&normalize_code(&req.code)) else {
             return Ok(None);
         };
-        // A device that's ahead of the hub (e.g. the hub's data was restored from an
-        // older copy) gets everything again.
-        let since = if req.since > list.rev { 0 } else { req.since };
-        let mut turned_down = HashSet::new();
-        let mut changed = false;
-        for mut item in req.changes {
-            if !matches!(item.kind.as_str(), "list" | "task") || item.id.is_empty() || item.id.len() > 64 {
-                continue;
-            }
-            // The list item always describes this list, whatever id the device sent.
+        let list_id = list.list_id.clone();
+        // The list item always describes this list, whatever id the device sent.
+        let (changes, changed) = merge(&mut list.rev, &mut list.items, req.since, req.changes, &["list", "task"], |item| {
             if item.kind == "list" {
-                item.id = list.list_id.clone();
+                item.id = list_id.clone();
             }
-            let key = item.key();
-            if list.items.get(&key).is_some_and(|old| old.modified > item.modified) {
-                turned_down.insert(key);
-                continue;
-            }
-            list.rev += 1;
-            item.rev = list.rev;
-            if item.deleted {
-                item.data = Value::Null;
-            }
-            list.items.insert(key, item);
-            changed = true;
-        }
-        let changes = list
-            .items
-            .iter()
-            .filter(|(key, item)| item.rev > since || turned_down.contains(*key))
-            .map(|(_, item)| item.clone())
-            .collect();
+        });
         let response = SyncResponse { list_id: list.list_id.clone(), rev: list.rev, changes };
+        if changed {
+            self.save()?;
+        }
+        Ok(Some(response))
+    }
+
+    pub fn account_count(&self) -> usize {
+        self.db.accounts.len()
+    }
+
+    /// Starts a new account; returns its sync key, formatted like `ABCDE-FGHJK-MNPQR-STUVW`.
+    pub fn new_account(&mut self) -> Result<String, String> {
+        let key = loop {
+            let key = random_code(20)?;
+            if !self.db.accounts.contains_key(&key) {
+                break key;
+            }
+        };
+        self.db.accounts.insert(key.clone(), Account::default());
+        self.save()?;
+        Ok(key.as_bytes().chunks(5).map(|c| String::from_utf8_lossy(c).into_owned()).collect::<Vec<_>>().join("-"))
+    }
+
+    /// Syncs one person's devices. `None`: unknown sync key.
+    pub fn account_sync(&mut self, req: AccountSyncRequest) -> Result<Option<AccountSyncResponse>, String> {
+        let key = normalize_code(&req.key);
+        if key.len() != 20 {
+            return Ok(None);
+        }
+        let Some(account) = self.db.accounts.get_mut(&key) else {
+            return Ok(None);
+        };
+        let (changes, changed) = merge(&mut account.rev, &mut account.items, req.since, req.changes, &ACCOUNT_KINDS, |_| {});
+        let response = AccountSyncResponse { rev: account.rev, changes };
         if changed {
             self.save()?;
         }
@@ -190,10 +275,30 @@ pub fn normalize_code(code: &str) -> String {
 }
 
 fn new_code() -> Result<String, String> {
-    let mut bytes = [0u8; 8];
+    random_code(8)
+}
+
+/// `len` random characters from [`CODE_CHARS`]. A sync key (20 characters) has about 99
+/// bits of randomness.
+fn random_code(len: usize) -> Result<String, String> {
+    let mut bytes = vec![0u8; len];
     getrandom::getrandom(&mut bytes).map_err(|e| e.to_string())?;
-    // 31 characters: the tiny bias from `%` doesn't matter for a code this long.
-    Ok(bytes.iter().map(|b| CODE_CHARS[*b as usize % CODE_CHARS.len()] as char).collect())
+    // Rejection sampling: no bias towards the first characters.
+    let limit = (256 / CODE_CHARS.len() * CODE_CHARS.len()) as u8;
+    let mut out = String::with_capacity(len);
+    let mut i = 0;
+    while out.len() < len {
+        if i == bytes.len() {
+            getrandom::getrandom(&mut bytes).map_err(|e| e.to_string())?;
+            i = 0;
+        }
+        let b = bytes[i];
+        i += 1;
+        if b < limit {
+            out.push(CODE_CHARS[b as usize % CODE_CHARS.len()] as char);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -283,6 +388,30 @@ mod tests {
     }
 
     #[test]
+    fn accounts_sync_everything_and_stay_separate() {
+        let mut hub = Hub::memory();
+        let key = hub.new_account().unwrap();
+        assert_eq!(key.len(), 23);
+        let other = hub.new_account().unwrap();
+        assert_ne!(key, other);
+        let note = Item { kind: "note".into(), id: "n1".into(), modified: 5, deleted: false, data: json!({ "text": "Hi" }), rev: 0 };
+        let bad = Item { kind: "virus".into(), id: "x".into(), modified: 5, deleted: false, data: json!({}), rev: 0 };
+        let req = |key: &str, since, changes| AccountSyncRequest { key: key.into(), since, changes };
+        let r = hub.account_sync(req(&key, 0, vec![task("a", 10, "Milk"), note, bad])).unwrap().unwrap();
+        assert_eq!(r.rev, 2);
+        assert_eq!(r.changes.len(), 2);
+        // Another device with the key typed loosely gets both; the other account nothing.
+        let r2 = hub.account_sync(req(&key.to_lowercase().replace('-', ""), 0, vec![])).unwrap().unwrap();
+        assert_eq!(r2.changes.len(), 2);
+        let r3 = hub.account_sync(req(&other, 0, vec![])).unwrap().unwrap();
+        assert!(r3.changes.is_empty());
+        assert!(hub.account_sync(req("ABCDE-ABCDE-ABCDE-ABCDE", 0, vec![])).unwrap().is_none());
+        assert!(hub.account_sync(req("short", 0, vec![])).unwrap().is_none());
+        // Share codes and sync keys don't open each other.
+        assert!(hub.sync(SyncRequest { code: key.clone(), since: 0, changes: vec![] }).unwrap().is_none());
+    }
+
+    #[test]
     fn saves_and_reloads() {
         let dir = std::env::temp_dir().join(format!("rustdo-hub-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -290,10 +419,13 @@ mod tests {
             let mut hub = Hub::open(&dir).unwrap();
             let code = hub.share(ShareRequest { list_id: "L1".into() }).unwrap();
             sync(&mut hub, &code, 0, vec![task("a", 10, "Milk")]);
+            let key = hub.new_account().unwrap();
+            hub.account_sync(AccountSyncRequest { key, since: 0, changes: vec![task("b", 1, "Eggs")] }).unwrap();
             code
         };
         let mut hub = Hub::open(&dir).unwrap();
         assert_eq!(hub.list_count(), 1);
+        assert_eq!(hub.account_count(), 1);
         assert_eq!(sync(&mut hub, &code, 0, vec![]).changes.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }

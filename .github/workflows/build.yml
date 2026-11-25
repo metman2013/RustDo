@@ -408,7 +408,8 @@ jobs:
       STORE_CLIENT_ID: ${{ secrets.STORE_CLIENT_ID }}
       STORE_CLIENT_SECRET: ${{ secrets.STORE_CLIENT_SECRET }}
       STORE_SELLER_ID: ${{ secrets.STORE_SELLER_ID }}
-      STORE_PRODUCT_ID: ${{ vars.STORE_PRODUCT_ID }}
+      # RustDo's Store ID (public: it's in the Store link); a repository variable overrides it.
+      STORE_PRODUCT_ID: ${{ vars.STORE_PRODUCT_ID || secrets.STORE_PRODUCT_ID || '9PK0DF0QBWWM' }}
     steps:
       - name: Check the Store settings
         id: cfg

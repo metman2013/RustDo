@@ -41,6 +41,8 @@ uuid = { version = "1", features = ["v4", "serde", "js"] }
 csv = "1"
 web-time = "1"
 log = "0.4"
+# "Sync my devices" (account.rs): HTTP on desktop, Android and in the browser alike.
+ehttp = "0.5"
 
 # Desktop (Windows / macOS / Linux)
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]

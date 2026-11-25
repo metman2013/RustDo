@@ -1,7 +1,11 @@
-//! RustDo Hub: syncs shared lists between RustDo apps on your own network.
+//! RustDo Hub: syncs RustDo between devices, on a server you run yourself.
 //!
-//! - No accounts and no cloud. Sharing a list gives it a code (like `K7QM-2XPD`);
-//!   anyone who has the code and can reach the hub can read and change that list.
+//! - **Sync my devices:** one person's lists, tasks, sticky notes and settings, kept the
+//!   same on all their devices. An account is just a random sync key (like
+//!   `ABCDE-FGHJK-MNPQR-STUVW`); there are no user names or passwords.
+//! - **Family sharing:** sharing a list gives it a code (like `K7QM-2XPD`); anyone who has
+//!   the code and can reach the hub can read and change that list.
+//! - No cloud.
 //! - Everything lives in one JSON file in the data folder.
 //! - Conflicts: each task (and the list's name) is one item; the most recent edit wins.
 //!
@@ -13,7 +17,7 @@ mod store;
 
 use std::io::Read;
 use std::path::PathBuf;
-use store::{Hub, SyncRequest};
+use store::{AccountSyncRequest, Hub, SyncRequest};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -57,7 +61,7 @@ fn main() {
     };
     println!("RustDo Hub {VERSION}");
     println!("Data: {}", hub.path().display());
-    println!("Shared lists: {}", hub.list_count());
+    println!("Shared lists: {} · synced accounts: {}", hub.list_count(), hub.account_count());
     println!();
     println!("In RustDo, use this hub address:");
     // Inside Docker the hub only sees the container's private address, which is no use.
@@ -119,8 +123,20 @@ fn handle(hub: &mut Hub, mut request: Request) {
         (Method::Get, "/") => html(status_page(hub)),
         (Method::Get, "/api/hello") => json(
             200,
-            serde_json::json!({ "app": "rustdo-hub", "version": VERSION, "protocol": store::PROTOCOL }),
+            serde_json::json!({ "app": "rustdo-hub", "version": VERSION, "protocol": store::PROTOCOL, "accounts": true }),
         ),
+        (Method::Post, "/api/account/new") => match hub.new_account() {
+            Ok(key) => json(200, serde_json::json!({ "key": key })),
+            Err(e) => error(500, &e),
+        },
+        (Method::Post, "/api/account/sync") => match read_json::<AccountSyncRequest>(&mut request) {
+            Ok(req) => match hub.account_sync(req) {
+                Ok(Some(resp)) => json(200, serde_json::to_value(resp).unwrap_or_default()),
+                Ok(None) => error(404, "This hub doesn't know that sync key. Check the key, or turn on sync again with a new one."),
+                Err(e) => error(500, &e),
+            },
+            Err(e) => error(400, &e),
+        },
         (Method::Post, "/api/share") => match read_json::<store::ShareRequest>(&mut request) {
             Ok(req) => match hub.share(req) {
                 Ok(code) => json(200, serde_json::json!({ "code": code })),
@@ -139,6 +155,13 @@ fn handle(hub: &mut Hub, mut request: Request) {
         (Method::Options, _) => Response::from_data(Vec::new()).with_status_code(204),
         _ => error(404, "not found"),
     };
+    // The web app (rustdo.app) calls the hub from another origin; the sync key or share
+    // code in the body is what grants access, so any origin may ask.
+    let response = response
+        .with_header(header("Access-Control-Allow-Origin", "*"))
+        .with_header(header("Access-Control-Allow-Methods", "GET, POST, OPTIONS"))
+        .with_header(header("Access-Control-Allow-Headers", "Content-Type"))
+        .with_header(header("Access-Control-Max-Age", "86400"));
     let _ = request.respond(response);
 }
 
@@ -185,10 +208,12 @@ fn status_page(hub: &Hub) -> String {
         r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RustDo Hub</title><style>body{{font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5}}</style></head>
 <body><h1>RustDo Hub is running ✔</h1>
-<p>Version {VERSION} · {} shared list{}</p>
-<p>In RustDo, open ⚙ → <b>Family sharing</b> and enter this page's address (for example <code>http://192.168.1.20:7979</code>).</p>
+<p>Version {VERSION} · {} shared list{} · {} synced account{}</p>
+<p>In RustDo, open ⚙ → <b>Sync my devices</b> or <b>Family sharing</b> and enter this page's address (for example <code>http://192.168.1.20:7979</code>, or your own <code>https://</code> subdomain).</p>
 </body></html>"#,
         hub.list_count(),
-        if hub.list_count() == 1 { "" } else { "s" }
+        if hub.list_count() == 1 { "" } else { "s" },
+        hub.account_count(),
+        if hub.account_count() == 1 { "" } else { "s" }
     )
 }

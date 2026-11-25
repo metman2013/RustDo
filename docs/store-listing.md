@@ -186,8 +186,8 @@ It needs, in the repository's Settings › Secrets and variables › Actions:
   applications) with the Manager role, and one of its keys. Keys expire: when the job fails
   to sign in, add a new key there and update `STORE_CLIENT_SECRET`.
 - Secret `STORE_SELLER_ID`: Account settings › Legal info › Developer.
-- Variable `STORE_PRODUCT_ID`: RustDo's Store ID (Product management › Product identity,
-  starts with 9).
+- Store ID: built into the workflow (9PK0DF0QBWWM); a repository variable `STORE_PRODUCT_ID`
+  overrides it.
 
 Without them the job does nothing. If it fails (for example the previous submission is still
 in certification), the GitHub release is unaffected.
