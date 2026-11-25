@@ -4,11 +4,13 @@ A fast, local-first to-do app written in Rust ([egui](https://github.com/emilk/e
 It's modeled on Microsoft To Do's workflow, with no account, cloud or telemetry.
 Your tasks stay on your device.
 
+<a href="https://apps.microsoft.com/detail/9PK0DF0QBWWM"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="48"></a>
+
 One codebase runs on three platforms:
 
 | Platform | How to get it | Where your tasks live |
 |---|---|---|
-| **Windows** | `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `Documents\RustDo\tasks.json` |
+| **Windows** | [Get it from the Microsoft Store](https://apps.microsoft.com/detail/9PK0DF0QBWWM) (recommended: no security warning, updates through the Store), or `RustDo-<version>-setup.exe` from [Releases](https://github.com/metman2013/RustDo/releases). It installs for your user only and doesn't need admin rights. A portable `.exe` is also attached. | `Documents\RustDo\tasks.json` |
 | **Linux** | From [Releases](https://github.com/metman2013/RustDo/releases): `RustDo-<version>-x86_64.AppImage` works on any distro (`chmod +x` it, then run it), or install `rustdo_<version>_amd64.deb` on Ubuntu/Debian/Mint. Needs GTK 3, which desktop installs have. | `~/Documents/RustDo/tasks.json` |
 | **Android** | `RustDo-<version>.apk` from [Releases](https://github.com/metman2013/RustDo/releases). Allow "Install unknown apps" for your browser when Android asks. | The app's private storage |
 | **Web (PWA)** | Open **https://rustdo.app**, then choose **Install app** (desktop Chrome/Edge) or **Add to Home screen** (phones). It works offline. | The browser's local storage for that site |
