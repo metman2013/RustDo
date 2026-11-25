@@ -3257,7 +3257,7 @@ impl TodoApp {
                                     }
                                 });
                                 if let Some(r) = task.reminder {
-                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), format_time(r, clock_24h))).weak().small());
+                                    ui.label(RichText::new(trf("{date} at {time}", &[("date", &relative_date(r.date(), today)), ("time", &format_time(r, clock_24h))])).weak().small());
                                 }
                             }
                             None => {

@@ -262,7 +262,7 @@ pub fn show_windows(ctx: &egui::Context, shared: &SharedNotes) {
                 let (pos, size) =
                     *spawn.entry(n.id).or_insert_with(|| (n.pos.map(Pos2::from), Vec2::from(n.size)));
                 let mut b = ViewportBuilder::default()
-                    .with_title(format!("{} - Sticky note", n.title()))
+                    .with_title(format!("{} - {}", n.title(), tr("Sticky note")))
                     .with_app_id("rustdo")
                     .with_inner_size(size)
                     .with_min_inner_size([160.0, 120.0])
