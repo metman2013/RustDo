@@ -1259,6 +1259,10 @@ impl TodoApp {
                 self.last_sync_at = None;
             }
         });
+        if ui.button("❓ How to share a list").clicked() {
+            self.hub_guide = true;
+            self.close_settings(ui);
+        }
         ui.separator();
     }
 
