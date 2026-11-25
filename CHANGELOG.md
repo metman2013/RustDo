@@ -6,6 +6,11 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+## 0.4.3 - 2026-11-26
+
+### New
+- RustDo now speaks Spanish and French as well: Settings › Language offers Español and Français next to English and Deutsch, and Automatic picks them when your device uses them. Dates read the local way too, like "Miércoles, 25 de noviembre" and "Mercredi 25 novembre".
+
 ## 0.4.2 - 2026-11-25
 
 ### New

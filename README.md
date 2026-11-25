@@ -6,6 +6,8 @@ Your tasks stay on your device.
 
 <a href="https://apps.microsoft.com/detail/9PK0DF0QBWWM"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" height="48"></a>
 
+In English, German, Spanish and French (Settings › Language; Automatic follows your device).
+
 One codebase runs on three platforms:
 
 | Platform | How to get it | Where your tasks live |
