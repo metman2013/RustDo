@@ -173,11 +173,12 @@ Partner Center asks for one, can be made from `assets/rustdo.png` (512×512).
 ## Submitting each new version
 
 **Automatic.** When a release is published, the `store-submit` job in
-`.github/workflows/build.yml` sends that version's `.msix` to the Store as a new submission
-(using the Microsoft Store CLI, `msstore publish`). Certification usually takes a few hours to
-a few days; Partner Center emails you. The listing, including "What's new in this version",
-carries over from the previous submission, so update "What's new" in Partner Center if you
-want it to describe the new version.
+`.github/workflows/build.yml` uploads that version's `.msix` to a draft submission, sets
+"What's new in this version" from the version's CHANGELOG entries
+(`tools/store_whats_new.py`, English listing, at most 1,500 characters), and sends the
+submission for certification. If "What's new" can't be set, the submission goes out with
+the previous text. Certification usually takes a few hours to a few days; Partner Center
+emails you.
 
 It needs, in the repository's Settings › Secrets and variables › Actions:
 

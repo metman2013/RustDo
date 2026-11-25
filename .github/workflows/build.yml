@@ -423,6 +423,9 @@ jobs:
           } else {
             "ready=true" >> $env:GITHUB_OUTPUT
           }
+      # The CHANGELOG and tools/store_whats_new.py, for "What's new".
+      - if: steps.cfg.outputs.ready == 'true'
+        uses: actions/checkout@v4
       - if: steps.cfg.outputs.ready == 'true'
         uses: actions/download-artifact@v4
         with:
@@ -430,14 +433,48 @@ jobs:
           path: store
       - if: steps.cfg.outputs.ready == 'true'
         uses: microsoft/setup-msstore-cli@v1
+      # Upload to a draft submission, set "What's new" from CHANGELOG.md, then send it for
+      # certification. If "What's new" can't be set, the draft goes out with the previous
+      # text rather than not at all.
       - name: Submit to the Microsoft Store
         if: steps.cfg.outputs.ready == 'true'
         shell: pwsh
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           msstore reconfigure --tenantId $env:STORE_TENANT_ID --sellerId $env:STORE_SELLER_ID --clientId $env:STORE_CLIENT_ID --clientSecret $env:STORE_CLIENT_SECRET
           if ($LASTEXITCODE -ne 0) { throw 'msstore sign-in failed (check the four STORE_* secrets; the key may have expired)' }
           $msix = Get-ChildItem store -Filter *.msix | Select-Object -First 1
           if (-not $msix) { throw 'no .msix in the store artifact' }
-          Write-Host "Submitting $($msix.Name) to product $env:STORE_PRODUCT_ID"
-          msstore publish $msix.FullName -id $env:STORE_PRODUCT_ID -v
-          if ($LASTEXITCODE -ne 0) { throw 'msstore publish failed' }
+          $id = $env:STORE_PRODUCT_ID
+
+          Write-Host "Uploading $($msix.Name) to a draft submission for product $id"
+          msstore publish $msix.FullName -id $id --noCommit -v
+          if ($LASTEXITCODE -ne 0) {
+            # An older Store tool without --noCommit: submit the usual way, What's new unchanged.
+            Write-Host "::warning::Upload to a draft failed; submitting directly without a new What's new."
+            msstore publish $msix.FullName -id $id -v
+            if ($LASTEXITCODE -ne 0) { throw 'msstore publish failed' }
+            exit 0
+          }
+
+          Write-Host "What's new for $env:VERSION:"
+          python tools/store_whats_new.py notes $env:VERSION
+          $sub = Join-Path $env:RUNNER_TEMP 'submission.txt'
+          $patched = Join-Path $env:RUNNER_TEMP 'submission.json'
+          msstore submission get $id | Out-File -FilePath $sub -Encoding utf8
+          if ($LASTEXITCODE -eq 0) {
+            python tools/store_whats_new.py patch $env:VERSION $sub $patched
+            if ($LASTEXITCODE -eq 0) {
+              msstore submission updateMetadata $id $patched
+              if ($LASTEXITCODE -ne 0) { Write-Host "::warning::Couldn't set What's new in the Store; submitting without it." }
+            } else {
+              Write-Host "::warning::Couldn't read the Store submission; submitting without a new What's new."
+            }
+          } else {
+            Write-Host "::warning::msstore submission get failed; submitting without a new What's new."
+          }
+
+          Write-Host 'Sending the submission for certification'
+          msstore submission publish $id
+          if ($LASTEXITCODE -ne 0) { throw 'msstore submission publish failed' }
