@@ -17,6 +17,7 @@
 //!   showing there;
 //! * `settings`: sort order, theme, 12/24-hour clock and which list is the default.
 
+use crate::i18n::{tr, trf};
 use crate::model::{Store, Task, TaskList};
 use crate::notes::{Notes, StickyNote};
 use crate::sync::Share;
@@ -337,7 +338,7 @@ pub fn apply(store: &mut Store, mut notes: Option<&mut Notes>, account: &mut Acc
                 };
                 if !store.shares.iter().any(|s| s.list_id == id) {
                     if !store.lists.iter().any(|l| l.id == id) {
-                        let name = item.data.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).unwrap_or("Shared list");
+                        let name = item.data.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()).unwrap_or(tr("Shared list"));
                         store.lists.push(TaskList { id, name: name.to_string() });
                     }
                     // Its tasks now come through the share code: stop tracking them here.
@@ -515,7 +516,7 @@ pub fn create(hub: String, ctx: &eframe::egui::Context) -> std::sync::mpsc::Rece
     let (tx, rx) = std::sync::mpsc::channel();
     let ctx = ctx.clone();
     post(&hub.clone(), "/api/account/new", Value::Object(Default::default()), move |result| {
-        let result = result.and_then(|v| v.get("key").and_then(Value::as_str).map(str::to_string).ok_or_else(|| "unexpected answer from the hub".to_string()));
+        let result = result.and_then(|v| v.get("key").and_then(Value::as_str).map(str::to_string).ok_or_else(|| tr("unexpected answer from the hub").to_string()));
         let _ = tx.send(Done::Created { hub, result });
         ctx.request_repaint();
     });
@@ -528,7 +529,7 @@ pub fn sync(hub: &str, out: Outgoing, ctx: &eframe::egui::Context) -> std::sync:
     let ctx = ctx.clone();
     let body = serde_json::to_value(&out.request).unwrap_or(Value::Null);
     post(hub, "/api/account/sync", body, move |result| {
-        let result = result.and_then(|v| serde_json::from_value(v).map_err(|e| format!("unexpected answer from the hub: {e}")));
+        let result = result.and_then(|v| serde_json::from_value(v).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)])));
         let _ = tx.send(Done::Synced(out, result));
         ctx.request_repaint();
     });
@@ -546,18 +547,19 @@ fn post(hub: &str, path: &str, body: Value, done: impl FnOnce(Result<Value, Stri
                 let message = value.as_ref().and_then(|v| v.get("error")).and_then(Value::as_str).map(str::to_string);
                 match (r.ok, value) {
                     (true, Some(v)) => Ok(v),
-                    (true, None) => Err("unexpected answer from the hub".to_string()),
+                    (true, None) => Err(tr("unexpected answer from the hub").to_string()),
                     // A hub from before 0.4.0 doesn't know these addresses.
                     (false, _) if r.status == 404 && message.as_deref().is_none_or(|m| m == "not found") => {
-                        Err("this RustDo Hub is too old for Sync my devices. Update it to version 0.4.0 or later.".to_string())
+                        Err(tr("this RustDo Hub is too old for Sync my devices. Update it to version 0.4.0 or later.").to_string())
                     }
-                    (false, _) => Err(message.unwrap_or_else(|| format!("the hub refused the request ({})", r.status))),
+                    (false, _) => Err(message.unwrap_or_else(|| trf("the hub refused the request ({status})", &[("status", &r.status)]))),
                 }
             }
-            Err(_) if cfg!(target_arch = "wasm32") && hub.starts_with("http://") => Err(format!(
-                "can't reach the hub at {hub}. In the web app the hub needs an https:// address (see How syncing works)."
+            Err(_) if cfg!(target_arch = "wasm32") && hub.starts_with("http://") => Err(trf(
+                "can't reach the hub at {hub}. In the web app the hub needs an https:// address (see How syncing works).",
+                &[("hub", &hub)],
             )),
-            Err(_) => Err(format!("can't reach the hub at {hub}. Is it running, and can this device reach it?")),
+            Err(_) => Err(trf("can't reach the hub at {hub}. Is it running, and can this device reach it?", &[("hub", &hub)])),
         };
         done(out);
     });

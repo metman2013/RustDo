@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.4.0"
+version = "0.4.1"
 
 [package]
 name = "rustdo"
@@ -43,6 +43,8 @@ web-time = "1"
 log = "0.4"
 # "Sync my devices" (account.rs): HTTP on desktop, Android and in the browser alike.
 ehttp = "0.5"
+# Settings › Language › Automatic: the device's language.
+sys-locale = "0.3"
 
 # Desktop (Windows / macOS / Linux)
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]

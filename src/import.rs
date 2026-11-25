@@ -6,6 +6,7 @@
 //!   Graph Explorer response for one list's tasks (`{"value": [task, ...]}`).
 //! * **Outlook CSV**, from classic Outlook's export of a Tasks folder (English column names).
 
+use crate::i18n::{plural, tr, trf};
 use crate::model::{Recurrence, Step, Store, Task};
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use serde_json::Value;
@@ -63,22 +64,15 @@ pub struct ImportReport {
 impl ImportReport {
     pub fn summary(&self) -> String {
         if self.tasks_added == 0 && self.duplicates_skipped > 0 {
-            return format!(
-                "Nothing new to import: all {} tasks were imported before.",
-                self.duplicates_skipped
-            );
+            return trf("Nothing new to import: all {n} tasks were imported before.", &[("n", &self.duplicates_skipped)]);
         }
-        let mut s = format!(
-            "Imported {} task{}",
-            self.tasks_added,
-            if self.tasks_added == 1 { "" } else { "s" }
-        );
-        if self.lists_created > 0 {
-            s += &format!(" into {} new list{}", self.lists_created, if self.lists_created == 1 { "" } else { "s" });
-        }
-        s.push('.');
+        let mut s = match self.lists_created {
+            0 => plural(self.tasks_added, "Imported {n} task.", "Imported {n} tasks."),
+            lists => trf("Imported {tasks} tasks into {lists} new lists.", &[("tasks", &self.tasks_added), ("lists", &lists)]),
+        };
         if self.duplicates_skipped > 0 {
-            s += &format!(" Skipped {} already imported.", self.duplicates_skipped);
+            s.push(' ');
+            s += &trf("Skipped {n} already imported.", &[("n", &self.duplicates_skipped)]);
         }
         s
     }
@@ -100,7 +94,7 @@ pub fn parse_bytes(file_name: &str, bytes: &[u8]) -> Result<Import, String> {
         .file_stem()
         .map(|s| s.to_string_lossy().trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "Imported".into());
+        .unwrap_or_else(|| tr("Imported").into());
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     if ext == "csv" || (ext != "json" && !text.trim_start().starts_with(['{', '['])) {
         parse_outlook_csv(&text, &stem)
@@ -144,13 +138,13 @@ pub fn parse_graph_json(
     fallback_name: &str,
     to_local: fn(NaiveDateTime) -> NaiveDateTime,
 ) -> Result<Import, String> {
-    let v: Value = serde_json::from_str(text).map_err(|e| format!("This file isn't valid JSON ({e})."))?;
+    let v: Value = serde_json::from_str(text).map_err(|e| trf("This file isn't valid JSON ({e}).", &[("e", &e)]))?;
     let items = v
         .get("lists")
         .or_else(|| v.get("value"))
         .unwrap_or(&v)
         .as_array()
-        .ok_or("This file doesn't look like a Microsoft To Do export.")?;
+        .ok_or(tr("This file doesn't look like a Microsoft To Do export."))?;
 
     let mut import = Import { source: "Microsoft To Do", ..Default::default() };
     let is_task = |x: &Value| x.get("title").is_some();
@@ -172,7 +166,7 @@ pub fn parse_graph_json(
 
     let mut lists_without_tasks = 0;
     for l in items {
-        let name = s(l, "displayName").unwrap_or("Imported").trim().to_string();
+        let name = s(l, "displayName").unwrap_or(tr("Imported")).trim().to_string();
         let Some(tasks) = l.get("tasks").and_then(Value::as_array) else {
             lists_without_tasks += 1;
             continue;
@@ -186,13 +180,13 @@ pub fn parse_graph_json(
     }
     if import.lists.is_empty() {
         return Err(if lists_without_tasks > 0 {
-            "This file only has list names, not tasks. Export with tools/Export-MicrosoftToDo.ps1 instead.".into()
+            tr("This file only has list names, not tasks. Export with tools/Export-MicrosoftToDo.ps1 instead.").into()
         } else {
-            "No lists or tasks found in this file.".into()
+            tr("No lists or tasks found in this file.").into()
         });
     }
     if lists_without_tasks > 0 {
-        import.warnings.push(format!("{lists_without_tasks} list(s) in the file had no task data and were skipped."));
+        import.warnings.push(trf("{lists_without_tasks} list(s) in the file had no task data and were skipped.", &[("lists_without_tasks", &lists_without_tasks)]));
     }
     Ok(import)
 }
@@ -279,7 +273,7 @@ fn graph_recurrence(r: &Value, title: &str, warnings: &mut Vec<String>) -> Recur
                 Recurrence::Weekdays
             } else {
                 if days.len() > 1 {
-                    warnings.push(format!("“{title}” repeats on several weekdays; it will repeat weekly instead."));
+                    warnings.push(trf("“{title}” repeats on several weekdays; it will repeat weekly instead.", &[("title", &title)]));
                 }
                 Recurrence::Weekly
             }
@@ -287,14 +281,14 @@ fn graph_recurrence(r: &Value, title: &str, warnings: &mut Vec<String>) -> Recur
         "absoluteMonthly" | "relativeMonthly" => Recurrence::Monthly,
         "absoluteYearly" | "relativeYearly" => Recurrence::Yearly,
         other => {
-            warnings.push(format!("“{title}” has an unsupported repeat pattern ({other}); it won't repeat."));
+            warnings.push(trf("“{title}” has an unsupported repeat pattern ({other}); it won't repeat.", &[("title", &title), ("other", &other)]));
             return Recurrence::Never;
         }
     };
     if interval > 1 && rec != Recurrence::Weekdays {
-        warnings.push(format!(
-            "“{title}” repeats every {interval} periods; RustDo will repeat it {}.",
-            rec.label().to_lowercase()
+        warnings.push(trf(
+            "“{title}” repeats every {interval} periods; RustDo will repeat it {repeat}.",
+            &[("title", &title), ("interval", &interval), ("repeat", &rec.label().to_lowercase())],
         ));
     }
     rec
@@ -368,10 +362,10 @@ fn strip_html(html: &str) -> String {
 
 pub fn parse_outlook_csv(text: &str, list_name: &str) -> Result<Import, String> {
     let mut rdr = csv::ReaderBuilder::new().flexible(true).from_reader(text.as_bytes());
-    let headers = rdr.headers().map_err(|e| format!("Couldn't read the CSV ({e})."))?.clone();
+    let headers = rdr.headers().map_err(|e| trf("Couldn't read the CSV ({e}).", &[("e", &e)]))?.clone();
     let col = |name: &str| headers.iter().position(|h| h.trim().eq_ignore_ascii_case(name));
     let subject = col("Subject").ok_or(
-        "This CSV has no “Subject” column. RustDo reads Microsoft To Do exports (JSON) and English task exports from classic Outlook (CSV).",
+        tr("This CSV has no “Subject” column. RustDo reads Microsoft To Do exports (JSON) and English task exports from classic Outlook (CSV)."),
     )?;
     let (due_c, rem_on_c, rem_date_c, rem_time_c) =
         (col("Due Date"), col("Reminder On/Off"), col("Reminder Date"), col("Reminder Time"));
@@ -379,7 +373,7 @@ pub fn parse_outlook_csv(text: &str, list_name: &str) -> Result<Import, String> 
         (col("Date Completed"), col("% Complete"), col("Notes"), col("Priority"), col("Status"));
 
     let records: Vec<csv::StringRecord> =
-        rdr.records().collect::<Result<_, _>>().map_err(|e| format!("Couldn't read the CSV ({e})."))?;
+        rdr.records().collect::<Result<_, _>>().map_err(|e| trf("Couldn't read the CSV ({e}).", &[("e", &e)]))?;
 
     let get = |r: &csv::StringRecord, c: Option<usize>| -> Option<String> {
         c.and_then(|c| r.get(c)).map(str::trim).filter(|x| !x.is_empty()).map(str::to_string)
@@ -462,7 +456,7 @@ pub fn apply(store: &mut Store, import: &Import, include_completed: bool, now: N
     let mut seen: HashSet<String> = store.tasks.iter().filter_map(|t| t.source_id.clone()).collect();
 
     for list in &import.lists {
-        let name = if list.name.trim().is_empty() { "Imported" } else { list.name.trim() };
+        let name = if list.name.trim().is_empty() { tr("Imported") } else { list.name.trim() };
         let list_id = if list.is_default {
             store.default_list
         } else if let Some(l) = store.lists.iter().find(|l| l.name.eq_ignore_ascii_case(name)) {

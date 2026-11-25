@@ -1,6 +1,7 @@
 //! The egui user interface.
 
 use crate::account;
+use crate::i18n::{self, plural, tr, trf};
 use crate::model::{
     format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
     ThemeChoice, View,
@@ -239,6 +240,7 @@ impl TodoApp {
             loaded.can_save
         );
         apply_theme(&cc.egui_ctx, loaded.store.settings.theme);
+        i18n::set(loaded.store.settings.language);
         let touch_mode = platform::prefers_touch();
         apply_style(&cc.egui_ctx, touch_mode);
         let notes = notes_ui::Shared::load(if notes::AVAILABLE { storage.folder() } else { None });
@@ -351,8 +353,8 @@ impl TodoApp {
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     fn pick_restore_file(&mut self, ctx: &egui::Context) {
         let mut dialog = rfd::FileDialog::new()
-            .set_title("Restore RustDo backup")
-            .add_filter("RustDo backup", &["json"]);
+            .set_title(tr("Restore RustDo backup"))
+            .add_filter(tr("RustDo backup"), &["json"]);
         if let Some(dir) = self.storage.folder() {
             let backups = dir.join("Backups");
             dialog = dialog.set_directory(if backups.is_dir() { backups } else { dir });
@@ -379,16 +381,16 @@ impl TodoApp {
                 let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 self.load_import(&name, &bytes);
             }
-            Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
+            Err(e) => self.notify(trf("Couldn't read {path}: {e}", &[("path", &path.display()), ("e", &e)])),
         }
     }
 
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
     fn pick_import_file(&mut self, _ctx: &egui::Context) {
         let picked = rfd::FileDialog::new()
-            .set_title("Import from Microsoft To Do")
-            .add_filter("Microsoft To Do / Outlook export", &["json", "csv"])
-            .add_filter("All files", &["*"])
+            .set_title(tr("Import from Microsoft To Do"))
+            .add_filter(tr("Microsoft To Do / Outlook export"), &["json", "csv"])
+            .add_filter(tr("All files"), &["*"])
             .pick_file();
         if let Some(path) = picked {
             match std::fs::read(&path) {
@@ -396,7 +398,7 @@ impl TodoApp {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.load_import(&name, &bytes);
                 }
-                Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
+                Err(e) => self.notify(trf("Couldn't read {path}: {e}", &[("path", &path.display()), ("e", &e)])),
             }
         }
     }
@@ -407,7 +409,7 @@ impl TodoApp {
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let file = rfd::AsyncFileDialog::new()
-                .add_filter("Microsoft To Do / Outlook export", &["json", "csv"])
+                .add_filter(tr("Microsoft To Do / Outlook export"), &["json", "csv"])
                 .pick_file()
                 .await;
             if let Some(file) = file {
@@ -498,21 +500,22 @@ impl TodoApp {
                             && release.download_url.is_some()
                             && !failed_before;
                         if failed_before {
-                            self.notify(format!(
-                                "The last automatic update to {version} didn't finish. Use “Update & restart” to try again."
+                            self.notify(trf(
+                                "The last automatic update to {version} didn't finish. Use “Update & restart” to try again.",
+                                &[("version", &version)],
                             ));
                         }
                         self.update_available = Some(release);
                         if auto {
                             self.auto_installing = true;
                             self.install_update(ctx);
-                            self.notify(format!("Updating RustDo to {version}… it will reopen in a moment."));
+                            self.notify(trf("Updating RustDo to {version}… it will reopen in a moment.", &[("version", &version)]));
                         }
                     }
                     CheckResult::UpToDate if manual => {
-                        self.notify(format!("You're up to date (RustDo {}).", update::CURRENT_VERSION))
+                        self.notify(trf("You're up to date (RustDo {version}).", &[("version", &update::CURRENT_VERSION)]))
                     }
-                    CheckResult::Failed(e) if manual => self.notify(format!("Couldn't check for updates: {e}")),
+                    CheckResult::Failed(e) if manual => self.notify(trf("Couldn't check for updates: {e}", &[("e", &e)])),
                     _ => {}
                 }
             }
@@ -532,7 +535,7 @@ impl TodoApp {
                     }
                     Err(e) => {
                         self.auto_installing = false;
-                        self.notify(format!("Couldn't download the update: {e}"));
+                        self.notify(trf("Couldn't download the update: {e}", &[("e", &e)]));
                     }
                 }
             }
@@ -595,7 +598,7 @@ impl TodoApp {
             }
             Err(e) => {
                 self.auto_installing = false;
-                self.notify(format!("Couldn't start the installer: {e}"));
+                self.notify(trf("Couldn't start the installer: {e}", &[("e", &e)]));
             }
         }
     }
@@ -619,7 +622,7 @@ impl TodoApp {
                 ctx2.request_repaint();
             });
             self.install_rx = Some(rx);
-            self.notify("Downloading the update…");
+            self.notify(tr("Downloading the update…"));
             return;
         }
         // Android (APK) and anything without an installer: open the download in the browser.
@@ -639,18 +642,18 @@ impl TodoApp {
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new(format!("RustDo {} is available.", release.version)).strong());
+                    ui.label(RichText::new(trf("RustDo {version} is available.", &[("version", &release.version)])).strong());
                     let busy = self.install_rx.is_some() || (self.auto_installing && self.ready_installer.is_some());
                     let label = if self.auto_installing && self.ready_installer.is_some() {
-                        "Updating when you finish typing…"
+                        tr("Updating when you finish typing…")
                     } else if busy {
-                        "Downloading…"
+                        tr("Downloading…")
                     } else if self.ready_installer.is_some() {
-                        "Restart to update"
+                        tr("Restart to update")
                     } else if cfg!(windows) {
-                        "Update & restart"
+                        tr("Update & restart")
                     } else {
-                        "Update now"
+                        tr("Update now")
                     };
                     if ui
                         .add_enabled(!busy, egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(ACCENT))
@@ -658,8 +661,8 @@ impl TodoApp {
                     {
                         install = true;
                     }
-                    ui.hyperlink_to("What's new", &release.notes_url);
-                    if ui.button("Later").clicked() {
+                    ui.hyperlink_to(tr("What's new"), &release.notes_url);
+                    if ui.button(tr("Later")).clicked() {
                         self.update_dismissed = true;
                     }
                 });
@@ -674,7 +677,7 @@ impl TodoApp {
     /// The ⚙ button: a pop-up menu on wide screens, a full-screen page on phones.
     fn settings_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
         if narrow {
-            if ui.button("⚙").on_hover_text("Settings").clicked() {
+            if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
                 self.show_settings = true;
             }
             return;
@@ -695,11 +698,11 @@ impl TodoApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let back = egui::Button::new(RichText::new("<  Back").size(20.0)).frame(false).min_size(Vec2::new(0.0, 44.0));
+                let back = egui::Button::new(RichText::new(tr("<  Back")).size(20.0)).frame(false).min_size(Vec2::new(0.0, 44.0));
                 if ui.add(back).clicked() {
                     self.show_settings = false;
                 }
-                ui.label(RichText::new("Settings").size(20.0).strong());
+                ui.label(RichText::new(tr("Settings")).size(20.0).strong());
             });
             ui.separator();
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
@@ -721,53 +724,68 @@ impl TodoApp {
     fn settings_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
-            if ui.button("What's new").clicked() {
+            if ui.button(tr("What's new")).clicked() {
                 self.whats_new = Some(changelog::releases());
                 self.close_settings(ui);
             }
         });
         ui.separator();
         if cfg!(target_arch = "wasm32") {
-            ui.label(RichText::new("The web app updates itself automatically.").weak());
+            ui.label(RichText::new(tr("The web app updates itself automatically.")).weak());
         } else if store_package::is_packaged() {
-            ui.label(RichText::new("Updates come from the Microsoft Store.").weak());
+            ui.label(RichText::new(tr("Updates come from the Microsoft Store.")).weak());
         } else {
-            if ui.checkbox(&mut self.store.settings.check_updates, "Check for updates daily").changed() {
+            if ui.checkbox(&mut self.store.settings.check_updates, tr("Check for updates daily")).changed() {
                 self.dirty = true;
             }
             if cfg!(windows) {
                 let installed = update::is_installed_copy();
                 let r = ui.add_enabled(
                     installed,
-                    egui::Checkbox::new(&mut self.store.settings.auto_update, "Install updates automatically"),
+                    egui::Checkbox::new(&mut self.store.settings.auto_update, tr("Install updates automatically")),
                 );
                 if r.changed() {
                     self.dirty = true;
                 }
                 let note = if installed {
-                    "Checks each time RustDo opens and updates itself silently, then reopens."
+                    tr("Checks each time RustDo opens and updates itself silently, then reopens.")
                 } else {
-                    "Only for the installed version (this is the portable exe)."
+                    tr("Only for the installed version (this is the portable exe).")
                 };
                 ui.label(RichText::new(note).weak().small());
             }
             ui.label(
-                RichText::new("Asks GitHub for the latest version. No task data is sent.")
+                RichText::new(tr("Asks GitHub for the latest version. No task data is sent."))
                     .weak()
                     .small(),
             );
             let checking = self.update_rx.is_some();
-            if ui.add_enabled(!checking, egui::Button::new("Check now")).clicked() {
+            if ui.add_enabled(!checking, egui::Button::new(tr("Check now"))).clicked() {
                 self.update_manual = true;
                 self.update_available = None;
                 self.close_settings(ui);
             }
         }
         ui.separator();
-        ui.label(RichText::new("Time").strong());
+        ui.label(RichText::new(tr("Language")).strong());
+        let mut language = self.store.settings.language;
+        egui::ComboBox::from_id_salt("language")
+            .selected_text(language.label())
+            .show_ui(ui, |ui| {
+                for l in i18n::Language::ALL {
+                    ui.selectable_value(&mut language, l, l.label());
+                }
+            });
+        if language != self.store.settings.language {
+            self.store.settings.language = language;
+            i18n::set(language);
+            self.dirty = true;
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("Time")).strong());
         let s = &mut self.store.settings;
-        if ui.radio_value(&mut s.clock_24h, false, "12-hour clock (9:30 PM)").changed()
-            | ui.radio_value(&mut s.clock_24h, true, "24-hour clock (21:30)").changed()
+        if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
+            | ui.radio_value(&mut s.clock_24h, true, tr("24-hour clock (21:30)")).changed()
         {
             self.dirty = true;
         }
@@ -790,15 +808,14 @@ impl TodoApp {
                     .weak()
                     .small(),
             );
-            if ui.checkbox(&mut self.store.settings.crisp_text, "Sharp text").changed() {
+            if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
                 self.dirty = true;
             }
             let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
             ui.label(
-                RichText::new(format!(
-                    "Rounds the screen scale to whole pixels so letters render evenly (screen {:.3}x, drawn at {:.3}x). Turn off if things look too big.",
-                    native,
-                    ui.ctx().pixels_per_point()
+                RichText::new(trf(
+                    "Rounds the screen scale to whole pixels so letters render evenly (screen {native}x, drawn at {drawn}x). Turn off if things look too big.",
+                    &[("native", &format!("{native:.3}")), ("drawn", &format!("{:.3}", ui.ctx().pixels_per_point()))],
                 ))
                 .weak()
                 .small(),
@@ -808,14 +825,14 @@ impl TodoApp {
         // The full Releases page: newest version first, with every earlier one below.
         let releases = format!("https://github.com/{}/releases", update::REPO);
         if cfg!(target_arch = "wasm32") {
-            ui.hyperlink_to("⬇ Get the desktop & mobile apps", releases)
-                .on_hover_text("Windows, Linux and Android downloads");
+            ui.hyperlink_to(tr("⬇ Get the desktop & mobile apps"), releases)
+                .on_hover_text(tr("Windows, Linux and Android downloads"));
         } else {
-            ui.hyperlink_to("Downloads & release notes", releases);
+            ui.hyperlink_to(tr("Downloads & release notes"), releases);
         }
-        ui.hyperlink_to("Join the RustDo Discord", update::DISCORD)
-            .on_hover_text("Chat, ideas and help: opens in your browser");
-        ui.hyperlink_to("Project page", format!("https://github.com/{}", update::REPO));
+        ui.hyperlink_to(tr("Join the RustDo Discord"), update::DISCORD)
+            .on_hover_text(tr("Chat, ideas and help: opens in your browser"));
+        ui.hyperlink_to(tr("Project page"), format!("https://github.com/{}", update::REPO));
     }
 
     /// Windows: starts the background reminder helper shortly after launch (and again
@@ -843,23 +860,23 @@ impl TodoApp {
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
             ui.separator();
-            ui.label(RichText::new("Help").strong());
+            ui.label(RichText::new(tr("Help")).strong());
             ui.add(
                 egui::Label::new(
-                    RichText::new("Something not working? Copy the diagnostic info and send it with your report.")
+                    RichText::new(tr("Something not working? Copy the diagnostic info and send it with your report."))
                         .weak()
                         .small(),
                 )
                 .wrap(),
             );
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Copy diagnostic info").on_hover_text("Version, system and the last lines of the log").clicked() {
+                if ui.button(tr("Copy diagnostic info")).on_hover_text(tr("Version, system and the last lines of the log")).clicked() {
                     ui.ctx().copy_text(diagnostic_report());
                     self.close_settings(ui);
-                    self.notify("Diagnostic info copied. Paste it into your message or the Discord.");
+                    self.notify(tr("Diagnostic info copied. Paste it into your message or the Discord."));
                 }
                 if let Some(dir) = diagnostics::log_dir() {
-                    if ui.button("Open logs folder").on_hover_text(dir.display().to_string()).clicked() {
+                    if ui.button(tr("Open logs folder")).on_hover_text(dir.display().to_string()).clicked() {
                         let _ = std::fs::create_dir_all(&dir);
                         self.close_settings(ui);
                         platform::open_folder(&dir);
@@ -895,22 +912,22 @@ impl TodoApp {
         if !companion::SUPPORTED {
             return;
         }
-        ui.label(RichText::new("Background").strong());
+        ui.label(RichText::new(tr("Background")).strong());
         let s = &mut self.store.settings;
         let mut changed = ui
-            .checkbox(&mut s.companion, "Keep sticky notes running in the background")
-            .on_hover_text("A tray icon keeps your sticky notes on the desktop after you close RustDo.")
+            .checkbox(&mut s.companion, tr("Keep sticky notes running in the background"))
+            .on_hover_text(tr("A tray icon keeps your sticky notes on the desktop after you close RustDo."))
             .changed();
-        let sign_in = if cfg!(windows) { "Start with Windows" } else { "Start when I sign in" };
+        let sign_in = if cfg!(windows) { tr("Start with Windows") } else { tr("Start when I sign in") };
         changed |= ui
             .add_enabled(s.companion, egui::Checkbox::new(&mut s.companion_autostart, sign_in))
             .changed();
         let note = if !s.companion {
-            "Sticky notes show only while RustDo is open."
+            tr("Sticky notes show only while RustDo is open.")
         } else if cfg!(windows) {
-            "The RustDo tray icon (by the clock) opens RustDo, adds a note, or shows and hides notes. Reminders keep arriving after you close RustDo."
+            tr("The RustDo tray icon (by the clock) opens RustDo, adds a note, or shows and hides notes. Reminders keep arriving after you close RustDo.")
         } else {
-            "The RustDo tray icon opens RustDo, adds a note, or shows and hides notes. GNOME needs the AppIndicator extension to show tray icons."
+            tr("The RustDo tray icon opens RustDo, adds a note, or shows and hides notes. GNOME needs the AppIndicator extension to show tray icons.")
         };
         ui.add(egui::Label::new(RichText::new(note).weak().small()).wrap());
         if changed {
@@ -923,16 +940,16 @@ impl TodoApp {
     // ------------------------------------------------------------------ sync my devices
 
     fn account_menu_items(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Sync my devices").strong());
+        ui.label(RichText::new(tr("Sync my devices")).strong());
         match &self.store.account {
             None => {
                 ui.label(
-                    RichText::new("Keep your lists, tasks and sticky notes the same on all your devices, through your own RustDo Hub.")
+                    RichText::new(tr("Keep your lists, tasks and sticky notes the same on all your devices, through your own RustDo Hub."))
                         .weak()
                         .small(),
                 );
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Turn on sync…").clicked() {
+                    if ui.button(tr("Turn on sync…")).clicked() {
                         self.account_dialog = Some(AccountDialog {
                             hub: self.store.settings.hub.clone().unwrap_or_default(),
                             join: false,
@@ -947,12 +964,13 @@ impl TodoApp {
             }
             Some(acc) => {
                 let (text, color) = match &self.account_error {
-                    Some(err) => (format!("Can't sync right now: {err}"), DANGER),
+                    Some(err) => (trf("Can't sync right now: {err}", &[("err", &err)]), DANGER),
                     None => (
                         format!(
-                            "On · {} · {}",
+                            "{} · {} · {}",
+                            tr("On"),
                             acc.hub.trim_start_matches("https://").trim_start_matches("http://"),
-                            acc.last_sync.map_or("not synced yet".into(), |t| format!("last synced {}", format_time(t, self.store.settings.clock_24h)))
+                            acc.last_sync.map_or(tr("not synced yet").into(), |t| trf("last synced {time}", &[("time", &format_time(t, self.store.settings.clock_24h))]))
                         ),
                         ui.visuals().weak_text_color(),
                     ),
@@ -960,23 +978,23 @@ impl TodoApp {
                 ui.label(RichText::new(text).color(color).small());
                 let (hub, key) = (acc.hub.clone(), acc.key.clone());
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Sync now").clicked() {
+                    if ui.button(tr("Sync now")).clicked() {
                         self.account_last = None;
                     }
-                    if ui.button("Sync key…").on_hover_text("Show the key to turn on sync on another device").clicked() {
+                    if ui.button(tr("Sync key…")).on_hover_text(tr("Show the key to turn on sync on another device")).clicked() {
                         self.account_dialog = Some(AccountDialog { hub, join: true, key: String::new(), busy: false, error: None, show_key: Some(key) });
                         self.close_settings(ui);
                     }
-                    if ui.button("Turn off").on_hover_text("Stop syncing this device. Your tasks and notes stay here.").clicked() {
+                    if ui.button(tr("Turn off")).on_hover_text(tr("Stop syncing this device. Your tasks and notes stay here.")).clicked() {
                         self.store.account = None;
                         self.account_error = None;
                         self.dirty = true;
-                        self.notify("Sync is off on this device. Your tasks and notes stay here.");
+                        self.notify(tr("Sync is off on this device. Your tasks and notes stay here."));
                     }
                 });
             }
         }
-        if ui.button("❓ How syncing and sharing work").clicked() {
+        if ui.button(tr("❓ How syncing and sharing work")).clicked() {
             self.hub_guide = true;
             self.close_settings(ui);
         }
@@ -1089,7 +1107,7 @@ impl TodoApp {
                         self.dirty = true;
                         if joining {
                             self.account_dialog = None;
-                            self.notify("Sync is on. This device now has your lists and notes.");
+                            self.notify(tr("Sync is on. This device now has your lists and notes."));
                         }
                     }
                     Err(e) => {
@@ -1115,20 +1133,20 @@ impl TodoApp {
         let mut close = false;
         let mut submit = false;
         let mut guide = false;
-        let title = if dialog.show_key.is_some() { "Your sync key" } else { "Turn on sync" };
+        let title = if dialog.show_key.is_some() { tr("Your sync key") } else { tr("Turn on sync") };
         dialog_window(ctx, title, self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 440.0));
             if let Some(key) = &dialog.show_key {
-                ui.add(egui::Label::new("To sync another device, open Settings there, choose Turn on sync, pick \"I already have a sync key\", and enter the hub address and this key.").wrap());
+                ui.add(egui::Label::new(tr("To sync another device, open Settings there, choose Turn on sync, pick \"I already have a sync key\", and enter the hub address and this key.")).wrap());
                 ui.add_space(6.0);
-                ui.label(RichText::new("Hub address").small());
+                ui.label(RichText::new(tr("Hub address")).small());
                 ui.label(RichText::new(&dialog.hub).monospace());
-                ui.label(RichText::new("Sync key").small());
+                ui.label(RichText::new(tr("Sync key")).small());
                 ui.label(RichText::new(key).monospace().size(20.0).strong());
                 ui.add_space(4.0);
                 ui.add(
                     egui::Label::new(
-                        RichText::new("Keep it private: anyone who has this key and can reach your hub can see and change your tasks and notes.")
+                        RichText::new(tr("Keep it private: anyone who has this key and can reach your hub can see and change your tasks and notes."))
                             .weak()
                             .small(),
                     )
@@ -1136,45 +1154,45 @@ impl TodoApp {
                 );
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("📋 Copy key").clicked() {
+                    if ui.button(tr("📋 Copy key")).clicked() {
                         ui.ctx().copy_text(key.clone());
                     }
-                    if ui.button("Done").clicked() {
+                    if ui.button(tr("Done")).clicked() {
                         close = true;
                     }
                 });
                 return;
             }
-            ui.add(egui::Label::new("Your lists, tasks, sticky notes and settings stay the same on every device that uses the same RustDo Hub and sync key. Lists you share with family keep their own codes.").wrap());
+            ui.add(egui::Label::new(tr("Your lists, tasks, sticky notes and settings stay the same on every device that uses the same RustDo Hub and sync key. Lists you share with family keep their own codes.")).wrap());
             ui.add_space(6.0);
-            ui.label(RichText::new("Hub address").small());
+            ui.label(RichText::new(tr("Hub address")).small());
             ui.add(
                 egui::TextEdit::singleline(&mut dialog.hub)
-                    .hint_text("e.g. https://todo.example.com or 192.168.1.20")
+                    .hint_text(tr("e.g. https://todo.example.com or 192.168.1.20"))
                     .desired_width(f32::INFINITY),
             );
             ui.add_space(4.0);
-            ui.radio_value(&mut dialog.join, false, "This is my first device: start syncing");
-            ui.radio_value(&mut dialog.join, true, "I already have a sync key");
+            ui.radio_value(&mut dialog.join, false, tr("This is my first device: start syncing"));
+            ui.radio_value(&mut dialog.join, true, tr("I already have a sync key"));
             if dialog.join {
-                ui.add(egui::TextEdit::singleline(&mut dialog.key).hint_text("ABCDE-FGHJK-MNPQR-STUVW").desired_width(f32::INFINITY));
+                ui.add(egui::TextEdit::singleline(&mut dialog.key).hint_text(tr("ABCDE-FGHJK-MNPQR-STUVW")).desired_width(f32::INFINITY));
             }
             if let Some(err) = &dialog.error {
                 ui.label(RichText::new(err).color(DANGER).small());
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(!dialog.busy, egui::Button::new("Turn on sync")).clicked() {
+                if ui.add_enabled(!dialog.busy, egui::Button::new(tr("Turn on sync"))).clicked() {
                     submit = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     close = true;
                 }
                 if dialog.busy {
                     ui.spinner();
                 }
             });
-            if ui.add(egui::Button::new(RichText::new("No hub yet? How syncing works").small()).frame(false)).clicked() {
+            if ui.add(egui::Button::new(RichText::new(tr("No hub yet? How syncing works")).small()).frame(false)).clicked() {
                 guide = true;
             }
         });
@@ -1195,13 +1213,13 @@ impl TodoApp {
         }
         dialog.error = None;
         let Some(hub) = sync::normalize_hub(&dialog.hub) else {
-            dialog.error = Some("Enter the hub's address, e.g. https://todo.example.com or 192.168.1.20".into());
+            dialog.error = Some(tr("Enter the hub's address, e.g. https://todo.example.com or 192.168.1.20").into());
             return;
         };
         dialog.hub = hub.clone();
         if dialog.join {
             let Some(key) = account::normalize_key(&dialog.key) else {
-                dialog.error = Some("A sync key has 20 letters and numbers, like ABCDE-FGHJK-MNPQR-STUVW.".into());
+                dialog.error = Some(tr("A sync key has 20 letters and numbers, like ABCDE-FGHJK-MNPQR-STUVW.").into());
                 return;
             };
             let fresh = account::is_fresh(&self.store, (notes::AVAILABLE).then(|| notes_ui::lock(&self.notes).notes.clone()).as_ref());
@@ -1223,10 +1241,10 @@ impl TodoApp {
     // ------------------------------------------------------------------ family sharing
 
     fn sharing_menu_items(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Family sharing").strong());
+        ui.label(RichText::new(tr("Family sharing")).strong());
         if !sync::SUPPORTED {
             ui.label(
-                RichText::new("Sharing lists through a RustDo Hub works in the Windows, Linux and Android apps.")
+                RichText::new(tr("Sharing lists through a RustDo Hub works in the Windows, Linux and Android apps."))
                     .weak()
                     .small(),
             );
@@ -1236,30 +1254,30 @@ impl TodoApp {
         let shared = self.store.shares.len();
         let status = if shared == 0 {
             // No arrows here: egui's built-in fonts have no "→" and draw a box instead.
-            let how = if is_touch(ui) { "long-press it and choose Share list" } else { "right-click it and choose Share list" };
-            format!("Share a list with people at home: {how}. Needs a RustDo Hub on your network.")
+            let how = if is_touch(ui) { tr("long-press it and choose Share list") } else { tr("right-click it and choose Share list") };
+            trf("Share a list with people at home: {how}. Needs a RustDo Hub on your network.", &[("how", &how)])
         } else if let Some(err) = &self.sync_error {
-            format!("Can't sync right now: {err}")
+            trf("Can't sync right now: {err}", &[("err", &err)])
         } else {
             let last = self.store.shares.iter().filter_map(|s| s.last_sync).max();
             format!(
-                "{shared} shared list{} · {}",
-                if shared == 1 { "" } else { "s" },
-                last.map_or("not synced yet".into(), |t| format!("last synced {}", format_time(t, self.store.settings.clock_24h)))
+                "{} · {}",
+                plural(shared, "{n} shared list", "{n} shared lists"),
+                last.map_or(tr("not synced yet").into(), |t| trf("last synced {time}", &[("time", &format_time(t, self.store.settings.clock_24h))]))
             )
         };
         let color = if self.sync_error.is_some() && shared > 0 { DANGER } else { ui.visuals().weak_text_color() };
         ui.label(RichText::new(status).color(color).small());
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Join a shared list…").clicked() {
+            if ui.button(tr("Join a shared list…")).clicked() {
                 self.open_share_dialog(None);
                 self.close_settings(ui);
             }
-            if shared > 0 && ui.button("Sync now").clicked() {
+            if shared > 0 && ui.button(tr("Sync now")).clicked() {
                 self.last_sync_at = None;
             }
         });
-        if ui.button("❓ How to share a list").clicked() {
+        if ui.button(tr("❓ How to share a list")).clicked() {
             self.hub_guide = true;
             self.close_settings(ui);
         }
@@ -1319,7 +1337,7 @@ impl TodoApp {
             Done::Synced(out, Ok(resp)) => {
                 let Some(idx) = self.store.shares.iter().position(|s| s.list_id == out.list_id) else { return };
                 if resp.list_id != out.list_id {
-                    self.sync_error = Some("the hub has a different list under this code".into());
+                    self.sync_error = Some(tr("the hub has a different list under this code").into());
                     return;
                 }
                 // Taken out while applying: `apply` changes the store it lives in.
@@ -1379,12 +1397,12 @@ impl TodoApp {
                             self.notes_page = false;
                             self.show_nav = false;
                             self.share_dialog = None;
-                            self.notify(format!("Joined “{}”", self.store.list_name(id)));
+                            self.notify(trf("Joined “{name}”", &[("name", &self.store.list_name(id))]));
                         }
                         None => {
                             if let Some(d) = dialog {
                                 d.busy = false;
-                                d.error = Some("You already have this list.".into());
+                                d.error = Some(tr("You already have this list.").into());
                             }
                         }
                     },
@@ -1405,9 +1423,9 @@ impl TodoApp {
         let list = dialog.list;
         let existing = list.and_then(|id| self.store.shares.iter().find(|s| s.list_id == id)).cloned();
         let title = match (list, &existing) {
-            (None, _) => "Join a shared list",
-            (Some(_), Some(_)) => "Shared list",
-            (Some(_), None) => "Share list",
+            (None, _) => tr("Join a shared list"),
+            (Some(_), Some(_)) => tr("Shared list"),
+            (Some(_), None) => tr("Share list"),
         };
         let list_name = list.map(|id| self.store.list_name(id).to_string()).unwrap_or_default();
         let mut close = false;
@@ -1417,41 +1435,42 @@ impl TodoApp {
             .show(ctx, |ui| {
                 ui.set_max_width(dialog_width(ui, 380.0));
                 if let Some(share) = &existing {
-                    ui.label(format!("“{list_name}” is shared. Anyone with this code can join it from their RustDo:"));
+                    ui.label(trf("“{list_name}” is shared. Anyone with this code can join it from their RustDo:", &[("list_name", &list_name)]));
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add(egui::Label::new(RichText::new(&share.code).monospace().size(26.0).strong()).selectable(true));
-                        if ui.button("Copy").clicked() {
+                        if ui.button(tr("Copy")).clicked() {
                             ui.ctx().copy_text(share.code.clone());
                         }
                     });
-                    ui.label(RichText::new(format!("Hub: {}", share.hub)).weak().small());
+                    ui.label(RichText::new(trf("Hub: {hub}", &[("hub", &share.hub)])).weak().small());
                     let status = match (&self.sync_error, share.last_sync) {
-                        (Some(e), _) => RichText::new(format!("Can't sync right now: {e}")).color(DANGER),
-                        (None, Some(t)) => RichText::new(format!("Last synced {}", format_time(t, self.store.settings.clock_24h))).weak(),
-                        (None, None) => RichText::new("Syncing…").weak(),
+                        (Some(e), _) => RichText::new(trf("Can't sync right now: {e}", &[("e", &e)])).color(DANGER),
+                        (None, Some(t)) => RichText::new(trf("Last synced {time}", &[("time", &format_time(t, self.store.settings.clock_24h))])).weak(),
+                        (None, None) => RichText::new(tr("Syncing…")).weak(),
                     };
                     ui.label(status.small());
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Close").clicked() {
+                        if ui.button(tr("Close")).clicked() {
                             close = true;
                         }
-                        if ui.button("Stop syncing on this device").clicked() {
+                        if ui.button(tr("Stop syncing on this device")).clicked() {
                             stop_sharing = true;
                         }
                     });
                     return;
                 }
                 if list.is_some() {
-                    ui.label(format!(
-                        "Share “{list_name}” through your RustDo Hub. You'll get a code; anyone who has it and can reach the hub can see and change this list."
+                    ui.label(trf(
+                        "Share “{list_name}” through your RustDo Hub. You'll get a code; anyone who has it and can reach the hub can see and change this list.",
+                        &[("list_name", &list_name)],
                     ));
                 } else {
-                    ui.label("Enter your RustDo Hub's address and the code someone gave you.");
+                    ui.label(tr("Enter your RustDo Hub's address and the code someone gave you."));
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new("Hub address").small());
+                ui.label(RichText::new(tr("Hub address")).small());
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut dialog.hub)
                         .hint_text("e.g. 192.168.1.20:7979")
@@ -1459,10 +1478,10 @@ impl TodoApp {
                 );
                 submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && list.is_some();
                 if list.is_none() {
-                    ui.label(RichText::new("Share code").small());
+                    ui.label(RichText::new(tr("Share code")).small());
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut dialog.code)
-                            .hint_text("e.g. K7QM-2XPD")
+                            .hint_text(tr("e.g. K7QM-2XPD"))
                             .desired_width(f32::INFINITY),
                     );
                     submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
@@ -1472,18 +1491,18 @@ impl TodoApp {
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    let label = if list.is_some() { "Share" } else { "Join" };
+                    let label = if list.is_some() { tr("Share") } else { tr("Join") };
                     if ui.add_enabled(!dialog.busy, egui::Button::new(label)).clicked() {
                         submit = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         close = true;
                     }
                     if dialog.busy {
                         ui.spinner();
                     }
                 });
-                if ui.add(egui::Button::new(RichText::new("No hub yet? How syncing and sharing work").small()).frame(false)).clicked() {
+                if ui.add(egui::Button::new(RichText::new(tr("No hub yet? How syncing and sharing work")).small()).frame(false)).clicked() {
                     open_guide = true;
                 }
             });
@@ -1491,7 +1510,7 @@ impl TodoApp {
         if submit && !dialog.busy {
             dialog.error = None;
             match sync::normalize_hub(&dialog.hub) {
-                None => dialog.error = Some("Enter the hub's address, e.g. 192.168.1.20:7979".into()),
+                None => dialog.error = Some(tr("Enter the hub's address, e.g. 192.168.1.20:7979").into()),
                 Some(hub) => match list {
                     Some(list_id) => {
                         dialog.busy = true;
@@ -1500,7 +1519,7 @@ impl TodoApp {
                         self.dirty = true;
                     }
                     None => match sync::normalize_code(&dialog.code) {
-                        None => dialog.error = Some("A share code has 8 letters and numbers, like K7QM-2XPD.".into()),
+                        None => dialog.error = Some(tr("A share code has 8 letters and numbers, like K7QM-2XPD.").into()),
                         Some(code) => {
                             dialog.busy = true;
                             self.sync_jobs.push(Job::Join { hub: hub.clone(), code });
@@ -1515,7 +1534,7 @@ impl TodoApp {
             if let Some(id) = list {
                 self.store.shares.retain(|s| s.list_id != id);
                 self.dirty = true;
-                self.notify("This list no longer syncs on this device. It stays here as a normal list.");
+                self.notify(tr("This list no longer syncs on this device. It stays here as a normal list."));
             }
             close = true;
         }
@@ -1531,34 +1550,34 @@ impl TodoApp {
         if cfg!(target_os = "android") {
             return;
         }
-        ui.label(RichText::new("Notifications").strong());
+        ui.label(RichText::new(tr("Notifications")).strong());
         if ui
-            .checkbox(&mut self.store.settings.notifications, "Notify me about reminders")
+            .checkbox(&mut self.store.settings.notifications, tr("Notify me about reminders"))
             .changed()
         {
             self.dirty = true;
             self.helper_handled = false; // start or stop the Windows reminder helper
         }
         let note = if cfg!(windows) {
-            "Windows shows them at the reminder time, even after you close RustDo (a small background helper starts with Windows)."
+            tr("Windows shows them at the reminder time, even after you close RustDo (a small background helper starts with Windows).")
         } else if cfg!(target_arch = "wasm32") {
-            "Shown while this app is open (browsers can't notify a closed web page)."
+            tr("Shown while this app is open (browsers can't notify a closed web page).")
         } else {
-            "Shown while RustDo is running (minimized is fine)."
+            tr("Shown while RustDo is running (minimized is fine).")
         };
         ui.label(RichText::new(note).weak().small());
         if cfg!(target_arch = "wasm32") && self.store.settings.notifications {
             match notify::web_permission() {
                 "default" => {
-                    if ui.button("Allow notifications").clicked() {
+                    if ui.button(tr("Allow notifications")).clicked() {
                         notify::web_request_permission();
                     }
                 }
                 "denied" => {
-                    ui.label(RichText::new("Notifications are blocked in this browser's site settings.").color(DANGER).small());
+                    ui.label(RichText::new(tr("Notifications are blocked in this browser's site settings.")).color(DANGER).small());
                 }
                 "unsupported" => {
-                    ui.label(RichText::new("This browser doesn't support notifications.").weak().small());
+                    ui.label(RichText::new(tr("This browser doesn't support notifications.")).weak().small());
                 }
                 _ => {}
             }
@@ -1568,36 +1587,36 @@ impl TodoApp {
 
     fn backup_menu_items(&mut self, ui: &mut egui::Ui) {
         let now = Local::now().naive_local();
-        ui.label(RichText::new("Backups").strong());
+        ui.label(RichText::new(tr("Backups")).strong());
         let where_text = if cfg!(target_arch = "wasm32") {
-            "A backup is saved automatically each day in this browser (last 7 days).".to_string()
+            tr("A backup is saved automatically each day in this browser (last 7 days).").to_string()
         } else if cfg!(target_os = "android") {
-            "A backup is saved automatically each day on this phone (last 14 days). Uninstalling the app removes them.".to_string()
+            tr("A backup is saved automatically each day on this phone (last 14 days). Uninstalling the app removes them.").to_string()
         } else {
-            format!(
-                "A backup of your tasks and sticky notes is saved automatically each day in the Backups folder (last {} days).",
-                storage::KEEP_BACKUPS
+            trf(
+                "A backup of your tasks and sticky notes is saved automatically each day in the Backups folder (last {days} days).",
+                &[("days", &storage::KEEP_BACKUPS)],
             )
         };
         ui.add(egui::Label::new(RichText::new(where_text).weak().small()).wrap())
             .on_hover_text(self.storage.backups_location());
         if let Some(last) = self.store.settings.last_export {
             let when = relative_date(last.date(), now.date()).to_lowercase();
-            ui.label(RichText::new(format!("Last exported: {when}")).weak().small());
+            ui.label(RichText::new(trf("Last exported: {when}", &[("when", &when)])).weak().small());
         }
 
-        let export_label = if cfg!(target_os = "android") { "Copy backup to clipboard" } else { "Export backup…" };
+        let export_label = if cfg!(target_os = "android") { tr("Copy backup to clipboard") } else { tr("Export backup…") };
         if ui.button(export_label).clicked() {
             self.close_settings(ui);
             let ctx = ui.ctx().clone();
             self.export_backup(&ctx, now);
         }
         if cfg!(target_os = "android") {
-            if ui.button("Restore from pasted backup…").clicked() {
+            if ui.button(tr("Restore from pasted backup…")).clicked() {
                 self.close_settings(ui);
                 self.paste_restore = Some(String::new());
             }
-        } else if ui.button("Restore from backup…").clicked() {
+        } else if ui.button(tr("Restore from backup…")).clicked() {
             self.close_settings(ui);
             let ctx = ui.ctx().clone();
             self.pick_restore_file(&ctx);
@@ -1606,12 +1625,12 @@ impl TodoApp {
         #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
         {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Back up sticky notes…").on_hover_text("Save just your sticky notes to a file").clicked() {
+                if ui.button(tr("Back up sticky notes…")).on_hover_text(tr("Save just your sticky notes to a file")).clicked() {
                     self.close_settings(ui);
                     let ctx = ui.ctx().clone();
                     self.backup_notes(&ctx, now.date());
                 }
-                if ui.button("Restore sticky notes…").on_hover_text("Bring notes back from a backup (your current notes are kept)").clicked() {
+                if ui.button(tr("Restore sticky notes…")).on_hover_text(tr("Bring notes back from a backup (your current notes are kept)")).clicked() {
                     self.close_settings(ui);
                     let ctx = ui.ctx().clone();
                     self.pick_notes_restore_file(&ctx);
@@ -1619,8 +1638,8 @@ impl TodoApp {
             });
             if let Some(dir) = self.storage.folder() {
                 if ui
-                    .button("Open RustDo folder")
-                    .on_hover_text(format!("{}\nYour tasks (tasks.json) and the Backups folder", dir.display()))
+                    .button(tr("Open RustDo folder"))
+                    .on_hover_text(format!("{}\n{}", dir.display(), tr("Your tasks (tasks.json) and the Backups folder")))
                     .clicked()
                 {
                     self.close_settings(ui);
@@ -1629,13 +1648,13 @@ impl TodoApp {
             }
             match self.store.settings.backup_dir.clone() {
                 Some(extra) => {
-                    ui.add(egui::Label::new(RichText::new(format!("Also backing up to {extra}")).small()).wrap());
+                    ui.add(egui::Label::new(RichText::new(trf("Also backing up to {extra}", &[("extra", &extra)])).small()).wrap());
                     ui.horizontal(|ui| {
-                        if small_btn(ui, "Change…").clicked() {
+                        if small_btn(ui, tr("Change…")).clicked() {
                             self.close_settings(ui);
                             self.choose_backup_folder(now.date());
                         }
-                        if small_btn(ui, "Stop").clicked() {
+                        if small_btn(ui, tr("Stop")).clicked() {
                             self.store.settings.backup_dir = None;
                             self.dirty = true;
                             self.close_settings(ui);
@@ -1644,8 +1663,8 @@ impl TodoApp {
                 }
                 None => {
                     if ui
-                        .button("Also back up to a folder…")
-                        .on_hover_text("For example a OneDrive or USB folder, so a copy lives off this PC.")
+                        .button(tr("Also back up to a folder…"))
+                        .on_hover_text(tr("For example a OneDrive or USB folder, so a copy lives off this PC."))
                         .clicked()
                     {
                         self.close_settings(ui);
@@ -1670,7 +1689,7 @@ impl TodoApp {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.load_import(&name, &bytes);
                 }
-                Err(e) => self.notify(format!("Couldn't read {}: {e}", path.display())),
+                Err(e) => self.notify(trf("Couldn't read {path}: {e}", &[("path", &path.display()), ("e", &e)])),
             }
         }
     }
@@ -1680,7 +1699,7 @@ impl TodoApp {
         let mut confirm = false;
         let mut cancel = false;
         let existing: Vec<String> = self.store.lists.iter().map(|l| l.name.to_lowercase()).collect();
-        dialog_window(ctx, "Import tasks", self.insets)
+        dialog_window(ctx, tr("Import tasks"), self.insets)
             .show(ctx, |ui| {
                 ui.set_max_width(dialog_width(ui, 480.0));
                 let imp = &pending.import;
@@ -1697,8 +1716,8 @@ impl TodoApp {
                 ui.add_space(6.0);
                 egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                     egui::Grid::new("import_lists").striped(true).num_columns(3).show(ui, |ui| {
-                        ui.label(RichText::new("List").strong());
-                        ui.label(RichText::new("Open").strong());
+                        ui.label(RichText::new(tr("List")).strong());
+                        ui.label(RichText::new(tr("Open")).strong());
                         ui.label(RichText::new("").strong());
                         ui.end_row();
                         for l in &imp.lists {
@@ -1706,11 +1725,11 @@ impl TodoApp {
                             ui.label(&l.name);
                             ui.label(open.to_string());
                             let note = if l.is_default {
-                                "into your Tasks list"
+                                tr("into your Tasks list")
                             } else if existing.contains(&l.name.trim().to_lowercase()) {
-                                "merged with existing list"
+                                tr("merged with existing list")
                             } else {
-                                "new list"
+                                tr("new list")
                             };
                             ui.label(RichText::new(note).weak());
                             ui.end_row();
@@ -1726,18 +1745,18 @@ impl TodoApp {
                     });
                 }
                 ui.add_space(6.0);
-                ui.checkbox(&mut pending.include_completed, format!("Also import {} completed tasks", imp.completed_count()));
+                ui.checkbox(&mut pending.include_completed, trf("Also import {n} completed tasks", &[("n", &imp.completed_count())]));
                 ui.label(
-                    RichText::new("Tasks you've already imported are skipped. A backup of your current tasks is saved first.")
+                    RichText::new(tr("Tasks you've already imported are skipped. A backup of your current tasks is saved first."))
                         .weak()
                         .small(),
                 );
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("Import").color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    if ui.add(egui::Button::new(RichText::new(tr("Import")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
                         confirm = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -1749,7 +1768,7 @@ impl TodoApp {
             let pending = self.pending_import.take().unwrap();
             if self.can_save {
                 if let Err(e) = self.storage.snapshot(&self.store, "before-import") {
-                    self.notify(format!("Import cancelled: couldn't save a backup first ({e})."));
+                    self.notify(trf("Import cancelled: couldn't save a backup first ({e}).", &[("e", &e)]));
                     return;
                 }
             }
@@ -1777,7 +1796,7 @@ impl TodoApp {
             Ok(()) => self.backup_pending = true,
             Err(e) => {
                 log::error!(target: "rustdo", "saving tasks failed: {e}");
-                self.notify(format!("Couldn't save: {e}"));
+                self.notify(trf("Couldn't save: {e}", &[("e", &e)]));
             }
         }
     }
@@ -1808,7 +1827,7 @@ impl TodoApp {
             if !self.backup_error_shown {
                 self.backup_error_shown = true;
                 log::warn!(target: "rustdo", "automatic backup failed: {e}");
-                self.notify(format!("Automatic backup failed: {e}"));
+                self.notify(trf("Automatic backup failed: {e}", &[("e", &e)]));
             }
         }
     }
@@ -1831,9 +1850,9 @@ impl TodoApp {
                 .filter(|d| d.is_dir())
                 .or_else(|| self.storage.folder());
             let mut dialog = rfd::FileDialog::new()
-                .set_title("Export RustDo backup")
+                .set_title(tr("Export RustDo backup"))
                 .set_file_name(&name)
-                .add_filter("RustDo backup", &["json"]);
+                .add_filter(tr("RustDo backup"), &["json"]);
             if let Some(dir) = start_dir {
                 dialog = dialog.set_directory(dir);
             }
@@ -1843,10 +1862,10 @@ impl TodoApp {
             match std::fs::write(&path, json) {
                 Ok(()) => {
                     self.store.settings.last_export_dir = path.parent().map(|d| d.display().to_string());
-                    self.notify(format!("Backup saved to {}", path.display()));
+                    self.notify(trf("Backup saved to {path}", &[("path", &path.display())]));
                 }
                 Err(e) => {
-                    self.notify(format!("Couldn't save the backup: {e}"));
+                    self.notify(trf("Couldn't save the backup: {e}", &[("e", &e)]));
                     return;
                 }
             }
@@ -1855,16 +1874,16 @@ impl TodoApp {
         {
             let _ = ctx;
             if let Err(e) = platform::download_text(&name, &json) {
-                self.notify(format!("Couldn't export: {e}"));
+                self.notify(trf("Couldn't export: {e}", &[("e", &e)]));
                 return;
             }
-            self.notify(format!("Downloaded {name}. Keep it somewhere safe."));
+            self.notify(trf("Downloaded {name}. Keep it somewhere safe.", &[("name", &name)]));
         }
         #[cfg(target_os = "android")]
         {
             let _ = name;
             ctx.copy_text(json);
-            self.notify("Backup copied. Paste it into a note or email to keep it safe.");
+            self.notify(tr("Backup copied. Paste it into a note or email to keep it safe."));
         }
         self.store.settings.last_export = Some(now);
         self.dirty = true;
@@ -1881,7 +1900,7 @@ impl TodoApp {
             self.persist();
             self.maybe_auto_backup(today);
             if !self.backup_error_shown {
-                self.notify(format!("Daily backups will also go to {}", dir.display()));
+                self.notify(trf("Daily backups will also go to {path}", &[("path", &dir.display())]));
             }
         }
     }
@@ -1895,7 +1914,7 @@ impl TodoApp {
         let mut close = false;
         let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 520.0);
         let releases = format!("https://github.com/{}/releases", update::REPO);
-        dialog_window(ctx, "Syncing and sharing with RustDo Hub", self.insets).show(ctx, |ui| {
+        dialog_window(ctx, tr("Syncing and sharing with RustDo Hub"), self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 500.0));
             egui::ScrollArea::vertical().max_height(max_h).show(ui, |ui| {
                 let para = |ui: &mut egui::Ui, text: &str| {
@@ -1905,38 +1924,38 @@ impl TodoApp {
                     ui.add_space(8.0);
                     ui.label(RichText::new(format!("{n}. {title}")).strong().color(ACCENT));
                 };
-                para(ui, "A RustDo Hub is a small program you run yourself, on a PC, a NAS or a home server. RustDo uses it to keep your own devices in sync, and to share lists with the people you live with. Nothing goes through anyone's cloud.");
+                para(ui, tr("A RustDo Hub is a small program you run yourself, on a PC, a NAS or a home server. RustDo uses it to keep your own devices in sync, and to share lists with the people you live with. Nothing goes through anyone's cloud."));
 
-                step(ui, "1", "Start a RustDo Hub (once, on one machine)");
-                para(ui, "Pick a PC, NAS or home server that's usually on. One hub is enough for the whole family.");
-                ui.label(RichText::new("On Windows").strong());
-                para(ui, "Download RustDo-Hub-<version>-windows.exe from the RustDo releases page and run it. It shows the hub's address, e.g. http://192.168.1.20:7979. When Windows Firewall asks, allow it on Private networks.");
-                ui.hyperlink_to("RustDo releases", releases);
-                ui.label(RichText::new("With Docker (Synology and other NAS, Raspberry Pi, Linux)").strong());
+                step(ui, "1", tr("Start a RustDo Hub (once, on one machine)"));
+                para(ui, tr("Pick a PC, NAS or home server that's usually on. One hub is enough for the whole family."));
+                ui.label(RichText::new(tr("On Windows")).strong());
+                para(ui, tr("Download RustDo-Hub-<version>-windows.exe from the RustDo releases page and run it. It shows the hub's address, e.g. http://192.168.1.20:7979. When Windows Firewall asks, allow it on Private networks."));
+                ui.hyperlink_to(tr("RustDo releases"), releases);
+                ui.label(RichText::new(tr("With Docker (Synology and other NAS, Raspberry Pi, Linux)")).strong());
                 let cmd = "docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest";
                 ui.add(egui::Label::new(RichText::new(cmd).monospace().small()).wrap());
-                if ui.small_button("📋 Copy command").clicked() {
+                if ui.small_button(tr("📋 Copy command")).clicked() {
                     ui.ctx().copy_text(cmd.to_string());
                 }
-                para(ui, "The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979.");
+                para(ui, tr("The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979."));
 
-                step(ui, "2", "Sync your own devices");
-                para(ui, "On your first device: Settings, Sync my devices, Turn on sync. Enter the hub's address and choose \"This is my first device\". RustDo shows a sync key.");
-                para(ui, "On each other device: Turn on sync, choose \"I already have a sync key\", and enter the same hub address and the key. Your lists, tasks, sticky notes and a few settings (theme, clock, sort order) then stay the same everywhere, within about 30 seconds.");
-                para(ui, "Each device keeps its own reminder pop-ups and where its sticky notes sit on screen. The web app needs the hub on an https:// address (see below).");
+                step(ui, "2", tr("Sync your own devices"));
+                para(ui, tr("On your first device: Settings, Sync my devices, Turn on sync. Enter the hub's address and choose \"This is my first device\". RustDo shows a sync key."));
+                para(ui, tr("On each other device: Turn on sync, choose \"I already have a sync key\", and enter the same hub address and the key. Your lists, tasks, sticky notes and a few settings (theme, clock, sort order) then stay the same everywhere, within about 30 seconds."));
+                para(ui, tr("Each device keeps its own reminder pop-ups and where its sticky notes sit on screen. The web app needs the hub on an https:// address (see below)."));
 
-                step(ui, "3", "Share a list with family");
-                let how = if is_touch(ui) { "Long-press" } else { "Right-click" };
-                para(ui, &format!("{how} the list in the menu, choose Share list, enter the hub's address (just the IP is fine, e.g. 192.168.1.20) and press Share. You get a code like K7QM-2XPD: send it to the people you're sharing with. They choose Join a shared list in Settings, under Family sharing, and enter the address and the code."));
-                para(ui, "A shared list uses its own code, separate from your sync key: they see only that list, never your other lists. Your other devices join it by themselves when sync is on.");
+                step(ui, "3", tr("Share a list with family"));
+                let how = if is_touch(ui) { tr("Long-press") } else { tr("Right-click") };
+                para(ui, &trf("{how} the list in the menu, choose Share list, enter the hub's address (just the IP is fine, e.g. 192.168.1.20) and press Share. You get a code like K7QM-2XPD: send it to the people you're sharing with. They choose Join a shared list in Settings, under Family sharing, and enter the address and the code.", &[("how", &how)]));
+                para(ui, tr("A shared list uses its own code, separate from your sync key: they see only that list, never your other lists. Your other devices join it by themselves when sync is on."));
 
-                step(ui, "?", "Good to know");
+                step(ui, "?", tr("Good to know"));
                 for item in [
-                    "If the same task is changed in two places at the same time, the later change wins. Shared lists show a 👥 icon.",
-                    "Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again.",
-                    "To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly.",
-                    "Sync my devices works everywhere, including the web app. Sharing a list works in the Windows, Linux and Android apps.",
-                    "Keep your sync key private, like a password: anyone with it who can reach your hub can see and change your tasks.",
+                    tr("If the same task is changed in two places at the same time, the later change wins. Shared lists show a 👥 icon."),
+                    tr("Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again."),
+                    tr("To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly."),
+                    tr("Sync my devices works everywhere, including the web app. Sharing a list works in the Windows, Linux and Android apps."),
+                    tr("Keep your sync key private, like a password: anyone with it who can reach your hub can see and change your tasks."),
                 ] {
                     ui.horizontal_top(|ui| {
                         ui.label("•");
@@ -1944,10 +1963,10 @@ impl TodoApp {
                     });
                 }
                 ui.add_space(4.0);
-                ui.hyperlink_to("Full guide, troubleshooting and reverse proxy setup", hub_docs());
+                ui.hyperlink_to(tr("Full guide, troubleshooting and reverse proxy setup"), hub_docs());
             });
             ui.add_space(6.0);
-            if ui.button("Got it").clicked() {
+            if ui.button(tr("Got it")).clicked() {
                 close = true;
             }
         });
@@ -1961,8 +1980,8 @@ impl TodoApp {
         let mut close = false;
         let max_h = (ctx.screen_rect().height() - self.insets[1] - self.insets[3] - 170.0).clamp(160.0, 460.0);
         let title = match releases.as_slice() {
-            [only] => format!("What's new in RustDo {}", only.version),
-            _ => "What's new in RustDo".to_string(),
+            [only] => trf("What's new in RustDo {version}", &[("version", &only.version)]),
+            _ => tr("What's new in RustDo").to_string(),
         };
         dialog_window(ctx, title, self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 460.0));
@@ -1973,7 +1992,7 @@ impl TodoApp {
                         ui.separator();
                     }
                     if releases.len() > 1 {
-                        ui.label(RichText::new(format!("Version {}", r.version)).strong().size(17.0));
+                        ui.label(RichText::new(trf("Version {version}", &[("version", &r.version)])).strong().size(17.0));
                     }
                     if !r.date.is_empty() {
                         ui.label(RichText::new(&r.date).weak().small());
@@ -1992,10 +2011,10 @@ impl TodoApp {
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button("Got it").clicked() {
+                if ui.button(tr("Got it")).clicked() {
                     close = true;
                 }
-                ui.hyperlink_to("All releases", format!("https://github.com/{}/releases", update::REPO));
+                ui.hyperlink_to(tr("All releases"), format!("https://github.com/{}/releases", update::REPO));
             });
         });
         if close {
@@ -2014,9 +2033,9 @@ impl TodoApp {
         let mut confirm = false;
         let mut cancel = false;
         let count = found.notes.len();
-        dialog_window(ctx, "Restore sticky notes?", self.insets).show(ctx, |ui| {
+        dialog_window(ctx, tr("Restore sticky notes?"), self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 420.0));
-            ui.label(format!("{name}: {count} sticky note{}.", if count == 1 { "" } else { "s" }));
+            ui.label(format!("{name}: {}.", plural(count, "{n} sticky note", "{n} sticky notes")));
             ui.add_space(4.0);
             ui.add(
                 egui::Label::new(
@@ -2027,10 +2046,10 @@ impl TodoApp {
             );
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.add(egui::Button::new(RichText::new("Restore notes").color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                if ui.add(egui::Button::new(RichText::new(tr("Restore notes")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
                     confirm = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     cancel = true;
                 }
             });
@@ -2042,9 +2061,9 @@ impl TodoApp {
             let (added, updated) = notes_ui::lock(&self.notes).merge_in(&found);
             self.notes_page = true;
             self.notify(match (added, updated) {
-                (0, 0) => "Nothing to restore: you already have these notes.".to_string(),
-                (a, 0) => format!("Restored {a} sticky note{}. Show them from this page.", if a == 1 { "" } else { "s" }),
-                (a, u) => format!("Restored {a} sticky note{} and updated {u}.", if a == 1 { "" } else { "s" }),
+                (0, 0) => tr("Nothing to restore: you already have these notes.").to_string(),
+                (a, 0) => format!("{} {}", plural(a, "Restored {n} sticky note.", "Restored {n} sticky notes."), tr("Show them from this page.")),
+                (a, u) => trf("Restored {a} sticky notes and updated {u}.", &[("a", &a), ("u", &u)]),
             });
         }
     }
@@ -2054,7 +2073,7 @@ impl TodoApp {
     fn backup_notes(&mut self, _ctx: &egui::Context, today: NaiveDate) {
         let snapshot = notes_ui::lock(&self.notes).notes.clone();
         if snapshot.notes.is_empty() {
-            self.notify("There are no sticky notes to back up yet.");
+            self.notify(tr("There are no sticky notes to back up yet."));
             return;
         }
         let start_dir = self
@@ -2066,9 +2085,9 @@ impl TodoApp {
             .filter(|d| d.is_dir())
             .or_else(|| self.storage.folder());
         let mut dialog = rfd::FileDialog::new()
-            .set_title("Back up sticky notes")
+            .set_title(tr("Back up sticky notes"))
             .set_file_name(notes::backup_file_name(today))
-            .add_filter("Sticky notes backup", &["json"]);
+            .add_filter(tr("Sticky notes backup"), &["json"]);
         if let Some(dir) = start_dir {
             dialog = dialog.set_directory(dir);
         }
@@ -2078,9 +2097,9 @@ impl TodoApp {
                 self.store.settings.last_export_dir = path.parent().map(|d| d.display().to_string());
                 self.dirty = true;
                 let n = snapshot.notes.len();
-                self.notify(format!("{n} sticky note{} saved to {}", if n == 1 { "" } else { "s" }, path.display()));
+                self.notify(format!("{} {}", plural(n, "{n} sticky note saved to", "{n} sticky notes saved to"), path.display()));
             }
-            Err(e) => self.notify(format!("Couldn't save the notes backup: {e}")),
+            Err(e) => self.notify(trf("Couldn't save the notes backup: {e}", &[("e", &e)])),
         }
     }
 
@@ -2088,8 +2107,8 @@ impl TodoApp {
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
     fn pick_notes_restore_file(&mut self, _ctx: &egui::Context) {
         let mut dialog = rfd::FileDialog::new()
-            .set_title("Restore sticky notes")
-            .add_filter("Sticky notes or RustDo backup", &["json"]);
+            .set_title(tr("Restore sticky notes"))
+            .add_filter(tr("Sticky notes or RustDo backup"), &["json"]);
         if let Some(dir) = self.storage.folder() {
             let backups = dir.join("Backups");
             dialog = dialog.set_directory(if backups.is_dir() { backups } else { dir });
@@ -2107,14 +2126,14 @@ impl TodoApp {
     fn backup_notes(&mut self, _ctx: &egui::Context, today: NaiveDate) {
         let snapshot = notes_ui::lock(&self.notes).notes.clone();
         if snapshot.notes.is_empty() {
-            self.notify("There are no sticky notes to back up yet.");
+            self.notify(tr("There are no sticky notes to back up yet."));
             return;
         }
         let name = notes::backup_file_name(today);
         let json = serde_json::to_string_pretty(&snapshot).unwrap_or_default();
         match platform::download_text(&name, &json) {
-            Ok(()) => self.notify(format!("Downloaded {name}. Keep it somewhere safe.")),
-            Err(e) => self.notify(format!("Couldn't download the notes backup: {e}")),
+            Ok(()) => self.notify(trf("Downloaded {name}. Keep it somewhere safe.", &[("name", &name)])),
+            Err(e) => self.notify(trf("Couldn't download the notes backup: {e}", &[("e", &e)])),
         }
     }
 
@@ -2130,14 +2149,15 @@ impl TodoApp {
     fn backup_notes(&mut self, ctx: &egui::Context, _today: NaiveDate) {
         let snapshot = notes_ui::lock(&self.notes).notes.clone();
         if snapshot.notes.is_empty() {
-            self.notify("There are no sticky notes to back up yet.");
+            self.notify(tr("There are no sticky notes to back up yet."));
             return;
         }
         ctx.copy_text(serde_json::to_string_pretty(&snapshot).unwrap_or_default());
         let n = snapshot.notes.len();
         self.notify(format!(
-            "{n} sticky note{} copied. Paste them into a note or email to keep them safe.",
-            if n == 1 { "" } else { "s" }
+            "{} {}",
+            plural(n, "{n} sticky note copied.", "{n} sticky notes copied."),
+            tr("Paste them into a note or email to keep them safe.")
         ));
     }
 
@@ -2152,18 +2172,18 @@ impl TodoApp {
         if let Some(text) = &mut self.paste_restore {
             let mut restore = false;
             let mut cancel = false;
-            dialog_window(ctx, "Restore from a backup", self.insets)
+            dialog_window(ctx, tr("Restore from a backup"), self.insets)
                 .show(ctx, |ui| {
                     ui.set_max_width(dialog_width(ui, 420.0));
-                    ui.label("Paste the backup text you saved earlier:");
+                    ui.label(tr("Paste the backup text you saved earlier:"));
                     egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
                         ui.add(egui::TextEdit::multiline(text).desired_rows(6).desired_width(f32::INFINITY));
                     });
                     ui.horizontal(|ui| {
-                        if ui.button("Continue").clicked() {
+                        if ui.button(tr("Continue")).clicked() {
                             restore = true;
                         }
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(tr("Cancel")).clicked() {
                             cancel = true;
                         }
                     });
@@ -2173,12 +2193,12 @@ impl TodoApp {
                 match storage::parse_backup(text.as_bytes()) {
                     Ok(store) => {
                         let carried = notes::parse_backup(text.as_bytes()).ok().filter(|_| notes::AVAILABLE);
-                        self.pending_restore = Some(("pasted backup".into(), store, carried));
+                        self.pending_restore = Some((tr("pasted backup").into(), store, carried));
                     }
                     // A sticky notes backup: merged in, after confirmation.
                     Err(_) if notes::AVAILABLE && notes::parse_backup(text.as_bytes()).is_ok() => {
                         if let Ok(found) = notes::parse_backup(text.as_bytes()) {
-                            self.pending_notes_restore = Some(("pasted notes".into(), found));
+                            self.pending_notes_restore = Some((tr("pasted notes").into(), found));
                         }
                     }
                     Err(e) => self.notify(e),
@@ -2195,21 +2215,20 @@ impl TodoApp {
         let mut cancel = false;
         let open = backup.tasks.iter().filter(|t| !t.done).count();
         let newest = backup.tasks.iter().map(|t| t.created).max();
-        dialog_window(ctx, "Restore backup?", self.insets)
+        dialog_window(ctx, tr("Restore backup?"), self.insets)
             .show(ctx, |ui| {
                 ui.set_max_width(dialog_width(ui, 420.0));
                 let notes_part = match note_count {
                     0 => String::new(),
-                    1 => ", 1 sticky note".to_string(),
-                    n => format!(", {n} sticky notes"),
+                    1 => tr(", 1 sticky note").to_string(),
+                    n => trf(", {n} sticky notes", &[("n", &n)]),
                 };
-                ui.label(format!(
-                    "{name}: {} lists, {} tasks ({open} open){notes_part}.",
-                    backup.lists.len(),
-                    backup.tasks.len()
+                ui.label(trf(
+                    "{name}: {lists} lists, {tasks} tasks ({open} open){notes}.",
+                    &[("name", &name), ("lists", &backup.lists.len()), ("tasks", &backup.tasks.len()), ("open", &open), ("notes", &notes_part)],
                 ));
                 if let Some(newest) = newest {
-                    ui.label(RichText::new(format!("Newest task created {}.", newest.format("%b %-d, %Y"))).weak());
+                    ui.label(RichText::new(trf("Newest task created {date}.", &[("date", &i18n::date_medium(newest.date()))])).weak());
                 }
                 ui.add_space(4.0);
                 let what = if note_count > 0 {
@@ -2223,12 +2242,12 @@ impl TodoApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .add(egui::Button::new(RichText::new("Replace my tasks").color(Color32::WHITE)).fill(DANGER))
+                        .add(egui::Button::new(RichText::new(tr("Replace my tasks")).color(Color32::WHITE)).fill(DANGER))
                         .clicked()
                     {
                         confirm = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -2239,7 +2258,7 @@ impl TodoApp {
             let (name, mut backup, carried) = self.pending_restore.take().unwrap();
             if self.can_save {
                 if let Err(e) = self.storage.snapshot(&self.store, "before-restore") {
-                    self.notify(format!("Restore cancelled: couldn't save your current tasks first ({e})."));
+                    self.notify(trf("Restore cancelled: couldn't save your current tasks first ({e}).", &[("e", &e)]));
                     return;
                 }
             }
@@ -2248,7 +2267,7 @@ impl TodoApp {
                 let safety = self.storage.backup_dirs(&self.store.settings).into_iter().next();
                 let replaced = notes_ui::lock(&self.notes).replace_all(restored, safety.as_deref());
                 if let Err(e) = replaced {
-                    self.notify(format!("Restore cancelled: {e}."));
+                    self.notify(trf("Restore cancelled: {e}.", &[("e", &e)]));
                     return;
                 }
             }
@@ -2261,7 +2280,7 @@ impl TodoApp {
             self.notes_page = false;
             self.search.clear();
             self.dirty = true;
-            self.notify(format!("Restored from {name}."));
+            self.notify(trf("Restored from {name}.", &[("name", &name)]));
         }
     }
 
@@ -2278,11 +2297,11 @@ impl TodoApp {
         egui::Frame::group(ui.style()).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
-                ui.label("Your tasks are stored in this browser only. Keep a backup in case browser data is cleared.");
-                if ui.button("Export backup").clicked() {
+                ui.label(tr("Your tasks are stored in this browser only. Keep a backup in case browser data is cleared."));
+                if ui.button(tr("Export backup")).clicked() {
                     export = true;
                 }
-                if ui.button("Not now").clicked() {
+                if ui.button(tr("Not now")).clicked() {
                     self.export_nag_dismissed = true;
                 }
             });
@@ -2301,7 +2320,7 @@ impl TodoApp {
             }
             self.alerts.retain(|a| *a != id);
             self.toast = Some(Toast {
-                text: format!("Deleted “{}”", task.title),
+                text: trf("Deleted “{title}”", &[("title", &task.title)]),
                 undo: Some((idx, task)),
                 at: Instant::now(),
             });
@@ -2314,7 +2333,7 @@ impl TodoApp {
             Action::ToggleDone(id) => {
                 if let Some(done) = self.store.task(id).map(|t| !t.done) {
                     if self.store.set_done(id, done, now).is_some() {
-                        self.notify("Nice! The next occurrence has been scheduled.");
+                        self.notify(tr("Nice! The next occurrence has been scheduled."));
                     }
                     self.dirty = true;
                 }
@@ -2406,13 +2425,13 @@ impl TodoApp {
                     if narrow && ui.add(back).clicked() {
                         self.show_nav = false;
                     }
-                    ui.label(RichText::new("✔ RustDo").size(20.0).strong().color(ACCENT));
+                    ui.label(RichText::new(tr("✔ RustDo")).size(20.0).strong().color(ACCENT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let theme = self.store.settings.theme;
                         let (icon, next, tip) = match theme {
-                            ThemeChoice::System => ("🖥", ThemeChoice::Light, "Theme: system"),
-                            ThemeChoice::Light => ("☀", ThemeChoice::Dark, "Theme: light"),
-                            ThemeChoice::Dark => ("🌙", ThemeChoice::System, "Theme: dark"),
+                            ThemeChoice::System => ("🖥", ThemeChoice::Light, tr("Theme: system")),
+                            ThemeChoice::Light => ("☀", ThemeChoice::Dark, tr("Theme: light")),
+                            ThemeChoice::Dark => ("🌙", ThemeChoice::System, tr("Theme: dark")),
                         };
                         self.settings_button(ui, narrow);
                         if ui.button(icon).on_hover_text(tip).clicked() {
@@ -2427,7 +2446,7 @@ impl TodoApp {
                 let min = field_height(ui);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search)
-                        .hint_text(if touch { "🔍 Search" } else { "🔍 Search  (Ctrl+F)" })
+                        .hint_text(if touch { tr("🔍 Search") } else { tr("🔍 Search  (Ctrl+F)") })
                         .min_size(min)
                         .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
@@ -2444,11 +2463,11 @@ impl TodoApp {
 
                 let searching = !self.search.trim().is_empty();
                 let smart = [
-                    (View::MyDay, "☀", "My Day"),
-                    (View::Important, "★", "Important"),
-                    (View::Planned, "📅", "Planned"),
-                    (View::All, "☰", "All"),
-                    (View::Completed, "✔", "Completed"),
+                    (View::MyDay, "☀", tr("My Day")),
+                    (View::Important, "★", tr("Important")),
+                    (View::Planned, "📅", tr("Planned")),
+                    (View::All, "☰", tr("All")),
+                    (View::Completed, "✔", tr("Completed")),
                 ];
                 for (view, icon, name) in smart {
                     let count = if view == View::Completed {
@@ -2515,19 +2534,19 @@ impl TodoApp {
                                 self.rename_focus = true;
                             }
                             r.context_menu(|ui| {
-                                if ui.button("✏  Rename list").clicked() {
+                                if ui.button(tr("✏  Rename list")).clicked() {
                                     self.renaming_list = Some((id, name.clone()));
                                     self.rename_focus = true;
                                     ui.close_menu();
                                 }
                                 if sync::SUPPORTED {
-                                    let label = if shared { "👥  Sharing…" } else { "👥  Share list…" };
+                                    let label = if shared { tr("👥  Sharing…") } else { tr("👥  Share list…") };
                                     if ui.button(label).clicked() {
                                         self.open_share_dialog(Some(id));
                                         ui.close_menu();
                                     }
                                 }
-                                if !is_default && ui.button("🗑  Delete list").clicked() {
+                                if !is_default && ui.button(tr("🗑  Delete list")).clicked() {
                                     self.confirm_delete_list = Some(id);
                                     ui.close_menu();
                                 }
@@ -2539,7 +2558,7 @@ impl TodoApp {
                 let min = field_height(ui);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.new_list)
-                        .hint_text("+ New list")
+                        .hint_text(tr("+ New list"))
                         .min_size(min)
                         .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
@@ -2558,8 +2577,8 @@ impl TodoApp {
                 ui.add_space(2.0);
                 if CAN_IMPORT
                     && ui
-                        .add_sized([ui.available_width(), 26.0], egui::Button::new("⬇  Import from Microsoft To Do…"))
-                        .on_hover_text("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window.")
+                        .add_sized([ui.available_width(), 26.0], egui::Button::new(tr("⬇  Import from Microsoft To Do…")))
+                        .on_hover_text(tr("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window."))
                         .clicked()
                 {
                     let ctx = ui.ctx().clone();
@@ -2571,16 +2590,16 @@ impl TodoApp {
                     ui.add_space(4.0);
                     ui.separator();
                     let (heading, tip) = if cfg!(target_os = "android") {
-                        ("STICKY NOTES", "Sticky notes, kept on this phone")
+                        (tr("STICKY NOTES"), tr("Sticky notes, kept on this phone"))
                     } else if notes::WALL {
-                        ("STICKY NOTES", "A wall of sticky notes, kept in this browser")
+                        (tr("STICKY NOTES"), tr("A wall of sticky notes, kept in this browser"))
                     } else {
-                        ("DESKTOP NOTES", "Notes on your desktop, kept on this computer")
+                        (tr("DESKTOP NOTES"), tr("Notes on your desktop, kept on this computer"))
                     };
                     ui.label(RichText::new(heading).small().weak());
                     // Desktop: notes showing; web: all of them (they're all on the wall).
                     let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open || notes::WALL).count();
-                    if nav_row(ui, self.notes_page, "📝", "Sticky notes", shown)
+                    if nav_row(ui, self.notes_page, "📝", tr("Sticky notes"), shown)
                         .on_hover_text(tip)
                         .clicked()
                     {
@@ -2595,14 +2614,14 @@ impl TodoApp {
                 let footer = |ui: &mut egui::Ui, whats_new: &mut Option<Vec<changelog::Release>>| {
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).small().weak());
-                        if ui.add(egui::Label::new(RichText::new("What's new").small().color(ACCENT)).sense(Sense::click()))
+                        if ui.add(egui::Label::new(RichText::new(tr("What's new")).small().color(ACCENT)).sense(Sense::click()))
                             .on_hover_cursor(CursorIcon::PointingHand)
                             .clicked()
                         {
                             *whats_new = Some(changelog::releases());
                         }
-                        ui.hyperlink_to(RichText::new("💬 Discord").small(), update::DISCORD)
-                            .on_hover_text("Chat, ideas and help: opens in your browser");
+                        ui.hyperlink_to(RichText::new(tr("💬 Discord")).small(), update::DISCORD)
+                            .on_hover_text(tr("Chat, ideas and help: opens in your browser"));
                     });
                 };
                 if narrow {
@@ -2639,7 +2658,7 @@ impl TodoApp {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
             if narrow {
-                let back = egui::Button::new(RichText::new("<  Lists").size(18.0)).frame(false);
+                let back = egui::Button::new(RichText::new(tr("<  Lists")).size(18.0)).frame(false);
                 if ui.add(back).clicked() {
                     self.show_nav = true;
                 }
@@ -2672,9 +2691,9 @@ impl TodoApp {
         ui.horizontal(|ui| {
             ui.add_space(14.0);
             let label = if count == 0 {
-                format!("Subtasks for “{title}”")
+                trf("Subtasks for “{title}”", &[("title", &title)])
             } else {
-                format!("Subtasks for “{title}” ({count})")
+                trf("Subtasks for “{title}” ({count})", &[("title", &title), ("count", &count)])
             };
             ui.add(egui::Label::new(RichText::new(label).weak().small()).truncate());
         });
@@ -2682,12 +2701,12 @@ impl TodoApp {
             ui.add_space(14.0);
             let has_text = !self.quick_step.trim().is_empty();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                close = small_btn(ui, "✖").on_hover_text("Done adding subtasks").clicked();
-                add = has_text && ui.button("Add").clicked();
+                close = small_btn(ui, "✖").on_hover_text(tr("Done adding subtasks")).clicked();
+                add = has_text && ui.button(tr("Add")).clicked();
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.quick_step)
                         .id(field_id)
-                        .hint_text("+ Add a subtask (Enter after each)")
+                        .hint_text(tr("+ Add a subtask (Enter after each)"))
                         .min_size(field_height(ui))
                         .vertical_align(Align::Center)
                         .desired_width(ui.available_width()),
@@ -2722,14 +2741,14 @@ impl TodoApp {
             let query = self.search.trim().to_lowercase();
             let searching = !query.is_empty();
             let (icon, title) = if searching {
-                ("🔍", format!("Searching for “{}”", self.search.trim()))
+                ("🔍", trf("Searching for “{query}”", &[("query", &self.search.trim())]))
             } else {
                 match self.view {
-                    View::MyDay => ("☀", "My Day".to_string()),
-                    View::Important => ("★", "Important".to_string()),
-                    View::Planned => ("📅", "Planned".to_string()),
-                    View::All => ("☰", "All".to_string()),
-                    View::Completed => ("✔", "Completed".to_string()),
+                    View::MyDay => ("☀", tr("My Day").to_string()),
+                    View::Important => ("★", tr("Important").to_string()),
+                    View::Planned => ("📅", tr("Planned").to_string()),
+                    View::All => ("☰", tr("All").to_string()),
+                    View::Completed => ("✔", tr("Completed").to_string()),
                     View::List(id) => ("☰", self.store.list_name(id).to_string()),
                 }
             };
@@ -2741,7 +2760,7 @@ impl TodoApp {
             ui.horizontal(|ui| {
                 let menu = egui::Button::new(RichText::new("☰").size(if touch { 26.0 } else { 20.0 })).frame(false);
                 let menu = if touch { menu.min_size(Vec2::splat(44.0)) } else { menu };
-                if narrow && ui.add(menu).on_hover_text("Lists").clicked() {
+                if narrow && ui.add(menu).on_hover_text(tr("Lists")).clicked() {
                     self.show_nav = true;
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
@@ -2754,7 +2773,7 @@ impl TodoApp {
                     let mut sort = self.store.settings.sort;
                     egui::ComboBox::from_id_salt("sort")
                         .width(if narrow { 64.0 } else { 160.0 })
-                        .selected_text(if narrow { "Sort".to_string() } else { format!("Sort: {}", sort.label()) })
+                        .selected_text(if narrow { tr("Sort").to_string() } else { trf("Sort: {order}", &[("order", &sort.label())]) })
                         .show_ui(ui, |ui| {
                             for m in SortMode::ALL {
                                 ui.selectable_value(&mut sort, m, m.label());
@@ -2767,7 +2786,7 @@ impl TodoApp {
                 });
             });
             if self.view == View::MyDay && !searching {
-                ui.label(RichText::new(today.format("%A, %B %-d").to_string()).weak());
+                ui.label(RichText::new(i18n::date_long(today)).weak());
             }
             ui.add_space(8.0);
 
@@ -2776,9 +2795,9 @@ impl TodoApp {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.new_task)
                         .hint_text(if platform::IS_MOBILE_OR_WEB || narrow || touch {
-                            "+  Add a task"
+                            tr("+  Add a task")
                         } else {
-                            "+  Add a task   (Enter to save, Ctrl+N)"
+                            tr("+  Add a task   (Enter to save, Ctrl+N)")
                         })
                         .font(FontId::proportional(if touch { 17.0 } else { 15.0 }))
                         .min_size(min)
@@ -2826,7 +2845,7 @@ impl TodoApp {
                     sort_tasks(&mut found, sort);
                     found.sort_by_key(|t| t.done);
                     if found.is_empty() {
-                        empty_state(ui, "🔍", "No matching tasks.");
+                        empty_state(ui, "🔍", tr("No matching tasks."));
                     }
                     for t in found {
                         row(ui, t, &mut actions);
@@ -2838,7 +2857,7 @@ impl TodoApp {
                     let mut done: Vec<&Task> = store.tasks.iter().filter(|t| t.done).collect();
                     done.sort_by_key(|t| std::cmp::Reverse(t.completed_at));
                     if done.is_empty() {
-                        empty_state(ui, "✔", "Completed tasks will show up here.");
+                        empty_state(ui, "✔", tr("Completed tasks will show up here."));
                     }
                     for t in done {
                         row(ui, t, &mut actions);
@@ -2859,11 +2878,11 @@ impl TodoApp {
 
                 if open.is_empty() && done.is_empty() {
                     let (icon, msg) = match view {
-                        View::MyDay if touch => ("☀", "Focus on your day. Add a task, or long-press any task and choose “Add to My Day”."),
-                        View::MyDay => ("☀", "Focus on your day. Add a task, or right-click any task and choose “Add to My Day”."),
-                        View::Important => ("★", "Star tasks to see them here."),
-                        View::Planned => ("📅", "Tasks with due dates or reminders show up here."),
-                        _ => ("✔", "Nothing here yet. Add a task above."),
+                        View::MyDay if touch => ("☀", tr("Focus on your day. Add a task, or long-press any task and choose “Add to My Day”.")),
+                        View::MyDay => ("☀", tr("Focus on your day. Add a task, or right-click any task and choose “Add to My Day”.")),
+                        View::Important => ("★", tr("Star tasks to see them here.")),
+                        View::Planned => ("📅", tr("Tasks with due dates or reminders show up here.")),
+                        _ => ("✔", tr("Nothing here yet. Add a task above.")),
                     };
                     empty_state(ui, icon, msg);
                 }
@@ -2897,7 +2916,7 @@ impl TodoApp {
                     done.sort_by_key(|t| std::cmp::Reverse(t.completed_at));
                     ui.add_space(6.0);
                     egui::CollapsingHeader::new(
-                        RichText::new(format!("Completed  {}", done.len())).strong(),
+                        RichText::new(format!("{}  {}", tr("Completed"), done.len())).strong(),
                     )
                     .id_salt(("completed", view))
                     .default_open(false)
@@ -3023,7 +3042,7 @@ impl TodoApp {
         ui.painter().text(
             Pos2::new(c.x + 18.0, center.y),
             Align2::LEFT_CENTER,
-            if ready { "Release to refresh" } else { "Pull to refresh" },
+            if ready { tr("Release to refresh") } else { tr("Pull to refresh") },
             FontId::proportional(13.0),
             color,
         );
@@ -3056,7 +3075,7 @@ impl TodoApp {
                         self.update_manual = true;
                         self.update_available = None;
                     } else {
-                        self.notify("Refreshed.");
+                        self.notify(tr("Refreshed."));
                     }
                 }
             }
@@ -3085,15 +3104,15 @@ impl TodoApp {
                 ui.horizontal(|ui| {
                     if narrow {
                         let size = if is_touch(ui) { 20.0 } else { 16.0 };
-                        let back = egui::Button::new(RichText::new("<  Back").size(size)).frame(false).min_size(Vec2::new(0.0, 44.0));
+                        let back = egui::Button::new(RichText::new(tr("<  Back")).size(size)).frame(false).min_size(Vec2::new(0.0, 44.0));
                         if ui.add(back).clicked() {
                             close = true;
                         }
                         return;
                     }
-                    ui.label(RichText::new("Details").weak());
+                    ui.label(RichText::new(tr("Details")).weak());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("✖").on_hover_text("Close (Esc)").clicked() {
+                        if ui.button("✖").on_hover_text(tr("Close (Esc)")).clicked() {
                             close = true;
                         }
                     });
@@ -3129,7 +3148,7 @@ impl TodoApp {
                                     changed = true;
                                 }
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if small_btn(ui, "✖").on_hover_text("Delete subtask").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text(tr("Delete subtask")).clicked() {
                                         remove = Some(i);
                                     }
                                     let r = ui.add(
@@ -3156,16 +3175,16 @@ impl TodoApp {
                             let plus = egui::Button::new(RichText::new("+").color(ACCENT).strong().size(if touch { 22.0 } else { 18.0 }))
                                 .frame(false)
                                 .min_size(Vec2::splat(if touch { 40.0 } else { 24.0 }));
-                            let plus = ui.add(plus).on_hover_text("Add a subtask");
+                            let plus = ui.add(plus).on_hover_text(tr("Add a subtask"));
                             let has_text = !new_step.trim().is_empty();
                             let mut add = false;
                             let mut enter = false;
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                add = has_text && ui.button("Add").clicked();
+                                add = has_text && ui.button(tr("Add")).clicked();
                                 let r = ui.add(
                                     egui::TextEdit::singleline(new_step)
                                         .id(field_id)
-                                        .hint_text(if task.steps.is_empty() { "Add a subtask" } else { "Add another subtask" })
+                                        .hint_text(if task.steps.is_empty() { tr("Add a subtask") } else { tr("Add another subtask") })
                                         .min_size(field_height(ui))
                                         .vertical_align(Align::Center)
                                         .desired_width(ui.available_width()),
@@ -3188,11 +3207,11 @@ impl TodoApp {
                     card(ui, |ui| {
                         let in_day = task.in_my_day(today);
                         let (text, color) = if in_day && is_touch(ui) {
-                            ("☀   Added to My Day  (tap to remove)", ACCENT)
+                            (tr("☀   Added to My Day  (tap to remove)"), ACCENT)
                         } else if in_day {
-                            ("☀   Added to My Day  (click to remove)", ACCENT)
+                            (tr("☀   Added to My Day  (click to remove)"), ACCENT)
                         } else {
-                            ("☀   Add to My Day", ui.visuals().text_color())
+                            (tr("☀   Add to My Day"), ui.visuals().text_color())
                         };
                         if ui.add(egui::Button::new(RichText::new(text).color(color)).frame(false)).clicked() {
                             task.my_day = if in_day { None } else { Some(today) };
@@ -3202,7 +3221,7 @@ impl TodoApp {
 
                     // Reminder, due date, repeat
                     card(ui, |ui| {
-                        ui.label(RichText::new("🔔   Remind me").strong());
+                        ui.label(RichText::new(tr("🔔   Remind me")).strong());
                         match task.reminder {
                             Some(r) => {
                                 ui.horizontal(|ui| {
@@ -3220,7 +3239,7 @@ impl TodoApp {
                                     ui.label(":");
                                     ui.add(egui::DragValue::new(&mut m).range(0..=59).speed(0.5).custom_formatter(|v, _| format!("{:02}", v as u32)));
                                     if !clock_24h {
-                                        if ui.button(if pm { "PM" } else { "AM" }).on_hover_text("Switch AM / PM").clicked() {
+                                        if ui.button(if pm { "PM" } else { "AM" }).on_hover_text(tr("Switch AM / PM")).clicked() {
                                             pm = !pm;
                                         }
                                         h = from_12h(h12, pm);
@@ -3231,14 +3250,14 @@ impl TodoApp {
                                         task.reminder_fired = new_r <= now;
                                         changed = true;
                                     }
-                                    if small_btn(ui, "✖").on_hover_text("Remove reminder").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text(tr("Remove reminder")).clicked() {
                                         task.reminder = None;
                                         task.reminder_fired = false;
                                         changed = true;
                                     }
                                 });
                                 if let Some(r) = task.reminder {
-                                    ui.label(RichText::new(format!("{} at {}", relative_date(r.date(), today), format_time(r, clock_24h))).weak().small());
+                                    ui.label(RichText::new(trf("{date} at {time}", &[("date", &relative_date(r.date(), today)), ("time", &format_time(r, clock_24h))])).weak().small());
                                 }
                             }
                             None => {
@@ -3255,7 +3274,7 @@ impl TodoApp {
                         }
                         ui.separator();
 
-                        ui.label(RichText::new("📅   Due date").strong());
+                        ui.label(RichText::new(tr("📅   Due date")).strong());
                         match task.due {
                             Some(due) => {
                                 ui.horizontal(|ui| {
@@ -3267,7 +3286,7 @@ impl TodoApp {
                                     }
                                     let color = if task.is_overdue(today) { DANGER } else { ui.visuals().weak_text_color() };
                                     ui.label(RichText::new(relative_date(date, today)).color(color));
-                                    if small_btn(ui, "✖").on_hover_text("Remove due date").clicked() {
+                                    if small_btn(ui, "✖").on_hover_text(tr("Remove due date")).clicked() {
                                         task.due = None;
                                         changed = true;
                                     }
@@ -3276,9 +3295,9 @@ impl TodoApp {
                             None => {
                                 ui.horizontal_wrapped(|ui| {
                                     let presets = [
-                                        ("Today", today),
-                                        ("Tomorrow", today + Duration::days(1)),
-                                        ("Next week", next_monday(today)),
+                                        (tr("Today"), today),
+                                        (tr("Tomorrow"), today + Duration::days(1)),
+                                        (tr("Next week"), next_monday(today)),
                                     ];
                                     for (label, date) in presets {
                                         if ui.button(label).clicked() {
@@ -3292,7 +3311,7 @@ impl TodoApp {
                         ui.separator();
 
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("🔁   Repeat").strong());
+                            ui.label(RichText::new(tr("🔁   Repeat")).strong());
                             let mut rec = task.recurrence;
                             egui::ComboBox::from_id_salt("repeat")
                                 .selected_text(rec.label())
@@ -3315,7 +3334,7 @@ impl TodoApp {
                     // List
                     card(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("☰   List").strong());
+                            ui.label(RichText::new(tr("☰   List")).strong());
                             let current = lists
                                 .iter()
                                 .find(|(lid, _)| *lid == task.list_id)
@@ -3340,7 +3359,7 @@ impl TodoApp {
                     card(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::multiline(&mut task.notes)
-                                .hint_text("Add note")
+                                .hint_text(tr("Add note"))
                                 .desired_rows(6)
                                 .frame(false)
                                 .desired_width(f32::INFINITY),
@@ -3351,19 +3370,19 @@ impl TodoApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         let created = if task.created.date() == today {
-                            "Created today".to_string()
+                            tr("Created today").to_string()
                         } else {
-                            format!("Created {}", relative_date(task.created.date(), today))
+                            trf("Created {date}", &[("date", &relative_date(task.created.date(), today))])
                         };
                         let info = match task.completed_at {
-                            Some(c) => format!("Completed {}", relative_date(c.date(), today)),
+                            Some(c) => trf("Completed {date}", &[("date", &relative_date(c.date(), today))]),
                             None => created,
                         };
                         ui.label(RichText::new(info).weak().small());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if ui
-                                .add(egui::Button::new(RichText::new("🗑 Delete").color(DANGER)))
-                                .on_hover_text("Delete task (Del)")
+                                .add(egui::Button::new(RichText::new(tr("🗑 Delete")).color(DANGER)))
+                                .on_hover_text(tr("Delete task (Del)"))
                                 .clicked()
                             {
                                 delete = true;
@@ -3414,7 +3433,7 @@ impl TodoApp {
         let (align, x) = if narrow { (Align2::CENTER_BOTTOM, 0.0) } else { (Align2::RIGHT_BOTTOM, -16.0) };
         // Never taller than ~60% of the window; more reminders scroll.
         let max_list_h = (ctx.screen_rect().height() * 0.6).max(150.0);
-        egui::Window::new("Reminders")
+        egui::Window::new(tr("Reminders"))
             .id(Id::new("alerts"))
             .title_bar(false)
             .collapsible(false)
@@ -3433,12 +3452,12 @@ impl TodoApp {
                     egui::collapsing_header::paint_default_icon(ui, if open { 1.0 } else { 0.0 }, &icon);
                     let title = if count == 1 { "🔔 Reminder".to_string() } else { format!("🔔 {count} reminders") };
                     let label = ui.add(egui::Label::new(RichText::new(title).strong().size(16.0)).sense(Sense::click()));
-                    if (icon | label).on_hover_text(if open { "Collapse" } else { "Expand" }).clicked() {
+                    if (icon | label).on_hover_text(if open { tr("Collapse") } else { tr("Expand") }).clicked() {
                         self.alerts_open = !open;
                     }
                     if count > 1 {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if small_btn(ui, "Dismiss all").clicked() {
+                            if small_btn(ui, tr("Dismiss all")).clicked() {
                                 for id in &self.alerts {
                                     acted.push((*id, AlertAction::Dismiss));
                                 }
@@ -3456,22 +3475,22 @@ impl TodoApp {
                             }
                             ui.label(RichText::new(&t.title).strong());
                             if let Some(due) = t.due {
-                                ui.label(RichText::new(format!("Due {}", relative_date(due, now.date()))).weak().small());
+                                ui.label(RichText::new(trf("Due {date}", &[("date", &relative_date(due, now.date()))])).weak().small());
                             }
                             ui.horizontal_wrapped(|ui| {
-                                if ui.button("✔ Complete").clicked() {
+                                if ui.button(tr("✔ Complete")).clicked() {
                                     acted.push((*id, AlertAction::Complete));
                                 }
-                                if ui.button("Open").clicked() {
+                                if ui.button(tr("Open")).clicked() {
                                     acted.push((*id, AlertAction::Open));
                                 }
-                                if ui.button("Dismiss").clicked() {
+                                if ui.button(tr("Dismiss")).clicked() {
                                     acted.push((*id, AlertAction::Dismiss));
                                 }
                             });
                             ui.horizontal_wrapped(|ui| {
-                                ui.label(RichText::new("Snooze:").weak());
-                                for (label, mins) in [("10 min", 10), ("1 hour", 60), ("Tomorrow", 24 * 60)] {
+                                ui.label(RichText::new(tr("Snooze:")).weak());
+                                for (label, mins) in [(tr("10 min"), 10), (tr("1 hour"), 60), (tr("Tomorrow"), 24 * 60)] {
                                     if small_btn(ui, label).clicked() {
                                         acted.push((*id, AlertAction::Snooze(mins)));
                                     }
@@ -3507,22 +3526,23 @@ impl TodoApp {
         let count = self.store.tasks.iter().filter(|t| t.list_id == id).count();
         let mut confirm = false;
         let mut cancel = false;
-        dialog_window(ctx, "Delete list?", self.insets)
+        dialog_window(ctx, tr("Delete list?"), self.insets)
             .show(ctx, |ui| {
                 ui.set_max_width(dialog_width(ui, 380.0));
-                ui.label(format!(
-                    "“{name}” and its {count} task{} will be permanently deleted.",
-                    if count == 1 { "" } else { "s" }
-                ));
+                ui.label(if count == 1 {
+                    trf("“{name}” and its 1 task will be permanently deleted.", &[("name", &name)])
+                } else {
+                    trf("“{name}” and its {count} tasks will be permanently deleted.", &[("name", &name), ("count", &count)])
+                });
                 if self.store.shares.iter().any(|s| s.list_id == id) {
-                    ui.label(RichText::new("It's shared: this only removes it from this device. Everyone else keeps it.").weak().small());
+                    ui.label(RichText::new(tr("It's shared: this only removes it from this device. Everyone else keeps it.")).weak().small());
                 }
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.add(egui::Button::new(RichText::new("Delete list").color(Color32::WHITE)).fill(DANGER)).clicked() {
+                    if ui.add(egui::Button::new(RichText::new(tr("Delete list")).color(Color32::WHITE)).fill(DANGER)).clicked() {
                         confirm = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
                 });
@@ -3561,7 +3581,7 @@ impl TodoApp {
                     ui.set_max_width((ctx.screen_rect().width() - 80.0).clamp(200.0, 620.0));
                     ui.horizontal(|ui| {
                         ui.add(egui::Label::new(&toast.text).wrap());
-                        if toast.undo.is_some() && ui.button("Undo").clicked() {
+                        if toast.undo.is_some() && ui.button(tr("Undo")).clicked() {
                             undo = true;
                         }
                         if small_btn(ui, "✖").clicked() {
@@ -3822,11 +3842,11 @@ fn reminder_presets(now: NaiveDateTime, clock_24h: bool) -> Vec<(String, NaiveDa
     // "Later today": three hours from now, rounded up to the hour.
     let later = (now + Duration::hours(3)).with_minute(0).and_then(|t| t.with_second(0));
     if let Some(later) = later.filter(|l| l.date() == today) {
-        out.push(("Later today".to_string(), later));
+        out.push((tr("Later today").to_string(), later));
     }
     let tomorrow = nine(today + Duration::days(1));
-    out.push((format!("Tomorrow {}", format_time(tomorrow, clock_24h)), tomorrow));
-    out.push(("Next week".to_string(), nine(next_monday(today))));
+    out.push((trf("Tomorrow {time}", &[("time", &format_time(tomorrow, clock_24h))]), tomorrow));
+    out.push((tr("Next week").to_string(), nine(next_monday(today))));
     out
 }
 
@@ -3879,7 +3899,7 @@ fn check_button(ui: &mut egui::Ui, done: bool, size: f32) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(hit), Sense::click());
     paint_check(ui.painter(), rect.center(), radius, done, resp.hovered(), ui.visuals());
     resp.on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(if done { "Mark as not completed" } else { "Mark as completed" })
+        .on_hover_text(if done { tr("Mark as not completed") } else { tr("Mark as completed") })
 }
 
 fn paint_star(ui: &egui::Ui, center: Pos2, important: bool, hovered: bool) {
@@ -3899,7 +3919,7 @@ fn star_button(ui: &mut egui::Ui, important: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(hit), Sense::click());
     paint_star(ui, rect.center(), important, resp.hovered());
     resp.on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text(if important { "Remove importance" } else { "Mark as important" })
+        .on_hover_text(if important { tr("Remove importance") } else { tr("Mark as important") })
 }
 
 /// A compact button with a mouse; a full-size, finger-friendly one in touch mode.
@@ -3961,11 +3981,11 @@ fn task_row(
         meta.push((store.list_name(t.list_id).to_string(), weak));
     }
     if view != View::MyDay && t.in_my_day(today) {
-        meta.push(("☀ My Day".into(), weak));
+        meta.push((tr("☀ My Day").into(), weak));
     }
     if !t.steps.is_empty() {
         let n = t.steps.iter().filter(|s| s.done).count();
-        meta.push((format!("{n} of {} subtasks", t.steps.len()), weak));
+        meta.push((trf("{n} of {total} subtasks", &[("n", &n), ("total", &t.steps.len())]), weak));
     }
     if let Some(due) = t.due {
         let color = if t.is_overdue(today) {
@@ -3975,7 +3995,7 @@ fn task_row(
         } else {
             weak
         };
-        let prefix = if t.is_overdue(today) { "Overdue, " } else { "" };
+        let prefix = if t.is_overdue(today) { tr("Overdue, ") } else { "" };
         meta.push((format!("📅 {prefix}{}", relative_date(due, today)), color));
     }
     if let Some(r) = t.reminder {
@@ -3987,7 +4007,7 @@ fn task_row(
         meta.push(("🔁".into(), weak));
     }
     if !t.notes.trim().is_empty() {
-        meta.push(("📝 Note".into(), weak));
+        meta.push((tr("📝 Note").into(), weak));
     }
 
     // Touch mode: taller rows, bigger text, and 48pt tap areas for the circle and star.
@@ -4064,7 +4084,7 @@ fn task_row(
     }
 
     let expand_clicked = expand.is_some_and(|e| {
-        e.on_hover_text(if expanded { "Hide subtasks" } else { "Show subtasks" }).on_hover_cursor(CursorIcon::PointingHand).clicked()
+        e.on_hover_text(if expanded { tr("Hide subtasks") } else { tr("Show subtasks") }).on_hover_cursor(CursorIcon::PointingHand).clicked()
     });
     if expand_clicked {
         actions.push(Action::ToggleExpand(t.id));
@@ -4077,28 +4097,28 @@ fn task_row(
     }
 
     resp.context_menu(|ui| {
-        let my_day = if t.in_my_day(today) { "☀  Remove from My Day" } else { "☀  Add to My Day" };
+        let my_day = if t.in_my_day(today) { tr("☀  Remove from My Day") } else { tr("☀  Add to My Day") };
         if ui.button(my_day).clicked() {
             actions.push(Action::ToggleMyDay(t.id));
             ui.close_menu();
         }
-        let imp = if t.important { "☆  Remove importance" } else { "★  Mark as important" };
+        let imp = if t.important { tr("☆  Remove importance") } else { tr("★  Mark as important") };
         if ui.button(imp).clicked() {
             actions.push(Action::ToggleImportant(t.id));
             ui.close_menu();
         }
-        if ui.button("+  Add a subtask").clicked() {
+        if ui.button(tr("+  Add a subtask")).clicked() {
             actions.push(Action::ToggleExpand(t.id));
             ui.ctx().data_mut(|d| d.insert_temp(Id::new(("focus_subtask", t.id)), true));
             ui.close_menu();
         }
-        let done = if t.done { "○  Mark as not completed" } else { "✔  Mark as completed" };
+        let done = if t.done { tr("○  Mark as not completed") } else { tr("✔  Mark as completed") };
         if ui.button(done).clicked() {
             actions.push(Action::ToggleDone(t.id));
             ui.close_menu();
         }
         ui.separator();
-        if ui.button(RichText::new("🗑  Delete task").color(DANGER)).clicked() {
+        if ui.button(RichText::new(tr("🗑  Delete task")).color(DANGER)).clicked() {
             actions.push(Action::Delete(t.id));
             ui.close_menu();
         }
@@ -4144,7 +4164,7 @@ fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut V
         let galley = ui.fonts(|f| f.layout_job(job));
         ui.painter().galley(Pos2::new(left, rect.center().y - galley.size().y / 2.0), galley, vis.text_color());
         if resp
-            .on_hover_text(if step.done { "Mark as not done" } else { "Mark as done" })
+            .on_hover_text(if step.done { tr("Mark as not done") } else { tr("Mark as done") })
             .on_hover_cursor(CursorIcon::PointingHand)
             .clicked()
         {
@@ -4164,11 +4184,11 @@ fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut V
         let mut enter = false;
         let mut lost = false;
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            add = has_text && ui.small_button("Add").clicked();
+            add = has_text && ui.small_button(tr("Add")).clicked();
             let r = ui.add(
                 egui::TextEdit::singleline(input)
                     .id(field_id)
-                    .hint_text("+ Add a subtask")
+                    .hint_text(tr("+ Add a subtask"))
                     .desired_width(ui.available_width()),
             );
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));

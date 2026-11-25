@@ -13,6 +13,7 @@
 //!   OpenGL isn't available (virtual machines, Remote Desktop, missing graphics drivers),
 //!   remembering the choice for next time.
 
+use crate::i18n::{tr, trf};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -105,13 +106,12 @@ fn install_panic_hook(role: &'static str, path: Option<PathBuf>) {
         default_hook(info);
         // The background companion has no window: don't pop up boxes from it.
         if role != "companion" {
-            let where_ = path.as_ref().map_or("RustDo's logs folder".to_string(), |p| p.display().to_string());
+            let where_ = path.as_ref().map_or(tr("RustDo's logs folder").to_string(), |p| p.display().to_string());
             show_error(
-                "RustDo ran into a problem",
-                &format!(
-                    "RustDo has to close because of an unexpected error:\n\n{info}\n\n\
-                     Your tasks are saved. The details are in:\n{where_}\n\n\
-                     Please send that file with your report."
+                tr("RustDo ran into a problem"),
+                &trf(
+                    "RustDo has to close because of an unexpected error:\n\n{info}\n\nYour tasks are saved. The details are in:\n{path}\n\nPlease send that file with your report.",
+                    &[("info", &info), ("path", &where_)],
                 ),
             );
         }

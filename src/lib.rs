@@ -5,6 +5,7 @@ pub mod app;
 pub mod changelog;
 pub mod companion;
 pub mod diagnostics;
+pub mod i18n;
 pub mod import;
 pub mod model;
 pub mod notes;
@@ -24,6 +25,7 @@ pub use app::TodoApp;
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn web_start() {
     use wasm_bindgen::JsCast;
+    i18n::set(i18n::Language::Automatic);
     let document = web_sys::window().and_then(|w| w.document()).expect("no document");
     let canvas = document
         .get_element_by_id("rustdo_canvas")
@@ -55,6 +57,7 @@ pub fn web_start() {
 fn android_main(app: winit::platform::android::activity::AndroidApp) {
     android_logger::init_once(android_logger::Config::default().with_max_level(log::LevelFilter::Info));
     platform::android_init(app.clone());
+    i18n::set(i18n::Language::Automatic);
 
     let options = eframe::NativeOptions {
         android_app: Some(app),

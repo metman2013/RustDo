@@ -4,6 +4,7 @@
 //! `notes.json` next to the task file, separate from the task store, so they are never sent
 //! to a RustDo Hub or included in shared lists.
 
+use crate::i18n::{tr, trf};
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -32,6 +33,20 @@ pub const PRESETS: [(&str, [u8; 3]); 8] = [
     ("Gray", [0xE0, 0xE0, 0xE0]),
     ("Charcoal", [0x3A, 0x3A, 0x3A]),
 ];
+
+/// A preset colour's name in the current language (for its tooltip).
+pub fn colour_name(name: &str) -> &'static str {
+    match name {
+        "Yellow" => tr("Yellow"),
+        "Green" => tr("Green"),
+        "Pink" => tr("Pink"),
+        "Purple" => tr("Purple"),
+        "Blue" => tr("Blue"),
+        "Orange" => tr("Orange"),
+        "Gray" => tr("Gray"),
+        _ => tr("Charcoal"),
+    }
+}
 
 pub const MIN_TEXT_SIZE: f32 = 10.0;
 pub const MAX_TEXT_SIZE: f32 = 48.0;
@@ -96,7 +111,7 @@ impl StickyNote {
 
     /// First non-empty line, for lists and window titles.
     pub fn title(&self) -> &str {
-        self.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("Empty note")
+        self.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(tr("Empty note"))
     }
 }
 
@@ -255,14 +270,14 @@ pub const BACKUP_KEY: &str = "sticky_notes";
 pub fn parse_backup(bytes: &[u8]) -> Result<Notes, String> {
     let text = String::from_utf8_lossy(bytes);
     let value: serde_json::Value =
-        serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| "This isn't a sticky notes backup.".to_string())?;
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| tr("This isn't a sticky notes backup.").to_string())?;
     let notes_value = match value.get(BACKUP_KEY) {
         Some(v) => v.clone(),
         None if value.get("notes").is_some_and(|n| n.is_array()) && value.get("default_list").is_none() => value,
-        None => return Err("This backup doesn't contain any sticky notes.".into()),
+        None => return Err(tr("This backup doesn't contain any sticky notes.").into()),
     };
     let mut notes: Notes =
-        serde_json::from_value(notes_value).map_err(|e| format!("This sticky notes backup is damaged ({e})."))?;
+        serde_json::from_value(notes_value).map_err(|e| trf("This sticky notes backup is damaged ({e}).", &[("e", &e)]))?;
     notes.repair();
     Ok(notes)
 }
@@ -312,6 +327,7 @@ pub fn header_color(background: [u8; 3]) -> [u8; 3] {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod file {
     use super::Notes;
+    use crate::i18n::trf;
     use std::fs;
     use std::io;
     use std::path::Path;
@@ -322,7 +338,7 @@ pub mod file {
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return (Notes::default(), None),
-            Err(e) => return (Notes::default(), Some(format!("Couldn't read your sticky notes: {e}"))),
+            Err(e) => return (Notes::default(), Some(trf("Couldn't read your sticky notes: {e}", &[("e", &e)]))),
         };
         match serde_json::from_str::<Notes>(text.trim_start_matches('\u{feff}')) {
             Ok(mut notes) => {
@@ -334,7 +350,7 @@ pub mod file {
                 let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let aside = path.with_extension(format!("corrupt-{stamp}.json"));
                 let _ = fs::rename(path, &aside);
-                (Notes::default(), Some(format!("Your sticky notes file was damaged ({e}). It was saved as {}.", aside.display())))
+                (Notes::default(), Some(trf("Your sticky notes file was damaged ({e}). It was saved as {path}.", &[("e", &e), ("path", &aside.display())])))
             }
         }
     }
@@ -382,6 +398,7 @@ pub mod file {
 #[cfg(target_arch = "wasm32")]
 pub mod browser {
     use super::Notes;
+    use crate::i18n::trf;
 
     const KEY: &str = "rustdo.notes";
 
@@ -402,7 +419,7 @@ pub mod browser {
             Err(e) => {
                 let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
                 let _ = ls.set_item(&format!("{KEY}.corrupt-{stamp}"), &text);
-                (Notes::default(), Some(format!("Your saved sticky notes were damaged ({e}); a copy was kept in browser storage.")))
+                (Notes::default(), Some(trf("Your saved sticky notes were damaged ({e}); a copy was kept in browser storage.", &[("e", &e)])))
             }
         }
     }

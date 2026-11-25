@@ -5,6 +5,7 @@
 //! minimized. The notes live in one shared, locked [`Shared`] that the main window's
 //! "Sticky notes" page and the note windows all read and write.
 
+use crate::i18n::{plural, tr, trf};
 use crate::notes::{self, Notes, StickyNote, MAX_TEXT_SIZE, MIN_TEXT_SIZE, PRESETS};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, CursorIcon, FontId, Id, Layout, Pos2, RichText, Sense, Stroke, UiBuilder, Vec2,
@@ -45,6 +46,12 @@ pub struct Shared {
 }
 
 pub type SharedNotes = Arc<Mutex<Shared>>;
+
+/// Whether a warning is the "couldn't save" one (in whichever language it was made).
+fn is_save_warning(w: &str) -> bool {
+    let prefix = tr("Couldn't save your sticky notes: {e}").split('{').next().unwrap_or_default();
+    w.starts_with(prefix) || w.starts_with("Couldn't save")
+}
 
 trait WithStamp {
     fn with_stamp(self) -> Self;
@@ -149,7 +156,7 @@ impl Shared {
         if let Some(dir) = safety_dir.filter(|_| !self.notes.notes.is_empty()) {
             let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
             let copy = dir.join(format!("{}before-restore-{stamp}.json", notes::BACKUP_PREFIX));
-            notes::file::save(&copy, &self.notes).map_err(|e| format!("couldn't save your current sticky notes first ({e})"))?;
+            notes::file::save(&copy, &self.notes).map_err(|e| trf("couldn't save your current sticky notes first ({e})", &[("e", &e)]))?;
         }
         let _ = safety_dir;
         self.notes = notes;
@@ -181,21 +188,21 @@ impl Shared {
             match notes::file::save(path, &self.notes) {
                 Ok(()) => {
                     self.file_stamp = std::fs::metadata(path).and_then(|m| m.modified()).ok();
-                    if self.warning.as_deref().is_some_and(|w| w.starts_with("Couldn't save")) {
+                    if self.warning.as_deref().is_some_and(is_save_warning) {
                         self.warning = None;
                     }
                 }
-                Err(e) => self.warning = Some(format!("Couldn't save your sticky notes: {e}")),
+                Err(e) => self.warning = Some(trf("Couldn't save your sticky notes: {e}", &[("e", &e)])),
             }
         }
         #[cfg(target_arch = "wasm32")]
         match notes::browser::save(&self.notes) {
             Ok(()) => {
-                if self.warning.as_deref().is_some_and(|w| w.starts_with("Couldn't save")) {
+                if self.warning.as_deref().is_some_and(is_save_warning) {
                     self.warning = None;
                 }
             }
-            Err(e) => self.warning = Some(format!("Couldn't save your sticky notes: {e}")),
+            Err(e) => self.warning = Some(trf("Couldn't save your sticky notes: {e}", &[("e", &e)])),
         }
     }
 
@@ -255,7 +262,7 @@ pub fn show_windows(ctx: &egui::Context, shared: &SharedNotes) {
                 let (pos, size) =
                     *spawn.entry(n.id).or_insert_with(|| (n.pos.map(Pos2::from), Vec2::from(n.size)));
                 let mut b = ViewportBuilder::default()
-                    .with_title(format!("{} - Sticky note", n.title()))
+                    .with_title(format!("{} - {}", n.title(), tr("Sticky note")))
                     .with_app_id("rustdo")
                     .with_inner_size(size)
                     .with_min_inner_size([160.0, 120.0])
@@ -400,20 +407,20 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                 .max_rect(bar.shrink2(Vec2::new(4.0, 2.0)))
                 .layout(Layout::left_to_right(Align::Center)),
         );
-        if bar_ui.add(egui::Button::new(RichText::new("+").size(18.0).color(ink)).frame(false)).on_hover_text("New note").clicked() {
+        if bar_ui.add(egui::Button::new(RichText::new("+").size(18.0).color(ink)).frame(false)).on_hover_text(tr("New note")).clicked() {
             action = NoteAction::New;
         }
         bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.add(egui::Button::new(RichText::new("✖").color(ink)).frame(false)).on_hover_text("Hide note (it stays in RustDo's Sticky notes list)").clicked() {
+            if ui.add(egui::Button::new(RichText::new("✖").color(ink)).frame(false)).on_hover_text(tr("Hide note (it stays in RustDo's Sticky notes list)")).clicked() {
                 action = NoteAction::Hide;
             }
             ui.menu_button(RichText::new("🎨").color(ink), |ui| {
                 note_menu(ui, &mut edited, &mut action, true);
             })
             .response
-            .on_hover_text("Colour, text and more");
+            .on_hover_text(tr("Colour, text and more"));
             if edited.on_top {
-                ui.label(RichText::new("📌").color(ink)).on_hover_text("Kept on top of other windows");
+                ui.label(RichText::new("📌").color(ink)).on_hover_text(tr("Kept on top of other windows"));
             }
         });
 
@@ -421,13 +428,13 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
         let body = egui::Rect::from_min_max(full.min + Vec2::new(0.0, HEADER_H), full.max);
         let mut body_ui = ui.new_child(UiBuilder::new().max_rect(body.shrink(10.0)).layout(Layout::top_down(Align::Min)));
         if confirming {
-            body_ui.label(RichText::new("Delete this note?").strong().size(16.0));
-            body_ui.label(RichText::new("This can't be undone.").small());
+            body_ui.label(RichText::new(tr("Delete this note?")).strong().size(16.0));
+            body_ui.label(RichText::new(tr("This can't be undone.")).small());
             body_ui.horizontal(|ui| {
-                if ui.button(RichText::new("Delete").color(ink)).clicked() {
+                if ui.button(RichText::new(tr("Delete")).color(ink)).clicked() {
                     action = NoteAction::Delete;
                 }
-                if ui.button(RichText::new("Cancel").color(ink)).clicked() {
+                if ui.button(RichText::new(tr("Cancel")).color(ink)).clicked() {
                     action = NoteAction::CancelDelete;
                 }
             });
@@ -437,7 +444,7 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                     egui::TextEdit::multiline(&mut edited.text)
                         .font(FontId::proportional(edited.text_size))
                         .text_color(ink)
-                        .hint_text(RichText::new("Take a note…").color(ink.gamma_multiply(0.5)))
+                        .hint_text(RichText::new(tr("Take a note…")).color(ink.gamma_multiply(0.5)))
                         .frame(false)
                         .desired_width(f32::INFINITY)
                         .desired_rows(((body.height() - 20.0) / (edited.text_size * 1.3)).max(1.0) as usize),
@@ -540,9 +547,9 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
     match page {
         MenuPage::NoteColour | MenuPage::TextColour => {
             let (title, rgb) = if page == MenuPage::NoteColour {
-                ("Note colour", note.color)
+                (tr("Note colour"), note.color)
             } else {
-                ("Text colour", note.ink())
+                (tr("Text colour"), note.ink())
             };
             ui.label(RichText::new(title).strong());
             // Fit the picker's square in the window; scroll if it's smaller still.
@@ -559,12 +566,12 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
                     }
                 }
             });
-            if ui.button("✔  Done").on_hover_text("Keep this colour and go back").clicked() {
+            if ui.button(tr("✔  Done")).on_hover_text(tr("Keep this colour and go back")).clicked() {
                 page = MenuPage::Options;
             }
         }
         MenuPage::Options => {
-            ui.label(RichText::new("Note colour").strong());
+            ui.label(RichText::new(tr("Note colour")).strong());
             ui.horizontal_wrapped(|ui| {
                 for (name, color) in PRESETS {
                     let (rect, r) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
@@ -572,21 +579,21 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
                     ui.painter().rect_filled(rect, CornerRadius::same(4), c32(color));
                     let outline = if selected || r.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
                     ui.painter().rect_stroke(rect, CornerRadius::same(4), Stroke::new(if selected { 2.0_f32 } else { 1.0 }, outline), egui::StrokeKind::Inside);
-                    if r.on_hover_text(name).clicked() {
+                    if r.on_hover_text(notes::colour_name(name)).clicked() {
                         note.color = color;
                     }
                 }
             });
-            if colour_row(ui, "Any colour:", note.color) {
+            if colour_row(ui, tr("Any colour:"), note.color) {
                 page = MenuPage::NoteColour;
             }
             ui.separator();
-            ui.label(RichText::new("Text").strong());
+            ui.label(RichText::new(tr("Text")).strong());
             let mut auto = note.text_color.is_none();
-            if ui.checkbox(&mut auto, "Automatic colour (suits the note)").changed() {
+            if ui.checkbox(&mut auto, tr("Automatic colour (suits the note)")).changed() {
                 note.text_color = if auto { None } else { Some(note.ink()) };
             }
-            if !auto && colour_row(ui, "Text colour:", note.ink()) {
+            if !auto && colour_row(ui, tr("Text colour:"), note.ink()) {
                 page = MenuPage::TextColour;
             }
             note_menu_rest(ui, note, action, desktop);
@@ -619,8 +626,8 @@ fn colour_row(ui: &mut egui::Ui, label: &str, rgb: [u8; 3]) -> bool {
         let (rect, swatch) = ui.allocate_exact_size(Vec2::new(32.0, 20.0), Sense::click());
         ui.painter().rect_filled(rect, CornerRadius::same(3), c32(rgb));
         ui.painter().rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.0_f32, ui.visuals().weak_text_color()), egui::StrokeKind::Inside);
-        let button = ui.button("Change…");
-        swatch.on_hover_text("Pick any colour").clicked() | button.clicked()
+        let button = ui.button(tr("Change…"));
+        swatch.on_hover_text(tr("Pick any colour")).clicked() | button.clicked()
     })
     .inner
 }
@@ -628,20 +635,20 @@ fn colour_row(ui: &mut egui::Ui, label: &str, rgb: [u8; 3]) -> bool {
 /// Text size, keep on top and delete (the rest of the options page).
 fn note_menu_rest(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool) {
     ui.horizontal(|ui| {
-        ui.label("Size:");
-        if ui.small_button("A−").on_hover_text("Smaller").clicked() {
+        ui.label(tr("Size:"));
+        if ui.small_button("A−").on_hover_text(tr("Smaller")).clicked() {
             note.text_size = (note.text_size - 2.0).max(MIN_TEXT_SIZE);
         }
         ui.add(egui::Slider::new(&mut note.text_size, MIN_TEXT_SIZE..=MAX_TEXT_SIZE).step_by(1.0).show_value(true));
-        if ui.small_button("A+").on_hover_text("Bigger").clicked() {
+        if ui.small_button("A+").on_hover_text(tr("Bigger")).clicked() {
             note.text_size = (note.text_size + 2.0).min(MAX_TEXT_SIZE);
         }
     });
     ui.separator();
     if desktop {
-        ui.checkbox(&mut note.on_top, "📌 Keep on top of other windows");
+        ui.checkbox(&mut note.on_top, tr("📌 Keep on top of other windows"));
     }
-    if ui.button("🗑  Delete note…").clicked() {
+    if ui.button(tr("🗑  Delete note…")).clicked() {
         *action = NoteAction::AskDelete;
         ui.close_menu();
     }
@@ -666,15 +673,15 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
     let mut page_action = PageAction::None;
     let mut s = lock(shared);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
+        ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.button("Restore notes…").on_hover_text("Bring notes back from a backup file (your current notes are kept)").clicked() {
+            if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
                 page_action = PageAction::Restore;
             }
-            if ui.button("Back up notes…").on_hover_text("Save all sticky notes to a file").clicked() {
+            if ui.button(tr("Back up notes…")).on_hover_text(tr("Save all sticky notes to a file")).clicked() {
                 page_action = PageAction::Backup;
             }
-            if ui.button("+ New note").clicked() {
+            if ui.button(tr("+ New note")).clicked() {
                 // Next to the RustDo window (cascading from the newest note if there is one).
                 let near = s.notes.notes.last().filter(|n| n.open).and_then(|n| n.pos).or_else(|| {
                     ui.ctx().input(|i| i.viewport().outer_rect).map(|r| [r.right() - 300.0, r.top() + 40.0])
@@ -699,7 +706,7 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("📝").size(40.0));
-            ui.label(RichText::new("No sticky notes yet. Click “+ New note” to put one on your desktop.").weak());
+            ui.label(RichText::new(tr("No sticky notes yet. Click “+ New note” to put one on your desktop.")).weak());
         });
         return page_action;
     }
@@ -725,19 +732,19 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
                             ui.visuals_mut().override_text_color = Some(ink);
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = ink.gamma_multiply(0.12);
                             if confirming == Some(note.id) {
-                                if ui.button("Cancel").clicked() {
+                                if ui.button(tr("Cancel")).clicked() {
                                     cancel_delete = true;
                                 }
-                                if ui.button("Delete").clicked() {
+                                if ui.button(tr("Delete")).clicked() {
                                     delete = Some(note.id);
                                 }
-                                ui.label(RichText::new("Delete this note?").color(ink));
+                                ui.label(RichText::new(tr("Delete this note?")).color(ink));
                                 return;
                             }
-                            if ui.button("🗑").on_hover_text("Delete note").clicked() {
+                            if ui.button("🗑").on_hover_text(tr("Delete note")).clicked() {
                                 ask_delete = Some(note.id);
                             }
-                            let label = if note.open { "Hide" } else { "Show" };
+                            let label = if note.open { tr("Hide") } else { tr("Show") };
                             if ui.button(label).clicked() {
                                 toggle = Some((note.id, !note.open));
                             }
@@ -780,16 +787,16 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
     let mut tidy = false;
     // Phones: title on its own line, buttons below (they don't fit beside it).
     let buttons = |ui: &mut egui::Ui, s: &mut Shared, page_action: &mut PageAction, tidy: &mut bool| {
-            if ui.button("Restore notes…").on_hover_text("Bring notes back from a backup file (your current notes are kept)").clicked() {
+            if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
                 *page_action = PageAction::Restore;
             }
-            if ui.button("Back up notes…").on_hover_text("Download all sticky notes as a file").clicked() {
+            if ui.button(tr("Back up notes…")).on_hover_text(tr("Download all sticky notes as a file")).clicked() {
                 *page_action = PageAction::Backup;
             }
-            if !narrow && !s.notes.notes.is_empty() && ui.button("Tidy up").on_hover_text("Line all notes up neatly").clicked() {
+            if !narrow && !s.notes.notes.is_empty() && ui.button(tr("Tidy up")).on_hover_text(tr("Line all notes up neatly")).clicked() {
                 *tidy = true;
             }
-            if ui.add(egui::Button::new(RichText::new("+ New note").color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
+            if ui.add(egui::Button::new(RichText::new(tr("+ New note")).color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
                 let near = s.notes.notes.last().and_then(|n| n.pos);
                 s.new_note(near.or(Some([-16.0, -16.0])));
             }
@@ -797,30 +804,30 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
     if narrow {
         // Phones: title, then the buttons left to right ("+ New note" first), wrapping
         // onto a second line when they don't fit.
-        ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
+        ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
         ui.horizontal_wrapped(|ui| {
-            if ui.add(egui::Button::new(RichText::new("+ New note").color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
+            if ui.add(egui::Button::new(RichText::new(tr("+ New note")).color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
                 let near = s.notes.notes.last().and_then(|n| n.pos);
                 s.new_note(near.or(Some([-16.0, -16.0])));
             }
-            if ui.button("Back up").clicked() {
+            if ui.button(tr("Back up")).clicked() {
                 page_action = PageAction::Backup;
             }
-            if ui.button("Restore").clicked() {
+            if ui.button(tr("Restore")).clicked() {
                 page_action = PageAction::Restore;
             }
         });
     } else {
         ui.horizontal(|ui| {
-            ui.label(RichText::new("📝 Sticky notes").size(24.0).strong());
+            ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
         });
     }
-    let kept = if cfg!(target_os = "android") { "on this phone" } else { "in this browser" };
+    let kept = if cfg!(target_os = "android") { tr("on this phone") } else { tr("in this browser") };
     let hint = if narrow {
-        format!("Notes are kept {kept} and included in your backups.")
+        trf("Notes are kept {kept} and included in your backups.", &[("kept", &kept)])
     } else {
-        format!("Drag a note by its top bar, resize it from the corner. Notes are kept {kept} and included in your backups.")
+        trf("Drag a note by its top bar, resize it from the corner. Notes are kept {kept} and included in your backups.", &[("kept", &kept)])
     };
     ui.add(egui::Label::new(RichText::new(hint).weak().small()).wrap());
     if let Some(w) = &s.warning {
@@ -832,8 +839,8 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("📝").size(40.0));
-            let verb = if crate::platform::IS_MOBILE_OR_WEB && cfg!(target_os = "android") { "Tap" } else { "Click" };
-            ui.add(egui::Label::new(RichText::new(format!("No sticky notes yet. {verb} “+ New note” to add one.")).weak()).wrap());
+            let verb = if crate::platform::IS_MOBILE_OR_WEB && cfg!(target_os = "android") { tr("Tap") } else { tr("Click") };
+            ui.add(egui::Label::new(RichText::new(trf("No sticky notes yet. {verb} “+ New note” to add one.", &[("verb", &verb)])).weak()).wrap());
         });
         return page_action;
     }
@@ -997,17 +1004,17 @@ fn wall_card(
     let mut bar_ui = card.new_child(
         UiBuilder::new().max_rect(bar.shrink2(Vec2::new(4.0, 1.0))).layout(Layout::left_to_right(Align::Center)),
     );
-    if bar_ui.add(egui::Button::new(RichText::new("+").size(17.0).color(ink)).frame(false)).on_hover_text("New note").clicked() {
+    if bar_ui.add(egui::Button::new(RichText::new("+").size(17.0).color(ink)).frame(false)).on_hover_text(tr("New note")).clicked() {
         action = Some(WallAction::New);
     }
     bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        if ui.add(egui::Button::new(RichText::new("🗑").color(ink)).frame(false)).on_hover_text("Delete note").clicked() {
+        if ui.add(egui::Button::new(RichText::new("🗑").color(ink)).frame(false)).on_hover_text(tr("Delete note")).clicked() {
             action = Some(WallAction::AskDelete);
         }
         let mut menu_action = NoteAction::None;
         ui.menu_button(RichText::new("🎨").color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
             .response
-            .on_hover_text("Colour and text");
+            .on_hover_text(tr("Colour and text"));
         if matches!(menu_action, NoteAction::AskDelete) {
             action = Some(WallAction::AskDelete);
         }
@@ -1016,13 +1023,13 @@ fn wall_card(
     let body = egui::Rect::from_min_max(rect.min + Vec2::new(0.0, WALL_HEADER_H), rect.max);
     let mut body_ui = card.new_child(UiBuilder::new().max_rect(body.shrink(10.0)).layout(Layout::top_down(Align::Min)));
     if confirming {
-        body_ui.label(RichText::new("Delete this note?").strong().size(16.0));
-        body_ui.label(RichText::new("This can't be undone.").small());
+        body_ui.label(RichText::new(tr("Delete this note?")).strong().size(16.0));
+        body_ui.label(RichText::new(tr("This can't be undone.")).small());
         body_ui.horizontal(|ui| {
-            if ui.button(RichText::new("Delete").color(ink)).clicked() {
+            if ui.button(RichText::new(tr("Delete")).color(ink)).clicked() {
                 action = Some(WallAction::Delete);
             }
-            if ui.button(RichText::new("Cancel").color(ink)).clicked() {
+            if ui.button(RichText::new(tr("Cancel")).color(ink)).clicked() {
                 action = Some(WallAction::CancelDelete);
             }
         });
@@ -1037,7 +1044,7 @@ fn wall_card(
                     .id(Id::new(("wall_edit", id)))
                     .font(FontId::proportional(note.text_size))
                     .text_color(ink)
-                    .hint_text(RichText::new("Take a note…").color(ink.gamma_multiply(0.5)))
+                    .hint_text(RichText::new(tr("Take a note…")).color(ink.gamma_multiply(0.5)))
                     .frame(false)
                     .desired_width(f32::INFINITY)
                     .desired_rows(((body.height() - 20.0) / (note.text_size * 1.3)).max(1.0) as usize),

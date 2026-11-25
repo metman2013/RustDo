@@ -15,6 +15,8 @@ fn main() -> eframe::Result<()> {
     }
     let companion = rustdo_app::companion::is_companion_launch(&args);
     // A log file and a crash handler: a desktop RustDo has no console to show errors in.
+    // The device's language until the saved setting is read.
+    rustdo_app::i18n::set(rustdo_app::i18n::Language::Automatic);
     rustdo_app::diagnostics::init(if companion { "companion" } else { "rustdo" });
     if companion {
         rustdo_app::companion::run(&args);

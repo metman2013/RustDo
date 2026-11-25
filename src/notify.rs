@@ -11,15 +11,16 @@
 //!   (after the user allows notifications).
 //! * **Android**: in-app reminders only, for now.
 
+use crate::i18n::{tr, trf};
 use crate::model::{relative_date, Store};
 use chrono::NaiveDateTime;
 
 /// Text under the task title in a notification.
 pub fn body_text(due: Option<chrono::NaiveDate>, today: chrono::NaiveDate) -> String {
     match due {
-        Some(d) if d < today => format!("Reminder · overdue since {}", relative_date(d, today)),
-        Some(d) => format!("Reminder · due {}", relative_date(d, today).to_lowercase()),
-        None => "Reminder".to_string(),
+        Some(d) if d < today => trf("Reminder · overdue since {date}", &[("date", &relative_date(d, today))]),
+        Some(d) => trf("Reminder · due {date}", &[("date", &relative_date(d, today).to_lowercase())]),
+        None => tr("Reminder").to_string(),
     }
 }
 
