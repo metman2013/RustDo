@@ -1,6 +1,7 @@
 //! The egui user interface.
 
 use crate::account;
+use crate::mstodo;
 use crate::i18n::{self, plural, tr, trf};
 use crate::model::{
     format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
@@ -42,7 +43,10 @@ const NOTES_SECTION_H: f32 = 62.0;
 const SIDEBAR_FOOTER_H: f32 = 34.0;
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
-const CAN_IMPORT: bool = cfg!(not(target_os = "android"));
+/// The sidebar's "Import from Microsoft To Do" (signing in works everywhere).
+const CAN_IMPORT: bool = true;
+/// Importing an export file (Android has no file picker here).
+const CAN_IMPORT_FILE: bool = cfg!(not(target_os = "android"));
 
 /// Built at runtime from `update::REPO` (like the other GitHub links) so the binary never
 /// contains "/RustDo/", which tools/build-release.ps1 treats as a leaked local path.
@@ -79,6 +83,26 @@ struct PendingImport {
     file_name: String,
     import: Import,
     include_completed: bool,
+}
+
+/// "Import from Microsoft To Do": sign in with Microsoft, or pick an export file.
+#[derive(Default)]
+struct MsImportDialog {
+    session: Option<mstodo::Session>,
+    /// Desktop and Android: the code to enter, and where.
+    code: Option<(String, String)>,
+    status: Option<String>,
+    error: Option<String>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn resume_ms_import(ctx: &egui::Context) -> Option<MsImportDialog> {
+    mstodo::resume_web(ctx).map(|session| MsImportDialog { session: Some(session), ..Default::default() })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn resume_ms_import(_ctx: &egui::Context) -> Option<MsImportDialog> {
+    None
 }
 
 /// "Sync my devices": turning sync on, or showing the sync key.
@@ -215,6 +239,7 @@ pub struct TodoApp {
     account_soon: bool,
     account_error: Option<String>,
     account_dialog: Option<AccountDialog>,
+    ms_import: Option<MsImportDialog>,
     /// Notes changes up to here are already known to the account sync.
     account_notes_seen: Option<Instant>,
     /// The "What's new" dialog: the releases to describe, newest first.
@@ -344,6 +369,8 @@ impl TodoApp {
             account_soon: false,
             account_error: None,
             account_dialog: None,
+            // Web: back from Microsoft's sign-in page, carry on with the import.
+            ms_import: resume_ms_import(&cc.egui_ctx),
             account_notes_seen: None,
             whats_new,
         }
@@ -935,6 +962,124 @@ impl TodoApp {
             self.helper_handled = false; // start, wake or stop the companion
         }
         ui.separator();
+    }
+
+    // ------------------------------------------------------------------ Microsoft To Do import
+
+    fn ms_import_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.ms_import.as_mut() else { return };
+        // What the sign-in sent.
+        let mut download = None;
+        if let Some(session) = &dialog.session {
+            while let Ok(event) = session.rx.try_recv() {
+                match event {
+                    mstodo::Event::Code { user_code, url } => {
+                        dialog.code = Some((user_code, url));
+                        dialog.status = None;
+                    }
+                    mstodo::Event::Status(s) => dialog.status = Some(s),
+                    mstodo::Event::Done(result) => download = Some(result),
+                }
+            }
+        }
+        match download {
+            Some(Ok(json)) => {
+                self.ms_import = None;
+                match import::parse_download(&json) {
+                    Ok(import) => {
+                        self.pending_import = Some(PendingImport { file_name: "Microsoft To Do".into(), import, include_completed: false })
+                    }
+                    Err(e) => self.notify(e),
+                }
+                return;
+            }
+            Some(Err(e)) => {
+                dialog.session = None;
+                dialog.code = None;
+                dialog.status = None;
+                // An empty error: cancelled here.
+                dialog.error = (!e.is_empty()).then_some(e);
+            }
+            None => {}
+        }
+
+        let mut close = false;
+        let mut sign_in = false;
+        let mut from_file = false;
+        dialog_window(ctx, tr("Import from Microsoft To Do"), self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 440.0));
+            if let Some((code, url)) = &dialog.code {
+                ui.label(tr("1. Open the Microsoft sign-in page:"));
+                if ui.link(url.as_str()).clicked() {
+                    ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                }
+                ui.add_space(4.0);
+                ui.label(tr("2. Enter this code and sign in with the account you use for To Do:"));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(code).monospace().size(24.0).strong());
+                    if ui.button(tr("📋 Copy code")).clicked() {
+                        ui.ctx().copy_text(code.clone());
+                    }
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new(dialog.status.as_deref().unwrap_or(tr("Waiting for you to sign in…"))).weak());
+                });
+            } else if dialog.session.is_some() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(dialog.status.as_deref().unwrap_or(tr("Connecting to Microsoft…")));
+                });
+            } else {
+                ui.add(
+                    egui::Label::new(tr(
+                        "Bring your lists, tasks, steps, notes, due dates and reminders over from Microsoft To Do. RustDo only reads them: nothing in To Do is changed.",
+                    ))
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                if let Some(e) = &dialog.error {
+                    ui.label(RichText::new(e).color(DANGER).small());
+                    ui.add_space(4.0);
+                }
+                if ui.add(egui::Button::new(RichText::new(tr("Sign in with Microsoft")).strong())).clicked() {
+                    sign_in = true;
+                }
+                ui.label(
+                    RichText::new(tr("Works with personal Microsoft accounts (Outlook.com) and work or school accounts."))
+                        .weak()
+                        .small(),
+                );
+                if CAN_IMPORT_FILE {
+                    ui.add_space(6.0);
+                    if ui
+                        .button(tr("From an export file…"))
+                        .on_hover_text(tr("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window."))
+                        .clicked()
+                    {
+                        from_file = true;
+                    }
+                }
+            }
+            ui.add_space(6.0);
+            if ui.button(tr("Cancel")).clicked() {
+                close = true;
+            }
+        });
+        if sign_in {
+            dialog.error = None;
+            dialog.session = Some(mstodo::start(ctx));
+        }
+        if close || from_file {
+            if let Some(s) = &dialog.session {
+                s.cancel();
+            }
+            self.ms_import = None;
+        }
+        if from_file {
+            self.pick_import_file(ctx);
+        }
     }
 
     // ------------------------------------------------------------------ sync my devices
@@ -2578,11 +2723,11 @@ impl TodoApp {
                 if CAN_IMPORT
                     && ui
                         .add_sized([ui.available_width(), 26.0], egui::Button::new(tr("⬇  Import from Microsoft To Do…")))
-                        .on_hover_text(tr("Import a Microsoft To Do export (.json) or an Outlook tasks export (.csv).\nYou can also drop the file onto this window."))
+                        .on_hover_text(tr("Sign in with Microsoft to bring over your lists, or import an export file."))
                         .clicked()
                 {
-                    let ctx = ui.ctx().clone();
-                    self.pick_import_file(&ctx);
+                    self.ms_import = Some(MsImportDialog::default());
+                    self.show_nav = false;
                 }
 
                 // Sticky notes: their own section, apart from the to-do lists.
@@ -3723,6 +3868,7 @@ impl eframe::App for TodoApp {
         self.whats_new_dialog(ctx);
         self.hub_guide_dialog(ctx);
         self.account_dialog(ctx);
+        self.ms_import_dialog(ctx);
         self.toast_area(ctx);
 
         if self.dirty {

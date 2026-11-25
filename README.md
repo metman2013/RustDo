@@ -176,6 +176,16 @@ Microsoft To Do has no export button. RustDo reads your tasks through Microsoft'
 Graph API instead, which keeps lists, steps, notes, due dates, reminders, repeats,
 importance and completed tasks.
 
+**Easiest: sign in.** Click **⬇ Import from Microsoft To Do…** in the menu, then **Sign in
+with Microsoft**. On Windows, Linux and Android, RustDo shows a short code: open the page
+it shows, enter the code and sign in with the account you use for To Do. The web app goes
+to Microsoft's sign-in page and comes back. RustDo then reads all your lists and shows
+what it will import. It only asks for read access (`Tasks.Read`), changes nothing in To
+Do, and doesn't keep the sign-in. Personal (Outlook.com) and work or school accounts work.
+Work accounts may need an administrator to allow the app.
+
+**Or with an export file:**
+
 **1. Export.** In PowerShell, from this folder, run:
 
 ```bash

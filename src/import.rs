@@ -123,6 +123,11 @@ fn cp1252(b: u8) -> char {
     }
 }
 
+/// Lists and tasks read straight from Microsoft To Do (mstodo.rs), in export-file form.
+pub fn parse_download(json: &str) -> Result<Import, String> {
+    parse_graph_json(json, "Microsoft To Do", utc_to_local)
+}
+
 fn utc_to_local(n: NaiveDateTime) -> NaiveDateTime {
     Local.from_utc_datetime(&n).naive_local()
 }
