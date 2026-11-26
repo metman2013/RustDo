@@ -458,7 +458,7 @@ jobs:
             exit 0
           }
 
-          Write-Host "What's new for $env:VERSION:"
+          Write-Host "What's new for ${env:VERSION}:"
           python tools/store_whats_new.py notes $env:VERSION
           $sub = Join-Path $env:RUNNER_TEMP 'submission.txt'
           $patched = Join-Path $env:RUNNER_TEMP 'submission.json'

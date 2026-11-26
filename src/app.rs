@@ -154,6 +154,8 @@ pub struct TodoApp {
     /// Held while this window is open, so the tray's "Open RustDo" brings it to the front.
     _app_lock: Option<std::fs::File>,
     keyboard_shown: bool,
+    /// Whether the window had the focus last frame (to bring the keyboard back on return).
+    window_focused: Option<bool>,
     update_rx: Option<Receiver<CheckResult>>,
     /// True when the user pressed "Check now" (so "up to date" and errors are reported).
     update_manual: bool,
@@ -312,6 +314,7 @@ impl TodoApp {
             companion_checked: None,
             _app_lock: if companion::SUPPORTED { companion::lock_app() } else { None },
             keyboard_shown: false,
+            window_focused: None,
             update_rx: None,
             update_manual: false,
             update_available: None,
@@ -3130,23 +3133,35 @@ impl TodoApp {
 
             if !searching && self.view != View::Completed {
                 let min = field_height(ui);
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.new_task)
-                        .hint_text(if platform::IS_MOBILE_OR_WEB || narrow || touch {
-                            tr("+  Add a task")
-                        } else {
-                            tr("+  Add a task   (Enter to save, Ctrl+N)")
-                        })
-                        .font(FontId::proportional(if touch { 17.0 } else { 15.0 }))
-                        .min_size(min)
-                        .vertical_align(Align::Center)
-                        .desired_width(f32::INFINITY),
-                );
+                // An Add button appears once there's text, so a task can be saved without
+                // the keyboard's Enter key (e.g. after the on-screen keyboard was hidden).
+                let has_text = !self.new_task.trim().is_empty();
+                let (r, add_clicked) = ui
+                    .horizontal(|ui| ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let add = has_text
+                            && ui.add(egui::Button::new(RichText::new(tr("Add")).size(if touch { 17.0 } else { 15.0 })).min_size(Vec2::new(min.y * 1.6, min.y))).clicked();
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut self.new_task)
+                                // A fixed id: the Add button appearing must not make it a new field.
+                                .id(Id::new("add_task_field"))
+                                .hint_text(if platform::IS_MOBILE_OR_WEB || narrow || touch {
+                                    tr("+  Add a task")
+                                } else {
+                                    tr("+  Add a task   (Enter to save, Ctrl+N)")
+                                })
+                                .font(FontId::proportional(if touch { 17.0 } else { 15.0 }))
+                                .min_size(min)
+                                .vertical_align(Align::Center)
+                                .desired_width(ui.available_width()),
+                        );
+                        (r, add)
+                    }).inner)
+                    .inner;
                 if self.focus_add {
                     r.request_focus();
                     self.focus_add = false;
                 }
-                if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                if add_clicked || (r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
                     if let Some(id) = self.store.add_task(&self.new_task, self.view, now) {
                         self.new_task.clear();
                         self.last_added = Some((id, self.view));
@@ -4044,8 +4059,15 @@ impl eframe::App for TodoApp {
         }
 
         // Android needs to be told to show the on-screen keyboard for text fields.
+        // Android hides the keyboard by itself (its hide key, the back gesture, switching
+        // apps) without telling the app, while the text field stays selected. So besides
+        // following the selected field, ask for the keyboard again whenever a selected field
+        // is tapped and when RustDo comes back to the front.
         let wants_keyboard = ctx.wants_keyboard_input();
-        if wants_keyboard != self.keyboard_shown {
+        let (tapped, focused) = ctx.input(|i| (i.pointer.any_released(), i.viewport().focused));
+        let came_back = focused == Some(true) && self.window_focused == Some(false);
+        self.window_focused = focused.or(self.window_focused);
+        if wants_keyboard != self.keyboard_shown || (wants_keyboard && (tapped || came_back)) {
             platform::show_keyboard(wants_keyboard);
             self.keyboard_shown = wants_keyboard;
         }
