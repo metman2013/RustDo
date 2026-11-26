@@ -805,6 +805,13 @@ impl TodoApp {
         if language != self.store.settings.language {
             self.store.settings.language = language;
             i18n::set(language);
+            // The default list follows the language while it still has its default name.
+            let default = self.store.default_list;
+            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
+                if i18n::default_list_names().contains(&list.name.as_str()) {
+                    list.name = tr("Tasks").to_string();
+                }
+            }
             self.dirty = true;
         }
         ui.separator();

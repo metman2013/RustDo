@@ -369,7 +369,8 @@ impl Store {
                 name: tr("Tasks").into(),
             }],
             tasks: Vec::new(),
-            settings: Settings::default(),
+            // A new install: the clock people of this language expect.
+            settings: Settings { clock_24h: crate::i18n::prefers_24h(), ..Settings::default() },
             shares: Vec::new(),
             account: None,
         }
