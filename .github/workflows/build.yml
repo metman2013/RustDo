@@ -196,6 +196,15 @@ jobs:
           if [ "$A" != "$B" ]; then
             echo "::error::Cargo.toml ($A) and hub/Cargo.toml ($B) versions differ. Run tools/set-version.ps1."; exit 1
           fi
+          # The Home Assistant app pulls the hub image tagged with its version.
+          C=$(grep -m1 '^version: ' homeassistant/rustdo_hub/config.yaml | cut -d'"' -f2)
+          if [ "$A" != "$C" ]; then
+            echo "::error::homeassistant/rustdo_hub/config.yaml ($C) doesn't match the app ($A). Run tools/set-version.ps1."; exit 1
+          fi
+      - name: Home Assistant app configuration
+        uses: frenck/action-app-linter@v2
+        with:
+          path: ./homeassistant/rustdo_hub
       - name: Unit tests
         working-directory: hub
         run: cargo test --locked
@@ -239,6 +248,20 @@ jobs:
       PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     steps:
       - uses: actions/checkout@v5
+      # The image as people run it, on this machine: the hub must be able to save even
+      # when the data folder is a bind mount owned by root (Home Assistant, NAS boxes).
+      - name: Smoke test (data folder owned by root)
+        run: |
+          docker build -t rustdo-hub:test hub
+          mkdir -p "$RUNNER_TEMP/hubdata" && sudo chown root:root "$RUNNER_TEMP/hubdata" && sudo chmod 755 "$RUNNER_TEMP/hubdata"
+          docker run -d --name hubtest -p 7979:7979 -v "$RUNNER_TEMP/hubdata:/data" rustdo-hub:test
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7979/api/hello && break; sleep 1; done
+          curl -fsS -X POST http://127.0.0.1:7979/api/account/new
+          docker logs hubtest
+          test -s "$RUNNER_TEMP/hubdata/hub.json" || { echo "::error::the hub couldn't save to a root-owned /data"; exit 1; }
+          ls -la "$RUNNER_TEMP/hubdata" "$RUNNER_TEMP/hubdata/backups"
+          docker exec hubtest sh -c 'ps -o user,comm | grep rustdo-hub'
+          docker rm -f hubtest
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - if: env.PUBLISH == 'true'

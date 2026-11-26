@@ -17,4 +17,12 @@ foreach ($file in 'Cargo.toml', 'android/Cargo.toml', 'hub/Cargo.toml') {
     [System.IO.File]::WriteAllText($path, $text, (New-Object System.Text.UTF8Encoding $false))
     Write-Host "$file -> $Version"
 }
+# The Home Assistant app runs the hub image of the same version.
+$ha = Join-Path $root 'homeassistant/rustdo_hub/config.yaml'
+$text = [System.IO.File]::ReadAllText($ha)
+$re = [regex]'(?m)^version: "\d+\.\d+\.\d+"'
+if (-not $re.IsMatch($text)) { throw "No version line in homeassistant/rustdo_hub/config.yaml" }
+$text = $re.Replace($text, "version: `"$Version`"", 1)
+[System.IO.File]::WriteAllText($ha, $text, (New-Object System.Text.UTF8Encoding $false))
+Write-Host "homeassistant/rustdo_hub/config.yaml -> $Version"
 Write-Host "Now commit, then: git tag v$Version; git push origin main --tags"

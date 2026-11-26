@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod app;
+pub mod backgrounds;
 pub mod changelog;
 pub mod companion;
 pub mod diagnostics;
@@ -12,6 +13,8 @@ pub mod mstodo;
 pub mod notes;
 pub mod notes_ui;
 pub mod notify;
+#[cfg(target_os = "android")]
+pub mod photos;
 pub mod showlist;
 pub mod platform;
 pub mod storage;

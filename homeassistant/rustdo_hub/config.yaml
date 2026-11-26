@@ -1,0 +1,17 @@
+# RustDo Hub as a Home Assistant app. It runs the published Docker image of the same
+# version (ghcr.io/metman2013/rustdo-hub:<version>); CI checks this version matches the
+# app's, and tools/set-version.ps1 updates it.
+name: RustDo Hub
+version: "0.4.6"
+slug: rustdo_hub
+description: Sync RustDo between your devices and share lists with your family, on your own Home Assistant.
+url: https://github.com/metman2013/RustDo/blob/main/docs/hub.md
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/metman2013/rustdo-hub
+ports:
+  7979/tcp: 7979
+ports_description:
+  7979/tcp: RustDo Hub (sync and sharing)
+webui: "http://[HOST]:[PORT:7979]/"

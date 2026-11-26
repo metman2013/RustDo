@@ -1772,6 +1772,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3072,15 +3074,17 @@ dependencies = [
 
 [[package]]
 name = "rustdo"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "android_logger",
+ "base64",
  "chrono",
  "csv",
  "directories",
  "eframe",
  "egui_extras",
  "ehttp",
+ "image",
  "jni 0.21.1",
  "js-sys",
  "log",

@@ -13,7 +13,7 @@
 //! (Windows), it runs quietly for reminders only: no tray icon, no notes, until RustDo is
 //! opened and asks it to wake up.
 
-use crate::i18n::{tr, trf};
+use crate::i18n::tr;
 use crate::model::Settings;
 use std::fs::File;
 use std::path::PathBuf;

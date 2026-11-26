@@ -92,8 +92,9 @@ in Settings › Backups; restoring notes merges them with the ones you have.
 
 ## Sync and family sharing (RustDo Hub)
 
-You run a tiny **RustDo Hub** yourself: a Windows exe, or a Docker container on a NAS,
-home server or Raspberry Pi (optionally behind your own HTTPS subdomain). No cloud.
+You run a tiny **RustDo Hub** yourself: a Windows exe, a Docker container on a NAS, home
+server or Raspberry Pi (optionally behind your own HTTPS subdomain), or a **Home Assistant
+app** (add this repository in Home Assistant's app store). No cloud.
 
 - **Sync my devices:** your lists, tasks, sticky notes and settings stay the same on all
   your devices, including the web app (which needs the hub on `https://`). Settings ›

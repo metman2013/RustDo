@@ -5,7 +5,8 @@
 //! minimized. The notes live in one shared, locked [`Shared`] that the main window's
 //! "Sticky notes" page and the note windows all read and write.
 
-use crate::i18n::{plural, tr, trf};
+use crate::backgrounds::{self, Background};
+use crate::i18n::{tr, trf};
 use crate::notes::{self, Notes, StickyNote, MAX_TEXT_SIZE, MIN_TEXT_SIZE, PRESETS};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, CursorIcon, FontId, Id, Layout, Pos2, RichText, Sense, Stroke, UiBuilder, Vec2,
@@ -75,6 +76,7 @@ pub fn lock(shared: &SharedNotes) -> MutexGuard<'_, Shared> {
 impl Shared {
     /// Loads `notes.json` from `folder` (desktop), or starts empty in memory.
     pub fn load(folder: Option<PathBuf>) -> SharedNotes {
+        *PICTURE_DIR.lock().unwrap_or_else(|e| e.into_inner()) = folder.clone();
         let path = folder.map(|f| f.join("notes.json"));
         #[cfg(not(target_arch = "wasm32"))]
         let (notes, warning) = path.as_deref().map_or((Notes::default(), None), notes::file::load);
@@ -394,6 +396,8 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
         v.widgets.active.weak_bg_fill = ink.gamma_multiply(0.2);
 
         let full = ui.max_rect();
+        let paper = egui::Rect::from_min_max(full.min + Vec2::new(0.0, HEADER_H), full.max);
+        paint_picture(ui, &note, paper, CornerRadius::ZERO);
 
         // Title bar: drag it to move the note.
         let bar = egui::Rect::from_min_size(full.min, Vec2::new(full.width(), HEADER_H));
@@ -588,6 +592,8 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
                 page = MenuPage::NoteColour;
             }
             ui.separator();
+            picture_row(ui, note);
+            ui.separator();
             ui.label(RichText::new(tr("Text")).strong());
             let mut auto = note.text_color.is_none();
             if ui.checkbox(&mut auto, tr("Automatic colour (suits the note)")).changed() {
@@ -608,7 +614,7 @@ fn menu_seen_id(note: Uuid) -> Id {
 }
 
 /// The room (in points) a note window needs while its 🎨 menu is open.
-const MENU_ROOM: Vec2 = Vec2::new(270.0, 420.0);
+const MENU_ROOM: Vec2 = Vec2::new(270.0, 530.0);
 
 /// The pages of a note's 🎨 menu.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -818,10 +824,44 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
             }
         });
     } else {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
-        });
+        // Title and buttons on one line when they fit (the buttons' width is measured as
+        // they're drawn); on narrower screens, such as tablets with big touch buttons, the
+        // buttons go on their own line so they don't cover the title.
+        let title = RichText::new(tr("📝 Sticky notes")).size(24.0).strong();
+        let title_w = egui::WidgetText::from(title.clone())
+            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+            .size()
+            .x;
+        let buttons_id = Id::new("wall_buttons_width");
+        let buttons_w: f32 = ui.ctx().data(|d| d.get_temp(buttons_id)).unwrap_or(0.0);
+        let one_line = title_w + buttons_w + 24.0 <= ui.available_width();
+        let measured = if one_line {
+            ui.horizontal(|ui| {
+                ui.label(title);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let start = ui.cursor().max.x;
+                    buttons(ui, &mut s, &mut page_action, &mut tidy);
+                    start - ui.min_rect().min.x
+                })
+                .inner
+            })
+            .inner
+        } else {
+            ui.label(title);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let start = ui.cursor().max.x;
+                    buttons(ui, &mut s, &mut page_action, &mut tidy);
+                    start - ui.min_rect().min.x
+                })
+                .inner
+            })
+            .inner
+        };
+        if (measured - buttons_w).abs() > 1.0 && measured.is_finite() {
+            ui.ctx().data_mut(|d| d.insert_temp(buttons_id, measured));
+            ui.ctx().request_repaint();
+        }
     }
     let kept = if cfg!(target_os = "android") { tr("on this phone") } else { tr("in this browser") };
     let hint = if narrow {
@@ -973,6 +1013,7 @@ fn wall_card(
     ui.painter().rect_filled(rect.translate(Vec2::new(2.0, 3.0)), radius, Color32::from_black_alpha(60));
     ui.painter().rect_filled(rect, radius, bg);
     let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), WALL_HEADER_H));
+    paint_picture(ui, note, egui::Rect::from_min_max(bar.left_bottom(), rect.max), CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 });
     ui.painter().rect_filled(bar, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, header);
 
     // Clicking anywhere on the note brings it to the front (checked before the widgets).
@@ -1088,4 +1129,155 @@ fn wall_card(
         }
     }
     action
+}
+
+// ------------------------------------------------------------------ pictures
+
+/// The data folder (pictures live in its `Backgrounds` folder, shared with the app's
+/// backgrounds, so they sync the same way). None on the web: browser storage.
+static PICTURE_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn picture_dir() -> Option<PathBuf> {
+    PICTURE_DIR.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// How strongly the note colour tints its picture (so the text stays readable).
+const PICTURE_TINT: f32 = 0.55;
+
+/// Loaded note pictures: key → texture, or when loading last failed (a picture that
+/// hasn't arrived from another device yet is tried again now and then).
+#[derive(Clone, Default)]
+struct PictureCache(HashMap<String, Result<egui::TextureHandle, f64>>);
+
+fn picture_texture(ctx: &egui::Context, picture: &Background) -> Option<egui::TextureHandle> {
+    let key = match picture {
+        Background::None => return None,
+        Background::Builtin(id) => format!("note-builtin:{id}"),
+        Background::Custom(id) => format!("note-custom:{id}"),
+    };
+    let now = ctx.input(|i| i.time);
+    let cache_id = Id::new("note_picture_cache");
+    let cached = ctx.data_mut(|d| d.get_temp_mut_or_default::<PictureCache>(cache_id).0.get(&key).cloned());
+    match cached {
+        Some(Ok(t)) => return Some(t),
+        Some(Err(at)) if now - at < 5.0 => return None,
+        _ => {}
+    }
+    let image = match picture {
+        Background::None => None,
+        Background::Builtin(id) => backgrounds::builtin(id).map(|b| {
+            let (w, h) = (240, 240);
+            egui::ColorImage::from_rgba_unmultiplied([w, h], &backgrounds::render_builtin(b, w, h))
+        }),
+        Background::Custom(id) => backgrounds::load_one(picture_dir().as_deref(), id)
+            .and_then(|jpeg| backgrounds::decode(&jpeg))
+            .map(|(w, h, px)| egui::ColorImage::from_rgba_unmultiplied([w, h], &px)),
+    };
+    let entry = match image {
+        Some(image) => Ok(ctx.load_texture(&key, image, egui::TextureOptions::LINEAR)),
+        None => Err(now),
+    };
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<PictureCache>(cache_id).0.insert(key, entry.clone()));
+    entry.ok()
+}
+
+/// Forgets a loaded picture (it was replaced or removed).
+pub fn forget_picture(ctx: &egui::Context, id: &str) {
+    ctx.data_mut(|d| d.get_temp_mut_or_default::<PictureCache>(Id::new("note_picture_cache")).0.retain(|k, _| !k.ends_with(id)));
+}
+
+/// The note's picture (if it has one) over `rect`, tinted with the note colour.
+fn paint_picture(ui: &egui::Ui, note: &StickyNote, rect: egui::Rect, corner: CornerRadius) {
+    let Some(picture) = &note.picture else { return };
+    let Some(texture) = picture_texture(ui.ctx(), picture) else { return };
+    let uv = crate::app::cover_uv(texture.size_vec2(), rect.size());
+    let p = ui.painter();
+    p.add(egui::epaint::RectShape::filled(rect, corner, Color32::WHITE).with_texture(texture.id(), uv));
+    let [r, g, b] = note.color;
+    p.rect_filled(rect, corner, Color32::from_rgba_unmultiplied(r, g, b, (PICTURE_TINT * 255.0) as u8));
+}
+
+/// Asks the app to pick a picture for a note (the web and Android pick it themselves).
+#[cfg_attr(not(any(target_arch = "wasm32", target_os = "android")), allow(dead_code))]
+fn request_picture(ctx: &egui::Context, note: Uuid) {
+    ctx.data_mut(|d| d.insert_temp(Id::new("note_picture_request"), Some(note)));
+}
+
+/// The note that wants a picture picked, if one asked since last time.
+pub fn take_picture_request(ctx: &egui::Context) -> Option<Uuid> {
+    ctx.data_mut(|d| d.remove_temp::<Option<Uuid>>(Id::new("note_picture_request")).flatten())
+}
+
+/// Stores a picked picture (shrunk to a JPEG copy) in the pictures folder; its id.
+pub fn store_picture(bytes: &[u8]) -> Result<String, String> {
+    let jpeg = backgrounds::prepare(bytes)?;
+    let id = backgrounds::image_id(&jpeg);
+    backgrounds::save(picture_dir().as_deref(), &id, &jpeg)?;
+    Ok(id)
+}
+
+/// "Picture: none, the built-in ones, your pictures, + Picture…" in a note's 🎨 menu.
+fn picture_row(ui: &mut egui::Ui, note: &mut StickyNote) {
+    ui.label(RichText::new(tr("Picture")).strong());
+    let mut choices: Vec<(Option<Background>, String)> = vec![(None, tr("No picture").to_string())];
+    for b in &backgrounds::BUILTINS {
+        choices.push((Some(Background::Builtin(b.id.to_string())), backgrounds::builtin_name(b.id).to_string()));
+    }
+    for id in backgrounds::list_ids(picture_dir().as_deref()) {
+        choices.push((Some(Background::Custom(id)), tr("Your picture").to_string()));
+    }
+    let size = Vec2::new(36.0, 28.0);
+    ui.horizontal_wrapped(|ui| {
+        for (value, name) in choices {
+            let (rect, r) = ui.allocate_exact_size(size, Sense::click());
+            let corner = CornerRadius::same(4);
+            let texture = value.as_ref().and_then(|v| picture_texture(ui.ctx(), v));
+            match &texture {
+                Some(t) => {
+                    let uv = crate::app::cover_uv(t.size_vec2(), rect.size());
+                    ui.painter().add(egui::epaint::RectShape::filled(rect, corner, Color32::WHITE).with_texture(t.id(), uv));
+                }
+                None => {
+                    ui.painter().rect_filled(rect, corner, c32(note.color));
+                    if value.is_none() {
+                        ui.painter().line_segment([rect.left_bottom() + Vec2::new(5.0, -5.0), rect.right_top() + Vec2::new(-5.0, 5.0)], Stroke::new(1.5_f32, c32(note.ink())));
+                    }
+                }
+            }
+            let selected = note.picture == value;
+            let outline = if selected || r.hovered() { ui.visuals().strong_text_color() } else { ui.visuals().weak_text_color() };
+            ui.painter().rect_stroke(rect, corner, Stroke::new(if selected { 2.0_f32 } else { 1.0 }, outline), egui::StrokeKind::Inside);
+            if r.on_hover_text(name).clicked() {
+                note.picture = value;
+            }
+        }
+    });
+    if ui.button(tr("+ Picture…")).on_hover_text(tr("Use one of your own pictures on this note")).clicked() {
+        pick_picture(ui, note);
+    }
+}
+
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+fn pick_picture(ui: &mut egui::Ui, note: &mut StickyNote) {
+    let _ = ui;
+    let picked = rfd::FileDialog::new()
+        .set_title(tr("Pick a picture"))
+        .add_filter(tr("Pictures"), &["jpg", "jpeg", "png"])
+        .pick_file();
+    let Some(path) = picked else { return };
+    match std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| store_picture(&bytes)) {
+        Ok(id) => note.picture = Some(Background::Custom(id)),
+        Err(e) => {
+            let _ = rfd::MessageDialog::new()
+                .set_title("RustDo")
+                .set_description(trf("Couldn't use that picture: {e}", &[("e", &e)]))
+                .show();
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", target_os = "android"))]
+fn pick_picture(ui: &mut egui::Ui, note: &mut StickyNote) {
+    request_picture(ui.ctx(), note.id);
+    ui.close_menu();
 }
