@@ -86,6 +86,34 @@ fn current() -> Lang {
     }
 }
 
+/// Whether people reading the current language expect a 24-hour clock (German, Spanish,
+/// French). Used for a new install's default; the setting can still be changed.
+pub fn prefers_24h() -> bool {
+    current() != Lang::En
+}
+
+/// The default list's name in every language RustDo has ("Tasks", "Aufgaben"…), to tell
+/// whether a list still has its default name.
+pub fn default_list_names() -> Vec<&'static str> {
+    let mut names = vec!["Tasks"];
+    for lang in [Lang::De, Lang::Es, Lang::Fr] {
+        if let Some(name) = table(lang).and_then(|t| t.get("Tasks").copied()) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The language showing, as a code: "en", "de", "es" or "fr".
+pub fn code() -> &'static str {
+    match current() {
+        Lang::En => "en",
+        Lang::De => "de",
+        Lang::Es => "es",
+        Lang::Fr => "fr",
+    }
+}
+
 /// True while German is showing.
 pub fn german() -> bool {
     current() == Lang::De

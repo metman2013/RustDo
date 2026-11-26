@@ -152,8 +152,11 @@ then reach your lists, and the hub has no encryption of its own.
   possibilities.
 - The hub's status page (`http://<hub>:7979/` in a browser) shows only its version and how
   many lists are shared. It never shows list names, tasks or codes.
-- Back up the hub by copying `hub.json` (or the Docker volume). If a hub's data is lost,
-  share the lists again: every device still has its own full copy.
+- The hub keeps a copy of its data each day in `backups/` next to `hub.json` (inside the
+  Docker volume: `/data/backups`), and the last 14 days. To restore one, stop the hub and
+  copy it over `hub.json`. For copies off the machine, back up the folder or volume too.
+  If a hub's data is lost, every device still has its own full copy: turn on sync or
+  share the lists again.
 
 ## Troubleshooting
 

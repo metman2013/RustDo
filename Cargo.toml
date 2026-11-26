@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.4.3"
+version = "0.4.4"
 
 [package]
 name = "rustdo"
@@ -117,3 +117,9 @@ assets = [
     ["assets/rustdo.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
     ["README.md", "usr/share/doc/rustdo/", "644"],
 ]
+
+# egui-winit with one change: Android's back button reaches the app (as Escape), so back
+# steps through RustDo instead of being dropped. See vendor/egui-winit/src/lib.rs
+# ("RustDo:"). Drop this when egui maps the back key itself.
+[patch.crates-io]
+egui-winit = { path = "vendor/egui-winit" }

@@ -91,6 +91,19 @@ mod android {
         Some([r.left, r.top, (w - r.right).max(0), (h - r.bottom).max(0)])
     }
 
+    /// Back at the top level: send RustDo to the background, like other Android apps
+    /// (Activity.moveTaskToBack), instead of closing it.
+    pub fn move_to_background() {
+        use jni::objects::{JObject, JValue};
+        let Some(app) = APP.get() else { return };
+        let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
+        let Ok(mut env) = vm.attach_current_thread() else { return };
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        if env.call_method(&activity, "moveTaskToBack", "(Z)Z", &[JValue::Bool(1)]).is_err() {
+            let _ = env.exception_clear();
+        }
+    }
+
     pub fn show_keyboard(show: bool) {
         if let Some(app) = APP.get() {
             if show {
@@ -142,6 +155,39 @@ pub fn download_text(file_name: &str, text: &str) -> Result<(), String> {
 pub fn reload_page() {
     if let Some(window) = web_sys::window() {
         let _ = window.location().reload();
+    }
+}
+
+/// Opens a printable page in the browser (Show list › Print): a file on the desktop, a
+/// new tab in the web app. The browser's print dialog can also save it as a PDF.
+/// On the desktop the page is saved in `folder` (RustDo's own folder: the Store version's
+/// temp folder is private to it, so a browser couldn't open a file there).
+pub fn open_printable(folder: Option<std::path::PathBuf>, file_name: &str, html: &str) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (file_name, folder);
+        let err = |e: wasm_bindgen::JsValue| format!("{e:?}");
+        let parts = js_sys::Array::new();
+        parts.push(&wasm_bindgen::JsValue::from_str(html));
+        let options = web_sys::BlobPropertyBag::new();
+        options.set_type("text/html");
+        let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options).map_err(err)?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(err)?;
+        let window = web_sys::window().ok_or("no window")?;
+        match window.open_with_url_and_target(&url, "_blank").map_err(err)? {
+            Some(_) => Ok(()),
+            None => Err(crate::i18n::tr("The browser blocked the new tab. Allow pop-ups for rustdo.app and try again.").into()),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = folder.map(|f| f.join("Print")).unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(file_name);
+        std::fs::write(&path, html).map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "android"))]
+        open_folder(&path);
+        Ok(())
     }
 }
 
@@ -206,6 +252,12 @@ pub fn prefers_touch() -> bool {
     {
         std::env::var_os("RUSTDO_TOUCH").is_some_and(|v| v == "1")
     }
+}
+
+/// Android: back at RustDo's top level puts it in the background. Elsewhere: nothing.
+pub fn leave_app() {
+    #[cfg(target_os = "android")]
+    let _ = std::panic::catch_unwind(android::move_to_background);
 }
 
 /// Shows or hides the on-screen keyboard. Only needed on Android.

@@ -1,0 +1,45 @@
+# Neuigkeiten (Deutsch)
+
+Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
+übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
+
+## 0.4.4 - 2026-11-26
+
+### Neu
+- Liste anzeigen: eine große, gut lesbare Seite mit den Aufgaben einer Liste und ihren Notizen, zum Beispiel eine Medikamentenliste für den Arzt. Kopiere sie als Text für eine E-Mail oder Nachricht, oder drucke sie am Computer bzw. speichere sie als PDF. Du findest es neben dem Namen der Liste oder per Rechtsklick (langem Drücken) auf eine Liste.
+
+### Verbessert
+- Smartphones: Eine deutliche Zurück-Schaltfläche (ein Pfeil in einer runden Schaltfläche) ersetzt das kleine „<“ im Menü, in den Einstellungen, in den Aufgabendetails und bei den Haftnotizen.
+- Android: Die Zurück-Taste und die Zurück-Geste funktionieren jetzt in RustDo. Zurück schließt, was offen ist, geht zur Liste und zu „Mein Tag“ zurück und verlässt von „Mein Tag“ aus die App.
+- Listen neu anordnen: Ziehe eine Liste im Menü nach oben oder unten, oder halte sie auf dem Smartphone gedrückt und wähle „Nach oben“ oder „Nach unten“. Die neue Reihenfolge wird mit deinen anderen Geräten synchronisiert.
+- Neue Installationen auf Deutsch, Spanisch oder Französisch starten mit dem 24-Stunden-Format, und der Name der Standardliste wechselt mit, wenn du die Sprache änderst.
+- „Neuigkeiten“ erscheinen jetzt in deiner Sprache (Deutsch, Spanisch oder Französisch).
+- RustDo Hub speichert jeden Tag eine Kopie seiner Daten (die letzten 14 Tage) in einem Ordner „backups“ neben hub.json.
+
+## 0.4.3 - 2026-11-26
+
+### Neu
+- RustDo spricht jetzt auch Spanisch und Französisch: Unter Einstellungen › Sprache gibt es Español und Français neben English und Deutsch, und „Automatisch“ wählt sie, wenn dein Gerät sie nutzt. Daten erscheinen im jeweiligen Format, z. B. „Miércoles, 25 de noviembre“ und „Mercredi 25 novembre“.
+
+## 0.4.2 - 2026-11-25
+
+### Neu
+- Direkt aus Microsoft To Do importieren: Wähle im Menü „Aus To Do importieren“ und dann „Mit Microsoft anmelden“. RustDo liest alle deine Listen, Aufgaben, Schritte, Notizen, Fälligkeitsdaten und Erinnerungen und zeigt, was importiert wird. Deine To Do-Daten werden nur gelesen, nie geändert. Funktioniert unter Windows, Linux, Android und in der Web-App, mit privaten sowie Geschäfts- oder Schulkonten von Microsoft.
+- Auch Android kann jetzt aus Microsoft To Do importieren (per Anmeldung).
+
+### Behoben
+- Deutsch: Einige längere Meldungen, die noch auf Englisch erschienen, sind jetzt übersetzt.
+
+## 0.4.1 - 2026-11-25
+
+### Neu
+- RustDo spricht Deutsch: Unter Einstellungen › Sprache gibt es Automatisch, English und Deutsch. „Automatisch“ folgt der Sprache deines Geräts. Daten erscheinen im deutschen Format, z. B. „Mittwoch, 25. November“.
+- Die Sprachunterstützung ist jetzt eingebaut, sodass weitere Sprachen folgen können.
+
+## 0.4.0 - 2026-11-25
+
+### Neu
+- Meine Geräte synchronisieren: Halte deine Listen, Aufgaben, Haftnotizen und Einstellungen (Design, Uhrzeitformat, Sortierung) auf all deinen Geräten gleich, auch in der Web-App, über deinen eigenen RustDo Hub. Schalte es in den Einstellungen unter „Meine Geräte synchronisieren“ ein: Dein erstes Gerät bekommt einen Sync-Schlüssel, deine anderen Geräte nutzen dieselbe Hub-Adresse und denselben Schlüssel. Jedes Gerät behält seine eigenen Erinnerungsfenster und die Position seiner Haftnotizen.
+- Listen, die du mit der Familie teilst, bleiben von deiner eigenen Synchronisierung getrennt: Die anderen sehen nur die geteilte Liste, und deine anderen Geräte treten ihr von selbst bei.
+- Für „Meine Geräte synchronisieren“ wird RustDo Hub 0.4.0 benötigt (aktualisiere das Docker-Image oder den Windows-Hub). Damit kann sich auch die Web-App verbinden, wenn der Hub eine https://-Adresse hat.
+- Die Hub-Anleitung in den Einstellungen erklärt jetzt neben dem Teilen von Listen auch das Synchronisieren deiner eigenen Geräte.

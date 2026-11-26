@@ -2,6 +2,7 @@
 
 use crate::account;
 use crate::mstodo;
+use crate::showlist;
 use crate::i18n::{self, plural, tr, trf};
 use crate::model::{
     format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
@@ -212,6 +213,10 @@ pub struct TodoApp {
     /// What's typed in that quick "subtasks for …" box.
     quick_step: String,
     renaming_list: Option<(Uuid, String)>,
+    /// "Show list": the view whose open tasks are shown full screen, to read or hand over.
+    show_list: Option<View>,
+    /// Desktop: the list being dragged to a new place in the menu.
+    list_drag: Option<Uuid>,
     rename_focus: bool,
     confirm_delete_list: Option<Uuid>,
     alerts: Vec<Uuid>,
@@ -347,6 +352,8 @@ impl TodoApp {
             last_added: None,
             quick_step: String::new(),
             renaming_list: None,
+            list_drag: None,
+            show_list: None,
             rename_focus: false,
             confirm_delete_list: None,
             alerts: Vec::new(),
@@ -725,8 +732,7 @@ impl TodoApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let back = egui::Button::new(RichText::new(tr("<  Back")).size(20.0)).frame(false).min_size(Vec2::new(0.0, 44.0));
-                if ui.add(back).clicked() {
+                if back_button(ui, tr("Back")).clicked() {
                     self.show_settings = false;
                 }
                 ui.label(RichText::new(tr("Settings")).size(20.0).strong());
@@ -806,6 +812,13 @@ impl TodoApp {
         if language != self.store.settings.language {
             self.store.settings.language = language;
             i18n::set(language);
+            // The default list follows the language while it still has its default name.
+            let default = self.store.default_list;
+            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
+                if i18n::default_list_names().contains(&list.name.as_str()) {
+                    list.name = tr("Tasks").to_string();
+                }
+            }
             self.dirty = true;
         }
         ui.separator();
@@ -962,6 +975,68 @@ impl TodoApp {
             self.helper_handled = false; // start, wake or stop the companion
         }
         ui.separator();
+    }
+
+    // ------------------------------------------------------------------ show list
+
+    /// The view's open tasks, large and plain, to read or hand over; copy as text or print.
+    fn show_list_page(&mut self, ctx: &egui::Context, view: View, today: NaiveDate) {
+        let title = match view {
+            View::MyDay => tr("My Day").to_string(),
+            View::Important => tr("Important").to_string(),
+            View::Planned => tr("Planned").to_string(),
+            View::All => tr("All").to_string(),
+            View::Completed => tr("Completed").to_string(),
+            View::List(id) => self.store.list_name(id).to_string(),
+        };
+        let page = showlist::build(&self.store, view, &title, today);
+        let mut close = false;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if back_button(ui, tr("Back")).clicked() {
+                    close = true;
+                }
+                if ui.button(tr("📋 Copy as text")).clicked() {
+                    ui.ctx().copy_text(showlist::to_text(&page));
+                    self.notify(tr("Copied. Paste it into an email or a message."));
+                }
+                if !cfg!(target_os = "android") && ui.button(tr("Print or save as PDF")).clicked() {
+                    match platform::open_printable(self.storage.folder(), &showlist::file_name(&title), &showlist::to_html(&page)) {
+                        Ok(()) => self.notify(tr("Opened in your browser: use its Print button (it can also save a PDF).")),
+                        Err(e) => self.notify(e),
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                ui.set_max_width(ui.available_width().min(760.0));
+                ui.label(RichText::new(&page.title).size(30.0).strong());
+                ui.label(RichText::new(&page.date).size(16.0).weak());
+                ui.add_space(10.0);
+                if page.items.is_empty() {
+                    ui.label(RichText::new(tr("Nothing in this list.")).size(18.0).weak());
+                }
+                for item in &page.items {
+                    ui.separator();
+                    ui.add(egui::Label::new(RichText::new(&item.title).size(22.0).strong()).wrap());
+                    if !item.details.is_empty() {
+                        ui.label(RichText::new(item.details.join(" · ")).size(16.0).weak());
+                    }
+                    if !item.notes.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&item.notes).size(18.0)).wrap());
+                    }
+                    for (step, done) in &item.steps {
+                        ui.label(RichText::new(format!("{} {step}", if *done { "☑" } else { "☐" })).size(18.0));
+                    }
+                    ui.add_space(4.0);
+                }
+                ui.add_space(24.0);
+            });
+        });
+        if close {
+            self.show_list = None;
+        }
     }
 
     // ------------------------------------------------------------------ Microsoft To Do import
@@ -2522,6 +2597,72 @@ impl TodoApp {
         }
     }
 
+    /// Back on a phone: closes what's on top, one step at a time; at the menu, leaves the app.
+    fn phone_back(&mut self, ctx: &egui::Context) {
+        // A dialog first.
+        if self.whats_new.is_some() {
+            self.whats_new = None;
+            let current = Some(update::CURRENT_VERSION.to_string());
+            if self.store.settings.last_seen_version != current {
+                self.store.settings.last_seen_version = current;
+                self.dirty = true;
+            }
+            return;
+        }
+        if let Some(d) = self.ms_import.take() {
+            if let Some(s) = &d.session {
+                s.cancel();
+            }
+            return;
+        }
+        if self.account_dialog.as_ref().is_some_and(|d| !d.busy) {
+            self.account_dialog = None;
+            return;
+        }
+        if self.hub_guide {
+            self.hub_guide = false;
+            return;
+        }
+        if self.share_dialog.as_ref().is_some_and(|d| !d.busy) {
+            self.share_dialog = None;
+            return;
+        }
+        if self.pending_import.take().is_some()
+            || self.pending_restore.take().is_some()
+            || self.pending_notes_restore.take().is_some()
+            || self.paste_restore.take().is_some()
+            || self.confirm_delete_list.take().is_some()
+            || self.renaming_list.take().is_some()
+        {
+            return;
+        }
+        // Then the on-screen keyboard.
+        if ctx.wants_keyboard_input() {
+            ctx.memory_mut(|m| m.stop_text_input());
+            return;
+        }
+        // Then one screen back.
+        if self.show_list.is_some() {
+            self.show_list = None;
+        } else if self.show_settings {
+            self.show_settings = false;
+        } else if !self.search.is_empty() {
+            self.search.clear();
+        } else if self.selected.is_some() {
+            self.selected = None;
+        } else if self.show_nav {
+            // The menu slides over the list: back closes it.
+            self.show_nav = false;
+        } else if self.notes_page {
+            self.notes_page = false;
+            self.view = View::MyDay;
+        } else if self.view != View::MyDay {
+            self.view = View::MyDay;
+        } else {
+            platform::leave_app();
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let (new, find, esc, del) = ctx.input_mut(|i| {
             (
@@ -2543,7 +2684,9 @@ impl TodoApp {
             self.focus_search = true;
         }
         if esc {
-            if !self.search.is_empty() {
+            if self.show_list.is_some() {
+                self.show_list = None;
+            } else if !self.search.is_empty() {
                 self.search.clear();
             } else {
                 self.selected = None;
@@ -2565,11 +2708,10 @@ impl TodoApp {
                 ui.add_space(10.0);
                 let touch = is_touch(ui);
                 ui.horizontal(|ui| {
-                    let back = egui::Button::new(RichText::new("<").size(if touch { 26.0 } else { 18.0 })).frame(false);
-                    let back = if touch { back.min_size(Vec2::splat(44.0)) } else { back };
-                    if narrow && ui.add(back).clicked() {
+                    if narrow && back_button(ui, "").on_hover_text(tr("Back")).clicked() {
                         self.show_nav = false;
                     }
+                    let _ = touch;
                     ui.label(RichText::new(tr("✔ RustDo")).size(20.0).strong().color(ACCENT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let theme = self.store.settings.theme;
@@ -2646,7 +2788,9 @@ impl TodoApp {
                     .max_height(max_h)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        for (id, name) in lists {
+                        let list_count = lists.len();
+                        let mut rows: Vec<(Uuid, egui::Rect)> = Vec::new();
+                        for (index, (id, name)) in lists.into_iter().enumerate() {
                             let is_default = id == self.store.default_list;
                             if self.renaming_list.as_ref().is_some_and(|(rid, _)| *rid == id) {
                                 let (_, buf) = self.renaming_list.as_mut().unwrap();
@@ -2668,6 +2812,11 @@ impl TodoApp {
                             let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
                             let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
+                            rows.push((id, r.rect));
+                            // Desktop: drag a list to move it (on touch, dragging scrolls).
+                            if !is_touch(ui) && r.drag_started() {
+                                self.list_drag = Some(id);
+                            }
                             if r.clicked() {
                                 self.view = View::List(id);
                                 self.notes_page = false;
@@ -2691,11 +2840,45 @@ impl TodoApp {
                                         ui.close_menu();
                                     }
                                 }
+                                if ui.button(tr("📄  Show list")).clicked() {
+                                    self.show_list = Some(View::List(id));
+                                    self.show_nav = false;
+                                    ui.close_menu();
+                                }
+                                if index > 0 && ui.button(tr("⬆  Move up")).clicked() {
+                                    self.dirty |= self.store.move_list(id, index - 1);
+                                    ui.close_menu();
+                                }
+                                if index + 1 < list_count && ui.button(tr("⬇  Move down")).clicked() {
+                                    self.dirty |= self.store.move_list(id, index + 1);
+                                    ui.close_menu();
+                                }
                                 if !is_default && ui.button(tr("🗑  Delete list")).clicked() {
                                     self.confirm_delete_list = Some(id);
                                     ui.close_menu();
                                 }
                             });
+                        }
+                        // A list being dragged: show where it will go, move it on release.
+                        if let Some(dragged) = self.list_drag {
+                            let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
+                            if let Some(pos) = pointer {
+                                let others: Vec<&(Uuid, egui::Rect)> = rows.iter().filter(|(id, _)| *id != dragged).collect();
+                                let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
+                                let y = match others.get(to) {
+                                    Some((_, r)) => r.top(),
+                                    None => others.last().map_or(pos.y, |(_, r)| r.bottom()),
+                                };
+                                let x = ui.min_rect().x_range();
+                                ui.painter().hline(x, y, Stroke::new(2.0_f32, ACCENT));
+                                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                if released {
+                                    self.dirty |= self.store.move_list(dragged, to);
+                                    self.list_drag = None;
+                                }
+                            } else if released {
+                                self.list_drag = None;
+                            }
                         }
                     });
 
@@ -2803,8 +2986,7 @@ impl TodoApp {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
             if narrow {
-                let back = egui::Button::new(RichText::new(tr("<  Lists")).size(18.0)).frame(false);
-                if ui.add(back).clicked() {
+                if back_button(ui, tr("Lists")).clicked() {
                     self.show_nav = true;
                 }
             }
@@ -2910,6 +3092,17 @@ impl TodoApp {
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
                 ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                if !searching && self.view != View::Completed {
+                    // Phones: just the icon (the header is narrow); wider screens: say what it does.
+                    let show = if narrow {
+                        egui::Button::new(RichText::new("📄").size(20.0)).min_size(Vec2::splat(if touch { 44.0 } else { 32.0 }))
+                    } else {
+                        egui::Button::new(tr("📄  Show list"))
+                    };
+                    if ui.add(show).on_hover_text(tr("Show list: to read, print or share")).clicked() {
+                        self.show_list = Some(self.view);
+                    }
+                }
                 // Planned is always grouped by date, so sorting doesn't apply there.
                 if self.view == View::Planned && !searching {
                     return;
@@ -3248,9 +3441,7 @@ impl TodoApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if narrow {
-                        let size = if is_touch(ui) { 20.0 } else { 16.0 };
-                        let back = egui::Button::new(RichText::new(tr("<  Back")).size(size)).frame(false).min_size(Vec2::new(0.0, 44.0));
-                        if ui.add(back).clicked() {
+                        if back_button(ui, tr("Back")).clicked() {
                             close = true;
                         }
                         return;
@@ -3801,6 +3992,11 @@ impl eframe::App for TodoApp {
             }
         }
 
+        // Phones: back (Android's back button or gesture arrives as Escape) steps back one
+        // screen at a time. Taken here so no other part of the app also acts on it.
+        if ctx.screen_rect().width() < NARROW_WIDTH && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            self.phone_back(ctx);
+        }
         self.shortcuts(ctx);
         if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
             self.selected = None;
@@ -3819,7 +4015,9 @@ impl eframe::App for TodoApp {
         // Wide screens: lists | tasks | details side by side.
         // Phones: one screen at a time (lists, or tasks, or one task's details).
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
-        if narrow {
+        if let Some(view) = self.show_list {
+            self.show_list_page(ctx, view, today);
+        } else if narrow {
             if self.show_settings {
                 self.settings_page(ctx);
             } else if self.show_nav {
@@ -3934,6 +4132,41 @@ fn capped_texture_side(side: Option<usize>) -> Option<usize> {
     Some(side.map_or(MAX_ATLAS_SIDE, |s| s.min(MAX_ATLAS_SIDE)))
 }
 
+/// Phones: "‹ Back" as a clear, thumb-sized button. The chevron is drawn (the built-in
+/// fonts have no good arrow), in a rounded pill so it reads as something to tap.
+fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let touch = is_touch(ui);
+    let height = if touch { 48.0 } else { 36.0 };
+    let font = egui::FontId::proportional(if touch { 19.0 } else { 16.0 });
+    let text_color = ui.visuals().strong_text_color();
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, text_color);
+    let chevron_w = height * 0.32;
+    let pad = height * 0.32;
+    let width = if label.is_empty() { pad * 2.0 + chevron_w } else { pad + chevron_w + pad * 0.6 + galley.size().x + pad };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let pill = rect.shrink2(Vec2::new(0.0, height * 0.1));
+        let fill = if response.is_pointer_button_down_on() {
+            ui.visuals().widgets.active.weak_bg_fill
+        } else if response.hovered() {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        } else {
+            ui.visuals().widgets.inactive.weak_bg_fill
+        };
+        ui.painter().rect_filled(pill, egui::CornerRadius::same((pill.height() / 2.0) as u8), fill);
+        // The chevron: two strokes meeting at a point, in the accent colour.
+        let cx = if label.is_empty() { pill.center().x - chevron_w * 0.1 } else { pill.left() + pad + chevron_w * 0.35 };
+        let cy = pill.center().y;
+        let half = chevron_w * 0.75;
+        let stroke = Stroke::new(if touch { 3.0_f32 } else { 2.5 }, ACCENT);
+        ui.painter().line_segment([Pos2::new(cx + half * 0.6, cy - half), Pos2::new(cx - half * 0.4, cy)], stroke);
+        ui.painter().line_segment([Pos2::new(cx - half * 0.4, cy), Pos2::new(cx + half * 0.6, cy + half)], stroke);
+        let text_pos = Pos2::new(pill.left() + pad + chevron_w + pad * 0.6, cy - galley.size().y / 2.0);
+        ui.painter().galley(text_pos, galley, text_color);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A dialog that fits the screen. Wide screens: centred. Phones: near the top (below the
 /// status bar), so the on-screen keyboard doesn't cover its text fields. Long content
 /// (import summaries, pasted backups) scrolls inside the dialog's own ScrollArea.
@@ -3999,7 +4232,9 @@ fn reminder_presets(now: NaiveDateTime, clock_24h: bool) -> Vec<(String, NaiveDa
 fn nav_row(ui: &mut egui::Ui, selected: bool, icon: &str, name: &str, count: usize) -> egui::Response {
     let touch = is_touch(ui);
     let (height, font, gap) = if touch { (48.0, 17.0, 40.0) } else { (30.0, 14.0, 34.0) };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    // Desktop rows can also be dragged (to reorder lists); on touch, dragging scrolls.
+    let sense = if touch { Sense::click() } else { Sense::click_and_drag() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     let vis = ui.visuals();
     if selected {
         ui.painter().rect_filled(rect, 6.0, vis.selection.bg_fill.gamma_multiply(0.45));
