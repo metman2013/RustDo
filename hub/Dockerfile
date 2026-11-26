@@ -7,6 +7,11 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --locked
 
+# Just the static binary (`--target binary --output type=local,dest=out`): the Linux
+# downloads on the Releases page come from here.
+FROM scratch AS binary
+COPY --from=build /src/target/release/rustdo-hub /rustdo-hub
+
 FROM alpine:3.20
 # su-exec: the entrypoint starts as root only to make /data writable (Home Assistant and
 # NAS bind mounts are often owned by root), then runs the hub as `rustdo`.

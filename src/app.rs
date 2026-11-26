@@ -2543,13 +2543,18 @@ impl TodoApp {
                 ui.label(RichText::new(tr("On Windows")).strong());
                 para(ui, tr("Download RustDo-Hub-<version>-windows.exe from the RustDo releases page and run it. It shows the hub's address, e.g. http://192.168.1.20:7979. When Windows Firewall asks, allow it on Private networks."));
                 ui.hyperlink_to(tr("RustDo releases"), releases);
-                ui.label(RichText::new(tr("With Docker (Synology and other NAS, Raspberry Pi, Linux)")).strong());
+                ui.label(RichText::new(tr("With Docker (NAS, Raspberry Pi, Linux)")).strong());
                 let cmd = "docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest";
                 ui.add(egui::Label::new(RichText::new(cmd).monospace().small()).wrap());
                 if ui.small_button(tr("📋 Copy command")).clicked() {
                     ui.ctx().copy_text(cmd.to_string());
                 }
                 para(ui, tr("The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979."));
+                ui.label(RichText::new(tr("On a Synology NAS")).strong());
+                para(ui, tr("In Container Manager, create a Project with the RustDo Hub compose file. The full guide has the steps, the firewall setting and how to update it."));
+                ui.hyperlink_to(tr("Synology steps"), format!("{}#synology-nas", hub_docs()));
+                ui.label(RichText::new(tr("On Linux without Docker")).strong());
+                para(ui, tr("Download RustDo-Hub-<version>-linux-x86_64 (or -linux-arm64 for a Raspberry Pi), rustdo-hub.service and install-linux.sh from the releases page into one folder, then run: sudo sh install-linux.sh. The hub then starts with the computer."));
 
                 step(ui, "2", tr("Sync your own devices"));
                 para(ui, tr("On your first device: Settings, Sync my devices, Turn on sync. Enter the hub's address and choose \"This is my first device\". RustDo shows a sync key."));
@@ -2644,7 +2649,7 @@ impl TodoApp {
                 row(
                     ui,
                     "RustDo Hub",
-                    tr("Your own small server for sharing lists and syncing your devices: Docker, Windows or a Home Assistant app."),
+                    tr("Your own small server for sharing lists and syncing your devices: Docker, Synology, Linux, Windows or a Home Assistant app."),
                     &[(tr("How to set it up").to_string(), hub)],
                 );
             });

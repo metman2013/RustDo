@@ -291,6 +291,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The same static (musl) binaries as standalone Linux downloads, for running the hub
+      # without Docker (systemd service, Synology Task Scheduler, …). Reuses the cache above.
+      - name: Linux binaries
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          docker buildx build hub --platform linux/amd64,linux/arm64 --target binary \
+            --cache-from type=gha --output type=local,dest="$RUNNER_TEMP/bin"
+          mkdir -p out
+          cp "$RUNNER_TEMP/bin/linux_amd64/rustdo-hub" "out/RustDo-Hub-$V-linux-x86_64"
+          cp "$RUNNER_TEMP/bin/linux_arm64/rustdo-hub" "out/RustDo-Hub-$V-linux-arm64"
+          cp hub/rustdo-hub.service hub/install-linux.sh out/
+          chmod +x out/RustDo-Hub-* out/install-linux.sh
+          file out/RustDo-Hub-*
+          "./out/RustDo-Hub-$V-linux-x86_64" --help | grep -q Usage
+      - uses: actions/upload-artifact@v6
+        with:
+          name: hub-linux
+          path: out/*
 
   android:
     needs: test
@@ -394,6 +412,10 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: hub-windows
+          path: artifacts
+      - uses: actions/download-artifact@v7
+        with:
+          name: hub-linux
           path: artifacts
       # From main this also creates the v<version> tag on the commit that was built.
       - uses: softprops/action-gh-release@v3

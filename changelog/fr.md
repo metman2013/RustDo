@@ -5,6 +5,10 @@ traduites. Les versions absentes ici s'affichent en anglais.
 
 ## 0.4.7 - 2026-11-27
 
+### Nouveautés
+- RustDo Hub pour Linux sans Docker : téléchargements prêts à l'emploi pour PC (x86_64) et Raspberry Pi (arm64), et un script d'installation qui configure le hub comme service lancé au démarrage de l'ordinateur.
+- Installation pas à pas de RustDo Hub sur un NAS Synology (Container Manager), dans le guide du hub et dans « Comment fonctionnent la synchronisation et le partage » de RustDo.
+
 ### Corrections
 - App web sur téléphones et tablettes Android : les lettres pouvaient paraître irrégulières, certaines coupées ou décalées (la puce graphique dessinait le texte avec trop peu de précision). Le texte est maintenant dessiné en pleine précision et reste aussi net que dans l'app Android.
 - Android : dans Paramètres › Fond, le bouton « + Image… » manquait, donc impossible d'utiliser vos propres photos. Il est là maintenant et ouvre le sélecteur de photos de RustDo.
