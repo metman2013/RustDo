@@ -6,11 +6,15 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 ## 0.4.6 - 2026-11-27
 
 ### Novedades
-- Imágenes de fondo: elige una para toda la app en Configuración › Fondo y dale a cada lista la suya (clic derecho o mantener pulsada la lista › Fondo…). Elige entre los fondos incluidos o, en un ordenador o en la web, tu propia imagen. «Oscurecer el fondo» mantiene las tareas fáciles de leer.
+- Imágenes de fondo: elige una para toda la app en Configuración › Fondo y dale a cada lista la suya (clic derecho o mantener pulsada la lista › Fondo…). Elige entre los fondos incluidos o tu propia imagen (en Android, RustDo muestra tus fotos cuando lo permites). «Oscurecer el fondo» mantiene las tareas fáciles de leer.
 - Los fondos se sincronizan con Sincronizar mis dispositivos, también tus propias imágenes: una imagen elegida en el PC aparece también en el teléfono. (Tu RustDo Hub necesita la versión 0.4.6 o posterior para llevar imágenes.)
+- Las notas adhesivas también pueden tener una imagen: abre el menú 🎨 de una nota › Imagen y elige una incluida o una tuya. El color de la nota la tiñe para que el texto se lea bien.
+- Obtener RustDo (en el menú ⚙) muestra todas las formas de conseguir RustDo: Microsoft Store, el instalador de Windows, Android, Linux, la app web y el Hub.
+- Un botón «Únete al Discord de RustDo» al final de las listas, para ideas, errores y ayuda.
 - RustDo Hub puede funcionar como app de Home Assistant: en la tienda de apps de Home Assistant, añade el repositorio de RustDo e instala RustDo Hub. Más en la guía del hub.
 
 ### Correcciones
+- App web en teléfonos y tabletas: en algunas pantallas las letras se veían comprimidas. «Texto nítido» (activado por defecto, en el menú ⚙) ahora funciona también ahí, como en la app de Android.
 - La imagen de Docker de RustDo Hub ahora funciona cuando su carpeta de datos pertenece a root (habitual en NAS y en Home Assistant).
 
 ## 0.4.5 - 2026-11-26

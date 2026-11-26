@@ -824,10 +824,44 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
             }
         });
     } else {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| buttons(ui, &mut s, &mut page_action, &mut tidy));
-        });
+        // Title and buttons on one line when they fit (the buttons' width is measured as
+        // they're drawn); on narrower screens, such as tablets with big touch buttons, the
+        // buttons go on their own line so they don't cover the title.
+        let title = RichText::new(tr("📝 Sticky notes")).size(24.0).strong();
+        let title_w = egui::WidgetText::from(title.clone())
+            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
+            .size()
+            .x;
+        let buttons_id = Id::new("wall_buttons_width");
+        let buttons_w: f32 = ui.ctx().data(|d| d.get_temp(buttons_id)).unwrap_or(0.0);
+        let one_line = title_w + buttons_w + 24.0 <= ui.available_width();
+        let measured = if one_line {
+            ui.horizontal(|ui| {
+                ui.label(title);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let start = ui.cursor().max.x;
+                    buttons(ui, &mut s, &mut page_action, &mut tidy);
+                    start - ui.min_rect().min.x
+                })
+                .inner
+            })
+            .inner
+        } else {
+            ui.label(title);
+            ui.horizontal(|ui| {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let start = ui.cursor().max.x;
+                    buttons(ui, &mut s, &mut page_action, &mut tidy);
+                    start - ui.min_rect().min.x
+                })
+                .inner
+            })
+            .inner
+        };
+        if (measured - buttons_w).abs() > 1.0 && measured.is_finite() {
+            ui.ctx().data_mut(|d| d.insert_temp(buttons_id, measured));
+            ui.ctx().request_repaint();
+        }
     }
     let kept = if cfg!(target_os = "android") { tr("on this phone") } else { tr("in this browser") };
     let hint = if narrow {

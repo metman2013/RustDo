@@ -439,6 +439,21 @@ pub fn prefers_touch() -> bool {
     }
 }
 
+/// The web app on a phone or tablet (a finger is the main pointer). Asked once.
+pub fn web_touch_screen() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread_local! {
+            static TOUCH: bool = prefers_touch();
+        }
+        TOUCH.with(|t| *t)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        false
+    }
+}
+
 /// Android: back at RustDo's top level puts it in the background. Elsewhere: nothing.
 pub fn leave_app() {
     #[cfg(target_os = "android")]

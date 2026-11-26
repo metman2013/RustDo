@@ -169,6 +169,7 @@ pub fn used_images(settings: &crate::model::Settings) -> Vec<String> {
 pub type Images = BTreeMap<String, Vec<u8>>;
 
 /// Where images are kept on the desktop and Android (`<data folder>/Backgrounds`).
+#[cfg(not(target_arch = "wasm32"))]
 fn folder(data: &std::path::Path) -> PathBuf {
     data.join("Backgrounds")
 }

@@ -42,7 +42,9 @@ const NARROW_WIDTH: f32 = 700.0;
 /// Sidebar room for the "Desktop notes" section below the lists.
 const NOTES_SECTION_H: f32 = 62.0;
 /// Sidebar room for the footer: version, What's new, Discord.
-const SIDEBAR_FOOTER_H: f32 = 34.0;
+const SIDEBAR_FOOTER_H: f32 = 74.0;
+/// Discord's own colour, for the "Join the Discord" button.
+const DISCORD_BLUE: Color32 = Color32::from_rgb(0x58, 0x65, 0xF2);
 
 /// Import is offered where we can pick a file: desktop and web, not the Android build.
 /// The sidebar's "Import from Microsoft To Do" (signing in works everywhere).
@@ -271,6 +273,8 @@ pub struct TodoApp {
     account_notes_seen: Option<Instant>,
     /// The "What's new" dialog: the releases to describe, newest first.
     whats_new: Option<Vec<changelog::Release>>,
+    /// "Get RustDo for your other devices" is open.
+    get_apps: bool,
 }
 
 impl TodoApp {
@@ -413,6 +417,7 @@ impl TodoApp {
             bg_style: None,
             account_notes_seen: None,
             whats_new,
+            get_apps: false,
         }
     }
 
@@ -895,6 +900,11 @@ impl TodoApp {
                     .weak()
                     .small(),
             );
+        }
+        if cfg!(target_os = "android") || platform::web_touch_screen() {
+            if !cfg!(target_os = "android") {
+                ui.separator();
+            }
             if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
                 self.dirty = true;
             }
@@ -911,10 +921,11 @@ impl TodoApp {
         ui.separator();
         // The full Releases page: newest version first, with every earlier one below.
         let releases = format!("https://github.com/{}/releases", update::REPO);
-        if cfg!(target_arch = "wasm32") {
-            ui.hyperlink_to(tr("⬇ Get the desktop & mobile apps"), releases)
-                .on_hover_text(tr("Windows, Linux and Android downloads"));
-        } else {
+        if ui.button(tr("⬇ Get RustDo for your other devices…")).on_hover_text(tr("Windows, Android, Linux, the web app and the Hub")).clicked() {
+            self.get_apps = true;
+            ui.close_menu();
+        }
+        if !cfg!(target_arch = "wasm32") {
             ui.hyperlink_to(tr("Downloads & release notes"), releases);
         }
         ui.hyperlink_to(tr("Join the RustDo Discord"), update::DISCORD)
@@ -2565,6 +2576,76 @@ impl TodoApp {
         }
     }
 
+    /// Where to get RustDo on every kind of device.
+    fn get_apps_dialog(&mut self, ctx: &egui::Context) {
+        if !self.get_apps {
+            return;
+        }
+        let v = update::CURRENT_VERSION;
+        let repo = update::REPO;
+        let release = format!("https://github.com/{repo}/releases/tag/v{v}");
+        let apk = format!("https://github.com/{repo}/releases/download/v{v}/RustDo-{v}.apk");
+        let hub = format!("https://github.com/{repo}/blob/main/docs/hub.md");
+        let mut open = true;
+        let mut close = false;
+        dialog_window(ctx, tr("Get RustDo"), self.insets).open(&mut open).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 460.0));
+            ui.label(tr("RustDo is free on all of these. Sync my devices (with your own Hub) keeps them in step."));
+            ui.add_space(6.0);
+            let row = |ui: &mut egui::Ui, name: &str, about: &str, links: &[(String, String)]| {
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new(name).strong().size(16.0));
+                    ui.add(egui::Label::new(RichText::new(about).weak()).wrap());
+                    ui.horizontal_wrapped(|ui| {
+                        for (label, url) in links {
+                            if ui.add(egui::Button::new(RichText::new(label.as_str()).color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                            }
+                        }
+                    });
+                });
+                ui.add_space(4.0);
+            };
+            egui::ScrollArea::vertical().max_height(ctx.screen_rect().height() * 0.7).show(ui, |ui| {
+                row(
+                    ui,
+                    "Windows",
+                    tr("From the Microsoft Store (updates itself), or as an installer or a portable .exe."),
+                    &[
+                        (tr("Microsoft Store").to_string(), "https://apps.microsoft.com/detail/9PK0DF0QBWWM".to_string()),
+                        (tr("Installer & portable").to_string(), release.clone()),
+                    ],
+                );
+                row(
+                    ui,
+                    "Android",
+                    tr("For phones and tablets: download the APK and open it. Android asks once to allow installing apps from your browser."),
+                    &[(tr("Download the APK").to_string(), apk)],
+                );
+                row(ui, "Linux", tr("A .deb package (Debian, Ubuntu, Mint) or an AppImage for any distribution."), &[(tr("Downloads").to_string(), release.clone())]);
+                row(
+                    ui,
+                    tr("Web app"),
+                    tr("Runs in any browser at rustdo.app, also on iPhone, iPad and Chromebook. Install it from the browser's menu: “Install app” or “Add to Home screen”."),
+                    &[(tr("Open rustdo.app").to_string(), "https://rustdo.app".to_string())],
+                );
+                row(
+                    ui,
+                    "RustDo Hub",
+                    tr("Your own small server for sharing lists and syncing your devices: Docker, Windows or a Home Assistant app."),
+                    &[(tr("How to set it up").to_string(), hub)],
+                );
+            });
+            if ui.button(tr("Close")).clicked() {
+                close = true;
+            }
+        });
+        if !open || close || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.get_apps = false;
+        }
+    }
+
     fn whats_new_dialog(&mut self, ctx: &egui::Context) {
         let Some(releases) = &self.whats_new else { return };
         let mut close = false;
@@ -3319,6 +3400,8 @@ impl TodoApp {
                 // Footer: version, What's new and the Discord (also in Settings). Wide
                 // screens pin it to the bottom of the sidebar; on a phone it ends the page.
                 let footer = |ui: &mut egui::Ui, whats_new: &mut Option<Vec<changelog::Release>>| {
+                    discord_button(ui);
+                    ui.add_space(2.0);
                     ui.horizontal_wrapped(|ui| {
                         ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).small().weak());
                         if ui.add(egui::Label::new(RichText::new(tr("What's new")).small().color(ACCENT)).sense(Sense::click()))
@@ -3327,8 +3410,6 @@ impl TodoApp {
                         {
                             *whats_new = Some(changelog::releases());
                         }
-                        ui.hyperlink_to(RichText::new(tr("💬 Discord")).small(), update::DISCORD)
-                            .on_hover_text(tr("Chat, ideas and help: opens in your browser"));
                     });
                 };
                 if narrow {
@@ -4482,6 +4563,7 @@ impl eframe::App for TodoApp {
         self.import_dialog(ctx, now);
         self.restore_dialog(ctx);
         self.whats_new_dialog(ctx);
+        self.get_apps_dialog(ctx);
         self.hub_guide_dialog(ctx);
         self.account_dialog(ctx);
         self.ms_import_dialog(ctx);
@@ -4581,6 +4663,17 @@ pub(crate) fn cover_uv(image: Vec2, area: Vec2) -> Rect {
     }
 }
 
+/// "💬 Ideas or bugs? Join the RustDo Discord!" across the bottom of the sidebar.
+fn discord_button(ui: &mut egui::Ui) {
+    let button = egui::Button::new(RichText::new(tr("💬 Ideas or bugs? Join the RustDo Discord!")).color(Color32::WHITE))
+        .fill(DISCORD_BLUE)
+        .wrap()
+        .min_size(Vec2::new(ui.available_width(), 30.0));
+    if ui.add(button).on_hover_text(tr("Chat, ideas and help: opens in your browser")).on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        ui.ctx().open_url(egui::OpenUrl::new_tab(update::DISCORD));
+    }
+}
+
 /// Phones: "‹ Back" as a clear, thumb-sized button. The chevron is drawn (the built-in
 /// fonts have no good arrow), in a rounded pill so it reads as something to tap.
 fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
@@ -4639,7 +4732,9 @@ fn dialog_width(ui: &egui::Ui, preferred: f32) -> f32 {
 /// apart and text looks uneven and fuzzy. Rounding the scale (2.625x -> 3x) keeps every
 /// glyph sharp and evenly spaced, at the cost of the UI being slightly larger or smaller.
 fn apply_text_scale(ctx: &egui::Context, crisp: bool) {
-    if !cfg!(target_os = "android") {
+    // Android, and the web app on phones and tablets (fractional screen scales squeeze
+    // the letters there). Desktop browsers keep their own zoom.
+    if !cfg!(target_os = "android") && !platform::web_touch_screen() {
         return;
     }
     let Some(native) = ctx.native_pixels_per_point().filter(|p| *p > 0.0) else {

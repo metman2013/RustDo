@@ -6,11 +6,15 @@
 ## 0.4.6 - 2026-11-27
 
 ### Neu
-- Hintergrundbilder: Wähle unter Einstellungen › Hintergrund eines für die ganze App, und gib jeder Liste ihr eigenes (Rechtsklick oder langes Drücken auf die Liste › Hintergrund…). Wähle aus eingebauten Hintergründen oder, am Computer oder im Web, aus deinen eigenen Bildern. „Hintergrund abdunkeln“ hält die Aufgaben gut lesbar.
+- Hintergrundbilder: Wähle unter Einstellungen › Hintergrund eines für die ganze App, und gib jeder Liste ihr eigenes (Rechtsklick oder langes Drücken auf die Liste › Hintergrund…). Wähle aus eingebauten Hintergründen oder deinen eigenen Bildern (unter Android zeigt RustDo deine Fotos, sobald du es erlaubst). „Hintergrund abdunkeln“ hält die Aufgaben gut lesbar.
 - Hintergründe werden mit „Meine Geräte synchronisieren“ abgeglichen, auch deine eigenen Bilder: Ein am PC gewähltes Bild erscheint auch auf dem Smartphone. (Dafür braucht dein RustDo Hub Version 0.4.6 oder neuer.)
+- Auch Haftnotizen können ein Bild haben: Öffne das 🎨-Menü einer Notiz › Bild und wähle ein eingebautes oder ein eigenes. Die Farbe der Notiz tönt es, damit der Text gut lesbar bleibt.
+- „RustDo für deine anderen Geräte“ (im ⚙-Menü) zeigt alle Wege zu RustDo: Microsoft Store, Windows-Installer, Android, Linux, die Web-App und den Hub.
+- Unten in den Listen eine Schaltfläche „Tritt dem RustDo-Discord bei!“ für Ideen, Fehler und Hilfe.
 - RustDo Hub kann als Home-Assistant-App laufen: Füge im App-Store von Home Assistant das RustDo-Repository hinzu und installiere RustDo Hub. Mehr in der Hub-Anleitung.
 
 ### Behoben
+- Web-App auf Smartphones und Tablets: Auf manchen Bildschirmen wirkten die Buchstaben gestaucht. „Scharfe Schrift“ (standardmäßig an, im ⚙-Menü) wirkt jetzt auch dort, wie in der Android-App.
 - Das Docker-Image von RustDo Hub funktioniert jetzt auch, wenn sein Datenordner root gehört (häufig bei NAS-Geräten und in Home Assistant).
 
 ## 0.4.5 - 2026-11-26

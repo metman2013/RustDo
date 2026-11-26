@@ -6,11 +6,15 @@ traduites. Les versions absentes ici s'affichent en anglais.
 ## 0.4.6 - 2026-11-27
 
 ### Nouveautés
-- Images de fond : choisissez-en une pour toute l'app dans Paramètres › Fond, et donnez à chaque liste la sienne (clic droit ou appui long sur la liste › Fond…). Choisissez parmi les fonds intégrés ou, sur ordinateur ou sur le web, votre propre image. « Assombrir le fond » garde les tâches faciles à lire.
+- Images de fond : choisissez-en une pour toute l'app dans Paramètres › Fond, et donnez à chaque liste la sienne (clic droit ou appui long sur la liste › Fond…). Choisissez parmi les fonds intégrés ou votre propre image (sur Android, RustDo affiche vos photos une fois que vous l'autorisez). « Assombrir le fond » garde les tâches faciles à lire.
 - Les fonds se synchronisent avec Synchroniser mes appareils, vos propres images aussi : une image choisie sur le PC apparaît aussi sur le téléphone. (Votre RustDo Hub doit être en version 0.4.6 ou ultérieure pour transporter les images.)
+- Les notes adhésives peuvent aussi avoir une image : ouvrez le menu 🎨 d'une note › Image et choisissez-en une intégrée ou la vôtre. La couleur de la note la teinte pour que le texte reste lisible.
+- Obtenir RustDo (dans le menu ⚙) présente toutes les façons d'avoir RustDo : Microsoft Store, l'installateur Windows, Android, Linux, l'app web et le Hub.
+- Un bouton « Rejoignez le Discord de RustDo » en bas des listes, pour les idées, les bugs et l'aide.
 - RustDo Hub peut fonctionner comme app Home Assistant : dans la boutique d'apps de Home Assistant, ajoutez le dépôt RustDo et installez RustDo Hub. Plus de détails dans le guide du hub.
 
 ### Corrections
+- App web sur téléphones et tablettes : sur certains écrans, les lettres paraissaient tassées. « Texte net » (activé par défaut, dans le menu ⚙) fonctionne maintenant là aussi, comme dans l'app Android.
 - L'image Docker de RustDo Hub fonctionne désormais quand son dossier de données appartient à root (fréquent sur les NAS et dans Home Assistant).
 
 ## 0.4.5 - 2026-11-26

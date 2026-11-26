@@ -13,11 +13,15 @@ Each release needs its entry in all three (a test checks the current version).
 ## 0.4.6 - 2026-11-27
 
 ### New
-- Background images: choose one for the whole app in Settings › Background, and give any list its own (right-click or long-press the list › Background…). Pick from built-in backgrounds or, on a computer or the web, your own picture. "Dim background" keeps tasks easy to read.
+- Background images: choose one for the whole app in Settings › Background, and give any list its own (right-click or long-press the list › Background…). Pick from built-in backgrounds or your own picture (on Android, RustDo shows your photos once you allow it). "Dim background" keeps tasks easy to read.
 - Backgrounds sync with Sync my devices, your own pictures too, so a picture chosen on your PC also shows on your phone. (Your RustDo Hub needs to be 0.4.6 or later to carry pictures.)
+- Sticky notes can have a picture too: open a note's 🎨 menu › Picture and choose a built-in one or your own. The note's colour tints it so the text stays readable.
+- Get RustDo (in the ⚙ menu) lists every way to get RustDo: the Microsoft Store, Windows installer, Android, Linux, the web app and the Hub.
+- A "Join the RustDo Discord" button at the bottom of the lists, for ideas, bugs and help.
 - RustDo Hub can run as a Home Assistant app: in Home Assistant's app store, add the RustDo repository and install RustDo Hub. See the hub guide.
 
 ### Fixed
+- Web app on phones and tablets: letters could look squeezed on some screens. "Sharp text" (on by default, in the ⚙ menu) now works there too, as in the Android app.
 - RustDo Hub's Docker image now works when its data folder is owned by root (common on NAS boxes and in Home Assistant).
 
 ## 0.4.5 - 2026-11-26
