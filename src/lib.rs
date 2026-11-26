@@ -2,6 +2,7 @@
 
 pub mod account;
 pub mod app;
+pub mod backgrounds;
 pub mod changelog;
 pub mod companion;
 pub mod diagnostics;

@@ -97,6 +97,14 @@ fn yes() -> bool {
     true
 }
 
+fn default_dim() -> f32 {
+    0.45
+}
+
+fn is_no_background(b: &crate::backgrounds::Background) -> bool {
+    *b == crate::backgrounds::Background::None
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default)]
@@ -149,6 +157,15 @@ pub struct Settings {
     /// Settings › Language.
     #[serde(default)]
     pub language: crate::i18n::Language,
+    /// The background behind the tasks (Settings › Appearance).
+    #[serde(default, skip_serializing_if = "is_no_background")]
+    pub background: crate::backgrounds::Background,
+    /// How much the background is toned down behind the tasks (0 = not at all, 0.9 = a lot).
+    #[serde(default = "default_dim")]
+    pub background_dim: f32,
+    /// Lists with their own background (else they use [`Settings::background`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub list_backgrounds: std::collections::BTreeMap<Uuid, crate::backgrounds::Background>,
     /// The RustDo Hub used for family sharing, e.g. `http://192.168.1.20:7979`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hub: Option<String>,
@@ -173,6 +190,9 @@ impl Default for Settings {
             companion: true,
             companion_autostart: true,
             language: crate::i18n::Language::Automatic,
+            background: crate::backgrounds::Background::None,
+            background_dim: default_dim(),
+            list_backgrounds: std::collections::BTreeMap::new(),
             hub: None,
         }
     }

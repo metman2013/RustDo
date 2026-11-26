@@ -45,6 +45,9 @@ log = "0.4"
 ehttp = "0.5"
 # Settings › Language › Automatic: the device's language.
 sys-locale = "0.3"
+# Background images: reading JPG/PNG, shrinking and saving as JPEG; base64 to sync them.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+base64 = "0.22"
 
 # Desktop (Windows / macOS / Linux)
 [target.'cfg(not(any(target_arch = "wasm32", target_os = "android")))'.dependencies]
