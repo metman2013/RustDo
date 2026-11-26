@@ -3,7 +3,7 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
-## 0.4.4 - 2026-11-28
+## 0.4.4 - 2026-11-26
 
 ### Neu
 - Liste anzeigen: eine große, gut lesbare Seite mit den Aufgaben einer Liste und ihren Notizen, zum Beispiel eine Medikamentenliste für den Arzt. Kopiere sie als Text für eine E-Mail oder Nachricht, oder drucke sie am Computer bzw. speichere sie als PDF. Du findest es neben dem Namen der Liste oder per Rechtsklick (langem Drücken) auf eine Liste.

@@ -3,7 +3,7 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
-## 0.4.4 - 2026-11-28
+## 0.4.4 - 2026-11-26
 
 ### Nouveautés
 - Afficher la liste : une grande page facile à lire avec les tâches d'une liste et leurs notes, par exemple une liste de médicaments à montrer à votre médecin. Copiez-la en texte pour la coller dans un e-mail ou un message, ou sur ordinateur imprimez-la ou enregistrez-la en PDF. Le bouton se trouve à côté du nom de la liste, ou par clic droit (appui long) sur une liste.
