@@ -13,6 +13,7 @@ Each release needs its entry in all three (a test checks the current version).
 ## 0.4.7 - 2026-11-27
 
 ### Fixed
+- Web app on Android phones and tablets: letters could look uneven, with some clipped or shifted (the graphics chip drew text with too little precision). Text is now drawn at full precision and looks as crisp as in the Android app.
 - Android: Settings › Background was missing the "+ Picture…" button, so you couldn't use your own photos. It's there now, and opens RustDo's photo picker.
 - Text is easier to read over background images: dates, hints and other light text no longer fade into the picture, in both the dark and light themes.
 

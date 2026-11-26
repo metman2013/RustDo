@@ -6,6 +6,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 ## 0.4.7 - 2026-11-27
 
 ### Correcciones
+- App web en teléfonos y tabletas Android: las letras podían verse irregulares, algunas cortadas o desplazadas (el chip gráfico dibujaba el texto con poca precisión). Ahora el texto se dibuja con precisión completa y se ve tan nítido como en la app de Android.
 - Android: en Configuración › Fondo faltaba el botón «+ Imagen…», así que no se podían usar fotos propias. Ya está, y abre el selector de fotos de RustDo.
 - El texto se lee mejor sobre las imágenes de fondo: las fechas, las indicaciones y otros textos tenues ya no se confunden con la imagen, tanto en el tema oscuro como en el claro.
 

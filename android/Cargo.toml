@@ -69,3 +69,6 @@ orientation = "unspecified"
 # The same patched egui-winit as the app (Android's back button; see ../Cargo.toml).
 [patch.crates-io]
 egui-winit = { path = "../vendor/egui-winit" }
+# egui_glow with high-precision shaders (crisp letters on mobile GPUs; see
+# vendor/egui_glow/src/shader/vertex.glsl).
+egui_glow = { path = "../vendor/egui_glow" }
