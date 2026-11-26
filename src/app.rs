@@ -4663,9 +4663,9 @@ pub(crate) fn cover_uv(image: Vec2, area: Vec2) -> Rect {
     }
 }
 
-/// "💬 Ideas or bugs? Join the RustDo Discord!" across the bottom of the sidebar.
+/// "💬 Ideas or bugs? Join the RustDo Discord community!" across the bottom of the sidebar.
 fn discord_button(ui: &mut egui::Ui) {
-    let button = egui::Button::new(RichText::new(tr("💬 Ideas or bugs? Join the RustDo Discord!")).color(Color32::WHITE))
+    let button = egui::Button::new(RichText::new(tr("💬 Ideas or bugs? Join the RustDo Discord community!")).color(Color32::WHITE))
         .fill(DISCORD_BLUE)
         .wrap()
         .min_size(Vec2::new(ui.available_width(), 30.0));

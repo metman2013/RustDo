@@ -17,7 +17,7 @@ Each release needs its entry in all three (a test checks the current version).
 - Backgrounds sync with Sync my devices, your own pictures too, so a picture chosen on your PC also shows on your phone. (Your RustDo Hub needs to be 0.4.6 or later to carry pictures.)
 - Sticky notes can have a picture too: open a note's 🎨 menu › Picture and choose a built-in one or your own. The note's colour tints it so the text stays readable.
 - Get RustDo (in the ⚙ menu) lists every way to get RustDo: the Microsoft Store, Windows installer, Android, Linux, the web app and the Hub.
-- A "Join the RustDo Discord" button at the bottom of the lists, for ideas, bugs and help.
+- A "Join the RustDo Discord community" button at the bottom of the lists, for ideas, bugs and help.
 - RustDo Hub can run as a Home Assistant app: in Home Assistant's app store, add the RustDo repository and install RustDo Hub. See the hub guide.
 
 ### Fixed

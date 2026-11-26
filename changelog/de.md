@@ -10,7 +10,7 @@
 - Hintergründe werden mit „Meine Geräte synchronisieren“ abgeglichen, auch deine eigenen Bilder: Ein am PC gewähltes Bild erscheint auch auf dem Smartphone. (Dafür braucht dein RustDo Hub Version 0.4.6 oder neuer.)
 - Auch Haftnotizen können ein Bild haben: Öffne das 🎨-Menü einer Notiz › Bild und wähle ein eingebautes oder ein eigenes. Die Farbe der Notiz tönt es, damit der Text gut lesbar bleibt.
 - „RustDo für deine anderen Geräte“ (im ⚙-Menü) zeigt alle Wege zu RustDo: Microsoft Store, Windows-Installer, Android, Linux, die Web-App und den Hub.
-- Unten in den Listen eine Schaltfläche „Tritt dem RustDo-Discord bei!“ für Ideen, Fehler und Hilfe.
+- Unten in den Listen eine Schaltfläche „Tritt der RustDo-Discord-Community bei!“ für Ideen, Fehler und Hilfe.
 - RustDo Hub kann als Home-Assistant-App laufen: Füge im App-Store von Home Assistant das RustDo-Repository hinzu und installiere RustDo Hub. Mehr in der Hub-Anleitung.
 
 ### Behoben

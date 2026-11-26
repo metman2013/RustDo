@@ -537,7 +537,7 @@ pub const TEXTS: &[(&str, &str)] = &[
     ("⬇ Get RustDo for your other devices…", "⬇ RustDo für deine anderen Geräte…"),
     ("👥  Share list…", "👥  Liste teilen…"),
     ("👥  Sharing…", "👥  Freigabe…"),
-    ("💬 Ideas or bugs? Join the RustDo Discord!", "💬 Ideen oder Fehler? Tritt dem RustDo-Discord bei!"),
+    ("💬 Ideas or bugs? Join the RustDo Discord community!", "💬 Ideen oder Fehler? Tritt der RustDo-Discord-Community bei!"),
     ("📄  Show list", "📄  Liste anzeigen"),
     ("📅   Due date", "📅   Fälligkeitsdatum"),
     ("📋 Copy as text", "📋 Als Text kopieren"),

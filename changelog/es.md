@@ -10,7 +10,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 - Los fondos se sincronizan con Sincronizar mis dispositivos, también tus propias imágenes: una imagen elegida en el PC aparece también en el teléfono. (Tu RustDo Hub necesita la versión 0.4.6 o posterior para llevar imágenes.)
 - Las notas adhesivas también pueden tener una imagen: abre el menú 🎨 de una nota › Imagen y elige una incluida o una tuya. El color de la nota la tiñe para que el texto se lea bien.
 - Obtener RustDo (en el menú ⚙) muestra todas las formas de conseguir RustDo: Microsoft Store, el instalador de Windows, Android, Linux, la app web y el Hub.
-- Un botón «Únete al Discord de RustDo» al final de las listas, para ideas, errores y ayuda.
+- Un botón «Únete a la comunidad de RustDo en Discord» al final de las listas, para ideas, errores y ayuda.
 - RustDo Hub puede funcionar como app de Home Assistant: en la tienda de apps de Home Assistant, añade el repositorio de RustDo e instala RustDo Hub. Más en la guía del hub.
 
 ### Correcciones
