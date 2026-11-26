@@ -18,6 +18,7 @@ Each release needs its entry in all three (a test checks the current version).
 - Reorder your lists: drag a list up or down in the menu, or on a phone long-press it and choose Move up or Move down. The new order syncs to your other devices.
 - New installs in German, Spanish or French start with a 24-hour clock, and the default list's name follows when you switch language.
 - "What's new" now appears in your language (German, Spanish or French).
+- RustDo Hub keeps a copy of its data every day (the last 14 days) in a backups folder next to hub.json.
 
 ## 0.4.3 - 2026-11-26
 

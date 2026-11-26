@@ -19,6 +19,10 @@ use std::path::{Path, PathBuf};
 /// Bumped only for changes old apps can't understand.
 pub const PROTOCOL: u32 = 1;
 const FILE: &str = "hub.json";
+/// Daily copies of hub.json, in `backups/` next to it.
+const BACKUP_DIR: &str = "backups";
+/// How many daily copies to keep.
+pub const KEEP_BACKUPS: usize = 14;
 /// Unambiguous characters for share codes (no 0/O, 1/I/L).
 const CODE_CHARS: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
@@ -173,6 +177,43 @@ impl Hub {
         Ok(hub)
     }
 
+    /// Where the daily copies go.
+    pub fn backup_dir(&self) -> PathBuf {
+        self.path.with_file_name(BACKUP_DIR)
+    }
+
+    /// Keeps today's copy of hub.json (`backups/hub-YYYY-MM-DD.json`) and the last
+    /// [`KEEP_BACKUPS`] days. A backup problem is reported but never stops the hub.
+    fn daily_backup(&self) {
+        if self.path.as_os_str().is_empty() {
+            return;
+        }
+        let dir = self.backup_dir();
+        let name = format!("hub-{}.json", today());
+        let target = dir.join(&name);
+        if target.exists() {
+            return;
+        }
+        let result = std::fs::create_dir_all(&dir).and_then(|_| std::fs::copy(&self.path, &target));
+        if let Err(e) = result {
+            eprintln!("rustdo-hub: couldn't save today's backup in {}: {e}", dir.display());
+            return;
+        }
+        let mut old: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("hub-") && n.ends_with(".json")))
+                    .collect()
+            })
+            .unwrap_or_default();
+        old.sort();
+        let extra = old.len().saturating_sub(KEEP_BACKUPS);
+        for p in old.into_iter().take(extra) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
     /// In-memory hub for tests.
     #[cfg(test)]
     fn memory() -> Self {
@@ -195,7 +236,9 @@ impl Hub {
         // Write a new file, then swap it in: a crash mid-write never leaves half a file.
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())
+        std::fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
+        self.daily_backup();
+        Ok(())
     }
 
     /// Starts sharing a list; returns its new code, formatted like `K7QM-2XPD`.
@@ -267,6 +310,29 @@ impl Hub {
         }
         Ok(Some(response))
     }
+}
+
+/// Today's date (UTC) as YYYY-MM-DD, without a date library.
+fn today() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Days since 1970-01-01 → (year, month, day). Howard Hinnant's algorithm.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
 }
 
 /// "k7qm 2xpd", "K7QM-2XPD" → "K7QM2XPD".
@@ -409,6 +475,34 @@ mod tests {
         assert!(hub.account_sync(req("short", 0, vec![])).unwrap().is_none());
         // Share codes and sync keys don't open each other.
         assert!(hub.sync(SyncRequest { code: key.clone(), since: 0, changes: vec![] }).unwrap().is_none());
+    }
+
+    #[test]
+    fn dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(20_783), (2026, 11, 26));
+        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+    }
+
+    #[test]
+    fn keeps_daily_backups() {
+        let dir = std::env::temp_dir().join(format!("rustdo-hub-backup-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut hub = Hub::open(&dir).unwrap();
+        let backups = hub.backup_dir();
+        // Pretend there are older copies, more than are kept.
+        for day in 1..=20 {
+            std::fs::write(backups.join(format!("hub-2020-01-{day:02}.json")), "{}").unwrap();
+        }
+        // Today's copy already exists from opening; force a fresh one.
+        let today_file = backups.join(format!("hub-{}.json", today()));
+        std::fs::remove_file(&today_file).unwrap();
+        hub.share(ShareRequest { list_id: "L1".into() }).unwrap();
+        assert!(today_file.exists(), "today's backup is written");
+        let count = std::fs::read_dir(&backups).unwrap().count();
+        assert_eq!(count, KEEP_BACKUPS, "only the last {KEEP_BACKUPS} days are kept");
+        assert!(!backups.join("hub-2020-01-01.json").exists(), "the oldest go first");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

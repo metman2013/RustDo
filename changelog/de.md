@@ -11,6 +11,7 @@
 - Listen neu anordnen: Ziehe eine Liste im Menü nach oben oder unten, oder halte sie auf dem Smartphone gedrückt und wähle „Nach oben“ oder „Nach unten“. Die neue Reihenfolge wird mit deinen anderen Geräten synchronisiert.
 - Neue Installationen auf Deutsch, Spanisch oder Französisch starten mit dem 24-Stunden-Format, und der Name der Standardliste wechselt mit, wenn du die Sprache änderst.
 - „Neuigkeiten“ erscheinen jetzt in deiner Sprache (Deutsch, Spanisch oder Französisch).
+- RustDo Hub speichert jeden Tag eine Kopie seiner Daten (die letzten 14 Tage) in einem Ordner „backups“ neben hub.json.
 
 ## 0.4.3 - 2026-11-26
 

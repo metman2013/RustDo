@@ -2795,7 +2795,7 @@ impl TodoApp {
                                     None => others.last().map_or(pos.y, |(_, r)| r.bottom()),
                                 };
                                 let x = ui.min_rect().x_range();
-                                ui.painter().hline(x, y, Stroke::new(2.0, ACCENT));
+                                ui.painter().hline(x, y, Stroke::new(2.0_f32, ACCENT));
                                 ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
                                 if released {
                                     self.dirty |= self.store.move_list(dragged, to);

@@ -33,7 +33,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       release: ${{ steps.v.outputs.release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: v
         run: |
           V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
@@ -55,7 +55,7 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
 
@@ -63,7 +63,7 @@ jobs:
     needs: test
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build (no personal paths)
         shell: pwsh
@@ -77,7 +77,7 @@ jobs:
           & $iscc "/DAppVersion=$v" installer\rustdo.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
           Copy-Item target\release\rustdo.exe "target\installer\RustDo-$v-portable.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows
           path: target/installer/*.exe
@@ -90,8 +90,8 @@ jobs:
     needs: windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: windows
           path: windows
@@ -106,7 +106,7 @@ jobs:
           $exe = Get-ChildItem windows -Filter "*-portable.exe" | Select-Object -First 1
           if (-not $exe) { throw "portable exe not found in the windows artifact" }
           ./tools/build-msix.ps1 -Exe $exe.FullName -Version $v -Out out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: store
           path: out/*.msix
@@ -116,7 +116,7 @@ jobs:
     # Built on an older Ubuntu so the binary also runs on older distros (glibc).
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build dependencies (egui windowing, GTK file dialogs)
         run: |
@@ -142,7 +142,7 @@ jobs:
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "out/RustDo-$V-x86_64.AppImage"
           cp target/debian/*.deb out/
           ls -la out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux
           path: out/*
@@ -151,7 +151,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -162,7 +162,7 @@ jobs:
       - name: Build web app
         shell: pwsh
         run: ./tools/build-web.ps1
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
@@ -182,12 +182,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
   hub:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Hub version must match the app
         run: |
@@ -213,7 +213,7 @@ jobs:
     needs: hub
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - name: Build
         working-directory: hub
@@ -224,7 +224,7 @@ jobs:
           $v = (Select-String hub/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           New-Item -ItemType Directory -Force out | Out-Null
           Copy-Item hub/target/release/rustdo-hub.exe "out/RustDo-Hub-$v-windows.exe"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: hub-windows
           path: out/*.exe
@@ -238,17 +238,17 @@ jobs:
     env:
       PUBLISH: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
       - if: env.PUBLISH == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository_owner }}/rustdo-hub
           tags: |
@@ -259,7 +259,7 @@ jobs:
             org.opencontainers.image.title=RustDo Hub
             org.opencontainers.image.description=Share RustDo lists with family on your own network
       # amd64 for PCs and most NAS boxes, arm64 for Raspberry Pi and ARM NAS boxes.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: hub
           platforms: linux/amd64,linux/arm64
@@ -273,7 +273,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
@@ -328,7 +328,7 @@ jobs:
           echo "::notice title=APK signed by::$(grep -m1 'SHA-256' "$RUNNER_TEMP/sig.txt")"
           mkdir -p out
           cp "$APK" "out/RustDo-$V.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: android
           path: out/*.apk
@@ -340,7 +340,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # The release notes are this version's section of CHANGELOG.md (the same text the
       # app shows in "What's new"); GitHub's list of merged pull requests follows it.
       - name: Release notes from CHANGELOG.md
@@ -356,24 +356,24 @@ jobs:
           fi
           cat "$RUNNER_TEMP/notes.md"
       # Only the app downloads (not the web build's internal Pages bundle).
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: windows
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: android
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: linux
           path: artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: hub-windows
           path: artifacts
       # From main this also creates the v<version> tag on the commit that was built.
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ needs.version.outputs.version }}
           target_commitish: ${{ github.sha }}
@@ -425,14 +425,14 @@ jobs:
           }
       # The CHANGELOG and tools/store_whats_new.py, for "What's new".
       - if: steps.cfg.outputs.ready == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - if: steps.cfg.outputs.ready == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: store
           path: store
       - if: steps.cfg.outputs.ready == 'true'
-        uses: microsoft/setup-msstore-cli@v1
+        uses: microsoft/setup-msstore-cli@v1.4
       # Upload to a draft submission, set "What's new" from CHANGELOG.md, then send it for
       # certification. If "What's new" can't be set, the draft goes out with the previous
       # text rather than not at all.

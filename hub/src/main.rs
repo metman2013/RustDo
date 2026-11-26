@@ -61,6 +61,7 @@ fn main() {
     };
     println!("RustDo Hub {VERSION}");
     println!("Data: {}", hub.path().display());
+    println!("Daily backups (last {} days): {}", store::KEEP_BACKUPS, hub.backup_dir().display());
     println!("Shared lists: {} · synced accounts: {}", hub.list_count(), hub.account_count());
     println!();
     println!("In RustDo, use this hub address:");

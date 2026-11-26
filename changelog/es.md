@@ -11,6 +11,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 - Reordena tus listas: arrastra una lista hacia arriba o hacia abajo en el menú o, en el teléfono, mantenla pulsada y elige Subir o Bajar. El nuevo orden se sincroniza con tus otros dispositivos.
 - Las instalaciones nuevas en alemán, español o francés empiezan con el reloj de 24 horas, y el nombre de la lista predeterminada cambia cuando cambias de idioma.
 - «Novedades» aparece ahora en tu idioma (alemán, español o francés).
+- RustDo Hub guarda cada día una copia de sus datos (los últimos 14 días) en una carpeta backups junto a hub.json.
 
 ## 0.4.3 - 2026-11-26
 
