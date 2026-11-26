@@ -91,6 +91,19 @@ mod android {
         Some([r.left, r.top, (w - r.right).max(0), (h - r.bottom).max(0)])
     }
 
+    /// Back at the top level: send RustDo to the background, like other Android apps
+    /// (Activity.moveTaskToBack), instead of closing it.
+    pub fn move_to_background() {
+        use jni::objects::{JObject, JValue};
+        let Some(app) = APP.get() else { return };
+        let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
+        let Ok(mut env) = vm.attach_current_thread() else { return };
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        if env.call_method(&activity, "moveTaskToBack", "(Z)Z", &[JValue::Bool(1)]).is_err() {
+            let _ = env.exception_clear();
+        }
+    }
+
     pub fn show_keyboard(show: bool) {
         if let Some(app) = APP.get() {
             if show {
@@ -206,6 +219,12 @@ pub fn prefers_touch() -> bool {
     {
         std::env::var_os("RUSTDO_TOUCH").is_some_and(|v| v == "1")
     }
+}
+
+/// Android: back at RustDo's top level puts it in the background. Elsewhere: nothing.
+pub fn leave_app() {
+    #[cfg(target_os = "android")]
+    let _ = std::panic::catch_unwind(android::move_to_background);
 }
 
 /// Shows or hides the on-screen keyboard. Only needed on Android.

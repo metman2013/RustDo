@@ -725,8 +725,7 @@ impl TodoApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                let back = egui::Button::new(RichText::new(tr("<  Back")).size(20.0)).frame(false).min_size(Vec2::new(0.0, 44.0));
-                if ui.add(back).clicked() {
+                if back_button(ui, tr("Back")).clicked() {
                     self.show_settings = false;
                 }
                 ui.label(RichText::new(tr("Settings")).size(20.0).strong());
@@ -2522,6 +2521,70 @@ impl TodoApp {
         }
     }
 
+    /// Back on a phone: closes what's on top, one step at a time; at the menu, leaves the app.
+    fn phone_back(&mut self, ctx: &egui::Context) {
+        // A dialog first.
+        if self.whats_new.is_some() {
+            self.whats_new = None;
+            let current = Some(update::CURRENT_VERSION.to_string());
+            if self.store.settings.last_seen_version != current {
+                self.store.settings.last_seen_version = current;
+                self.dirty = true;
+            }
+            return;
+        }
+        if let Some(d) = self.ms_import.take() {
+            if let Some(s) = &d.session {
+                s.cancel();
+            }
+            return;
+        }
+        if self.account_dialog.as_ref().is_some_and(|d| !d.busy) {
+            self.account_dialog = None;
+            return;
+        }
+        if self.hub_guide {
+            self.hub_guide = false;
+            return;
+        }
+        if self.share_dialog.as_ref().is_some_and(|d| !d.busy) {
+            self.share_dialog = None;
+            return;
+        }
+        if self.pending_import.take().is_some()
+            || self.pending_restore.take().is_some()
+            || self.pending_notes_restore.take().is_some()
+            || self.paste_restore.take().is_some()
+            || self.confirm_delete_list.take().is_some()
+            || self.renaming_list.take().is_some()
+        {
+            return;
+        }
+        // Then the on-screen keyboard.
+        if ctx.wants_keyboard_input() {
+            ctx.memory_mut(|m| m.stop_text_input());
+            return;
+        }
+        // Then one screen back.
+        if self.show_settings {
+            self.show_settings = false;
+        } else if !self.search.is_empty() {
+            self.search.clear();
+        } else if self.selected.is_some() {
+            self.selected = None;
+        } else if self.show_nav {
+            // The menu slides over the list: back closes it.
+            self.show_nav = false;
+        } else if self.notes_page {
+            self.notes_page = false;
+            self.view = View::MyDay;
+        } else if self.view != View::MyDay {
+            self.view = View::MyDay;
+        } else {
+            platform::leave_app();
+        }
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let (new, find, esc, del) = ctx.input_mut(|i| {
             (
@@ -2565,11 +2628,10 @@ impl TodoApp {
                 ui.add_space(10.0);
                 let touch = is_touch(ui);
                 ui.horizontal(|ui| {
-                    let back = egui::Button::new(RichText::new("<").size(if touch { 26.0 } else { 18.0 })).frame(false);
-                    let back = if touch { back.min_size(Vec2::splat(44.0)) } else { back };
-                    if narrow && ui.add(back).clicked() {
+                    if narrow && back_button(ui, "").on_hover_text(tr("Back")).clicked() {
                         self.show_nav = false;
                     }
+                    let _ = touch;
                     ui.label(RichText::new(tr("✔ RustDo")).size(20.0).strong().color(ACCENT));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let theme = self.store.settings.theme;
@@ -2803,8 +2865,7 @@ impl TodoApp {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
             if narrow {
-                let back = egui::Button::new(RichText::new(tr("<  Lists")).size(18.0)).frame(false);
-                if ui.add(back).clicked() {
+                if back_button(ui, tr("Lists")).clicked() {
                     self.show_nav = true;
                 }
             }
@@ -3248,9 +3309,7 @@ impl TodoApp {
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     if narrow {
-                        let size = if is_touch(ui) { 20.0 } else { 16.0 };
-                        let back = egui::Button::new(RichText::new(tr("<  Back")).size(size)).frame(false).min_size(Vec2::new(0.0, 44.0));
-                        if ui.add(back).clicked() {
+                        if back_button(ui, tr("Back")).clicked() {
                             close = true;
                         }
                         return;
@@ -3801,6 +3860,11 @@ impl eframe::App for TodoApp {
             }
         }
 
+        // Phones: back (Android's back button or gesture arrives as Escape) steps back one
+        // screen at a time. Taken here so no other part of the app also acts on it.
+        if ctx.screen_rect().width() < NARROW_WIDTH && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            self.phone_back(ctx);
+        }
         self.shortcuts(ctx);
         if self.selected.is_some_and(|id| self.store.task(id).is_none()) {
             self.selected = None;
@@ -3932,6 +3996,41 @@ const MAX_ATLAS_SIDE: usize = 2048;
 
 fn capped_texture_side(side: Option<usize>) -> Option<usize> {
     Some(side.map_or(MAX_ATLAS_SIDE, |s| s.min(MAX_ATLAS_SIDE)))
+}
+
+/// Phones: "‹ Back" as a clear, thumb-sized button. The chevron is drawn (the built-in
+/// fonts have no good arrow), in a rounded pill so it reads as something to tap.
+fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let touch = is_touch(ui);
+    let height = if touch { 48.0 } else { 36.0 };
+    let font = egui::FontId::proportional(if touch { 19.0 } else { 16.0 });
+    let text_color = ui.visuals().strong_text_color();
+    let galley = ui.painter().layout_no_wrap(label.to_string(), font, text_color);
+    let chevron_w = height * 0.32;
+    let pad = height * 0.32;
+    let width = if label.is_empty() { pad * 2.0 + chevron_w } else { pad + chevron_w + pad * 0.6 + galley.size().x + pad };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let pill = rect.shrink2(Vec2::new(0.0, height * 0.1));
+        let fill = if response.is_pointer_button_down_on() {
+            ui.visuals().widgets.active.weak_bg_fill
+        } else if response.hovered() {
+            ui.visuals().widgets.hovered.weak_bg_fill
+        } else {
+            ui.visuals().widgets.inactive.weak_bg_fill
+        };
+        ui.painter().rect_filled(pill, egui::CornerRadius::same((pill.height() / 2.0) as u8), fill);
+        // The chevron: two strokes meeting at a point, in the accent colour.
+        let cx = if label.is_empty() { pill.center().x - chevron_w * 0.1 } else { pill.left() + pad + chevron_w * 0.35 };
+        let cy = pill.center().y;
+        let half = chevron_w * 0.75;
+        let stroke = Stroke::new(if touch { 3.0_f32 } else { 2.5 }, ACCENT);
+        ui.painter().line_segment([Pos2::new(cx + half * 0.6, cy - half), Pos2::new(cx - half * 0.4, cy)], stroke);
+        ui.painter().line_segment([Pos2::new(cx - half * 0.4, cy), Pos2::new(cx + half * 0.6, cy + half)], stroke);
+        let text_pos = Pos2::new(pill.left() + pad + chevron_w + pad * 0.6, cy - galley.size().y / 2.0);
+        ui.painter().galley(text_pos, galley, text_color);
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// A dialog that fits the screen. Wide screens: centred. Phones: near the top (below the

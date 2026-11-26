@@ -56,3 +56,7 @@ icon = "@mipmap/ic_launcher"
 config_changes = "orientation|screenSize|screenLayout|keyboard|keyboardHidden|uiMode|density"
 launch_mode = "singleTop"
 orientation = "unspecified"
+
+# The same patched egui-winit as the app (Android's back button; see ../Cargo.toml).
+[patch.crates-io]
+egui-winit = { path = "../vendor/egui-winit" }
