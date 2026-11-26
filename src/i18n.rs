@@ -104,6 +104,16 @@ pub fn default_list_names() -> Vec<&'static str> {
     names
 }
 
+/// The language showing, as a code: "en", "de", "es" or "fr".
+pub fn code() -> &'static str {
+    match current() {
+        Lang::En => "en",
+        Lang::De => "de",
+        Lang::Es => "es",
+        Lang::Fr => "fr",
+    }
+}
+
 /// True while German is showing.
 pub fn german() -> bool {
     current() == Lang::De

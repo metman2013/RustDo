@@ -3,6 +3,13 @@
 /// The whole changelog as shipped with this build.
 pub const TEXT: &str = include_str!("../CHANGELOG.md");
 
+/// Translations of the changelog (changelog/<code>.md), for "What's new".
+const TRANSLATIONS: [(&str, &str); 3] = [
+    ("de", include_str!("../changelog/de.md")),
+    ("es", include_str!("../changelog/es.md")),
+    ("fr", include_str!("../changelog/fr.md")),
+];
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Release {
     pub version: String,
@@ -32,9 +39,15 @@ pub fn parse(text: &str) -> Vec<Release> {
     out
 }
 
-/// All releases in the built-in changelog, newest first.
+/// All releases in the built-in changelog, newest first, in the app's language where
+/// there's a translation (English otherwise).
 pub fn releases() -> Vec<Release> {
+    let code = crate::i18n::code();
+    let translated = TRANSLATIONS.iter().find(|(c, _)| *c == code).map(|(_, text)| parse(text)).unwrap_or_default();
     parse(TEXT)
+        .into_iter()
+        .map(|english| translated.iter().find(|t| t.version == english.version).cloned().unwrap_or(english))
+        .collect()
 }
 
 /// `0.2.5` → (0, 2, 5). Anything unreadable counts as 0.0.0.
@@ -66,6 +79,21 @@ pub fn unseen(releases: &[Release], last_seen: Option<&str>, current: &str) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn this_version_is_translated() {
+        let current = env!("CARGO_PKG_VERSION");
+        let english: Vec<String> = parse(TEXT).into_iter().map(|r| r.version).collect();
+        for (code, text) in TRANSLATIONS {
+            let releases = parse(text);
+            let entry = releases.iter().find(|r| r.version == current);
+            assert!(entry.is_some(), "changelog/{code}.md needs a '## {current} - <date>' section");
+            assert!(entry.unwrap().sections.iter().any(|(_, items)| !items.is_empty()), "changelog/{code}.md: {current} lists no changes");
+            for r in &releases {
+                assert!(english.contains(&r.version), "changelog/{code}.md has {} which CHANGELOG.md doesn't", r.version);
+            }
+        }
+    }
 
     #[test]
     fn this_version_has_a_changelog_entry() {

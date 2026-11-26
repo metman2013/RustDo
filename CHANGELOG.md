@@ -6,6 +6,19 @@ starts after an update, and each GitHub release uses its section as the release 
 Format: `## <version> - <date>`, then `### New`, `### Improved` or `### Fixed`, then one
 `- ` line per change, written for people who use RustDo (plain text, no Markdown).
 
+Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`, same
+format with translated section names; the app shows "What's new" in the user's language.
+Each release needs its entry in all three (a test checks the current version).
+
+## 0.4.4 - 2026-11-28
+
+### Improved
+- Phones: a clear back button (an arrow in a rounded button) replaces the small "<" on the menu, Settings, task details and Sticky notes.
+- Android: the back button and back gesture now work in RustDo. Back closes what's open, steps back to the list and to My Day, and from My Day leaves the app.
+- Reorder your lists: drag a list up or down in the menu, or on a phone long-press it and choose Move up or Move down. The new order syncs to your other devices.
+- New installs in German, Spanish or French start with a 24-hour clock, and the default list's name follows when you switch language.
+- "What's new" now appears in your language (German, Spanish or French).
+
 ## 0.4.3 - 2026-11-26
 
 ### New
