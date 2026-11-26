@@ -6,6 +6,7 @@
 ## 0.4.7 - 2026-11-27
 
 ### Behoben
+- Android: Unter Einstellungen › Hintergrund fehlte die Schaltfläche „+ Bild…“, sodass keine eigenen Fotos möglich waren. Sie ist jetzt da und öffnet die Fotoauswahl von RustDo.
 - Text ist über Hintergrundbildern besser lesbar: Datum, Hinweise und anderer heller Text verschwimmen nicht mehr mit dem Bild, im dunklen wie im hellen Design.
 
 ## 0.4.6 - 2026-11-27

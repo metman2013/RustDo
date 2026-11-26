@@ -6,6 +6,7 @@ traduites. Les versions absentes ici s'affichent en anglais.
 ## 0.4.7 - 2026-11-27
 
 ### Corrections
+- Android : dans Paramètres › Fond, le bouton « + Image… » manquait, donc impossible d'utiliser vos propres photos. Il est là maintenant et ouvre le sélecteur de photos de RustDo.
 - Le texte est plus lisible sur les images de fond : les dates, les indications et les autres textes discrets ne se fondent plus dans l'image, en thème sombre comme en thème clair.
 
 ## 0.4.6 - 2026-11-27

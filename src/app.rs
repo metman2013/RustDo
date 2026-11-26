@@ -1316,7 +1316,7 @@ impl TodoApp {
                     });
                 }
             }
-            if CAN_IMPORT_FILE && ui.add(egui::Button::new(tr("+ Picture…")).min_size(size)).on_hover_text(tr("Use your own picture (JPG or PNG)")).clicked() {
+            if (CAN_IMPORT_FILE || cfg!(target_os = "android")) && ui.add(egui::Button::new(tr("+ Picture…")).min_size(size)).on_hover_text(tr("Use your own picture (JPG or PNG)")).clicked() {
                 pick = true;
             }
         });
