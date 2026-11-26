@@ -421,6 +421,19 @@ impl Store {
         Some(id)
     }
 
+    /// Moves a list to position `to` in the menu (counted without the list itself).
+    /// Returns whether the order changed.
+    pub fn move_list(&mut self, id: Uuid, to: usize) -> bool {
+        let Some(from) = self.lists.iter().position(|l| l.id == id) else { return false };
+        let to = to.min(self.lists.len() - 1);
+        if from == to {
+            return false;
+        }
+        let list = self.lists.remove(from);
+        self.lists.insert(to, list);
+        true
+    }
+
     pub fn rename_list(&mut self, id: Uuid, name: &str) -> bool {
         let name = name.trim();
         match self.lists.iter_mut().find(|l| l.id == id) {
@@ -604,6 +617,20 @@ pub fn from_12h(hour: u32, pm: bool) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn lists_move() {
+        let mut s = Store::new();
+        let a = s.default_list;
+        let b = s.add_list("B").unwrap();
+        let c = s.add_list("C").unwrap();
+        assert!(s.move_list(c, 0));
+        assert_eq!(s.lists.iter().map(|l| l.id).collect::<Vec<_>>(), [c, a, b]);
+        assert!(s.move_list(c, 9), "past the end: last");
+        assert_eq!(s.lists.iter().map(|l| l.id).collect::<Vec<_>>(), [a, b, c]);
+        assert!(!s.move_list(a, 0));
+    }
+
     use super::*;
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {

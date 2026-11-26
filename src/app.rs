@@ -212,6 +212,8 @@ pub struct TodoApp {
     /// What's typed in that quick "subtasks for …" box.
     quick_step: String,
     renaming_list: Option<(Uuid, String)>,
+    /// Desktop: the list being dragged to a new place in the menu.
+    list_drag: Option<Uuid>,
     rename_focus: bool,
     confirm_delete_list: Option<Uuid>,
     alerts: Vec<Uuid>,
@@ -347,6 +349,7 @@ impl TodoApp {
             last_added: None,
             quick_step: String::new(),
             renaming_list: None,
+            list_drag: None,
             rename_focus: false,
             confirm_delete_list: None,
             alerts: Vec::new(),
@@ -2715,7 +2718,9 @@ impl TodoApp {
                     .max_height(max_h)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
-                        for (id, name) in lists {
+                        let list_count = lists.len();
+                        let mut rows: Vec<(Uuid, egui::Rect)> = Vec::new();
+                        for (index, (id, name)) in lists.into_iter().enumerate() {
                             let is_default = id == self.store.default_list;
                             if self.renaming_list.as_ref().is_some_and(|(rid, _)| *rid == id) {
                                 let (_, buf) = self.renaming_list.as_mut().unwrap();
@@ -2737,6 +2742,11 @@ impl TodoApp {
                             let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
                             let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
+                            rows.push((id, r.rect));
+                            // Desktop: drag a list to move it (on touch, dragging scrolls).
+                            if !is_touch(ui) && r.drag_started() {
+                                self.list_drag = Some(id);
+                            }
                             if r.clicked() {
                                 self.view = View::List(id);
                                 self.notes_page = false;
@@ -2760,11 +2770,40 @@ impl TodoApp {
                                         ui.close_menu();
                                     }
                                 }
+                                if index > 0 && ui.button(tr("⬆  Move up")).clicked() {
+                                    self.dirty |= self.store.move_list(id, index - 1);
+                                    ui.close_menu();
+                                }
+                                if index + 1 < list_count && ui.button(tr("⬇  Move down")).clicked() {
+                                    self.dirty |= self.store.move_list(id, index + 1);
+                                    ui.close_menu();
+                                }
                                 if !is_default && ui.button(tr("🗑  Delete list")).clicked() {
                                     self.confirm_delete_list = Some(id);
                                     ui.close_menu();
                                 }
                             });
+                        }
+                        // A list being dragged: show where it will go, move it on release.
+                        if let Some(dragged) = self.list_drag {
+                            let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
+                            if let Some(pos) = pointer {
+                                let others: Vec<&(Uuid, egui::Rect)> = rows.iter().filter(|(id, _)| *id != dragged).collect();
+                                let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
+                                let y = match others.get(to) {
+                                    Some((_, r)) => r.top(),
+                                    None => others.last().map_or(pos.y, |(_, r)| r.bottom()),
+                                };
+                                let x = ui.min_rect().x_range();
+                                ui.painter().hline(x, y, Stroke::new(2.0, ACCENT));
+                                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                if released {
+                                    self.dirty |= self.store.move_list(dragged, to);
+                                    self.list_drag = None;
+                                }
+                            } else if released {
+                                self.list_drag = None;
+                            }
                         }
                     });
 
@@ -4105,7 +4144,9 @@ fn reminder_presets(now: NaiveDateTime, clock_24h: bool) -> Vec<(String, NaiveDa
 fn nav_row(ui: &mut egui::Ui, selected: bool, icon: &str, name: &str, count: usize) -> egui::Response {
     let touch = is_touch(ui);
     let (height, font, gap) = if touch { (48.0, 17.0, 40.0) } else { (30.0, 14.0, 34.0) };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    // Desktop rows can also be dragged (to reorder lists); on touch, dragging scrolls.
+    let sense = if touch { Sense::click() } else { Sense::click_and_drag() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     let vis = ui.visuals();
     if selected {
         ui.painter().rect_filled(rect, 6.0, vis.selection.bg_fill.gamma_multiply(0.45));
