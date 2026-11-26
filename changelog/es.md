@@ -3,6 +3,12 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.5 - 2026-11-26
+
+### Correcciones
+- Android: después de ocultar el teclado en pantalla (con su tecla de ocultar, el gesto Atrás o al cambiar de aplicación), tocar un campo de texto no lo volvía a mostrar. Ahora tocar un campo siempre abre el teclado, y vuelve a aparecer al regresar a RustDo.
+- «Añadir una tarea» muestra un botón Añadir en cuanto escribes, para guardar una tarea sin la tecla Intro del teclado.
+
 ## 0.4.4 - 2026-11-26
 
 ### Novedades

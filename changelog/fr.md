@@ -3,6 +3,12 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.5 - 2026-11-26
+
+### Corrections
+- Android : après avoir masqué le clavier à l'écran (avec sa touche de masquage, le geste Retour ou en changeant d'application), toucher un champ de texte ne le faisait pas réapparaître. Désormais, toucher un champ ouvre toujours le clavier, et il revient quand vous retournez dans RustDo.
+- « Ajouter une tâche » affiche un bouton Ajouter dès que vous tapez, pour enregistrer une tâche sans la touche Entrée du clavier.
+
 ## 0.4.4 - 2026-11-26
 
 ### Nouveautés

@@ -3,6 +3,12 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.5 - 2026-11-26
+
+### Behoben
+- Android: Nachdem die Bildschirmtastatur ausgeblendet wurde (mit ihrer Ausblenden-Taste, der Zurück-Geste oder durch einen App-Wechsel), brachte ein Tippen auf ein Textfeld sie nicht zurück. Jetzt öffnet ein Tippen auf ein Feld immer die Tastatur, und sie kommt wieder, wenn du zu RustDo zurückkehrst.
+- „Aufgabe hinzufügen“ zeigt eine Schaltfläche „Hinzufügen“, sobald du tippst, sodass eine Aufgabe auch ohne die Eingabetaste gespeichert werden kann.
+
 ## 0.4.4 - 2026-11-26
 
 ### Neu

@@ -10,6 +10,12 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.5 - 2026-11-26
+
+### Fixed
+- Android: after the on-screen keyboard was hidden (with its hide key, the back gesture or by switching apps), tapping a text field didn't bring it back. Tapping a field now always opens the keyboard, and it comes back when you return to RustDo.
+- "Add a task" has an Add button as soon as you type, so a task can be saved without the keyboard's Enter key.
+
 ## 0.4.4 - 2026-11-26
 
 ### New
