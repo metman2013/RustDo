@@ -1,0 +1,49 @@
+# Posts each new GitHub issue to the RustDo Discord (same webhook as release announcements:
+# the DISCORD_WEBHOOK_URL repository secret). Without the secret it does nothing.
+#
+# The issue's title and text come from whoever opened it, so they're passed through
+# environment variables and built into JSON with jq (never pasted into the script), and
+# Discord is told not to turn anything in them into @mentions.
+name: New issue to Discord
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          TITLE: ${{ github.event.issue.title }}
+          BODY: ${{ github.event.issue.body }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          URL: ${{ github.event.issue.html_url }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::notice::DISCORD_WEBHOOK_URL isn't set; not posting."
+            exit 0
+          fi
+          # Discord embed limits: title 256, description 4096. Keep the text short.
+          payload=$(jq -n \
+            --arg title "#$NUMBER ${TITLE:0:240}" \
+            --arg body "${BODY:0:700}" \
+            --arg author "$AUTHOR" \
+            --arg url "$URL" \
+            '{
+              content: "New issue on GitHub",
+              allowed_mentions: { parse: [] },
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: (if ($body | length) > 0 then $body else "(no description)" end),
+                color: 4620774,
+                footer: { text: ("opened by " + $author) }
+              }]
+            }')
+          curl -fsS -X POST -H "Content-Type: application/json" --data "$payload" "$DISCORD_WEBHOOK_URL"
