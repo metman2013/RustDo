@@ -3,6 +3,11 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.7 - 2026-11-27
+
+### Behoben
+- Text ist über Hintergrundbildern besser lesbar: Datum, Hinweise und anderer heller Text verschwimmen nicht mehr mit dem Bild, im dunklen wie im hellen Design.
+
 ## 0.4.6 - 2026-11-27
 
 ### Neu

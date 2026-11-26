@@ -10,6 +10,11 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.7 - 2026-11-27
+
+### Fixed
+- Text is easier to read over background images: dates, hints and other light text no longer fade into the picture, in both the dark and light themes.
+
 ## 0.4.6 - 2026-11-27
 
 ### New

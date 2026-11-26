@@ -1105,6 +1105,17 @@ impl TodoApp {
             let p = v.panel_fill;
             v.panel_fill = Color32::TRANSPARENT;
             v.faint_bg_color = Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 220);
+            // Text stays readable over any picture: normal text gets full contrast, and
+            // faint text (dates, hints), which egui fades towards this colour, stays
+            // clearly lighter (dark theme) or darker (light theme) than the picture.
+            let w = &mut v.widgets.noninteractive;
+            if dark {
+                w.fg_stroke.color = Color32::from_gray(235);
+                w.weak_bg_fill = Color32::from_gray(150);
+            } else {
+                w.fg_stroke.color = Color32::from_gray(15);
+                w.weak_bg_fill = Color32::from_gray(110);
+            }
         }
         ctx.set_visuals(v);
     }

@@ -3,6 +3,11 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.7 - 2026-11-27
+
+### Corrections
+- Le texte est plus lisible sur les images de fond : les dates, les indications et les autres textes discrets ne se fondent plus dans l'image, en thème sombre comme en thème clair.
+
 ## 0.4.6 - 2026-11-27
 
 ### Nouveautés
