@@ -85,6 +85,10 @@ pub struct StickyNote {
     pub size: [f32; 2],
     pub created: NaiveDateTime,
     pub updated: NaiveDateTime,
+    /// A picture behind the text (a built-in background or your own), tinted with the
+    /// note's colour so the text stays readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<crate::backgrounds::Background>,
 }
 
 impl StickyNote {
@@ -101,6 +105,7 @@ impl StickyNote {
             size: DEFAULT_SIZE,
             created: now,
             updated: now,
+            picture: None,
         }
     }
 

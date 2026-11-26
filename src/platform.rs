@@ -6,6 +6,7 @@ pub const IS_MOBILE_OR_WEB: bool = cfg!(any(target_os = "android", target_arch =
 
 #[cfg(target_os = "android")]
 mod android {
+    use jni::objects::JObject;
     use std::path::PathBuf;
     use std::sync::OnceLock;
     use winit::platform::android::activity::AndroidApp;
@@ -23,8 +24,7 @@ mod android {
     /// Status bar, navigation bar, display cutout and on-screen keyboard sizes in physical
     /// pixels: (left, top, right, bottom). Uses the Java WindowInsets API through JNI.
     pub fn system_insets() -> Option<[i32; 4]> {
-        use jni::objects::{JObject, JValueOwned};
-        use jni::JNIEnv;
+        use jni::objects::JValueOwned;
 
         // Any Java exception must be cleared before the next JNI call.
         fn call<'a>(env: &mut JNIEnv<'a>, obj: &JObject, name: &str, sig: &str) -> Option<JValueOwned<'a>> {
@@ -94,7 +94,6 @@ mod android {
     /// Back at the top level: send RustDo to the background, like other Android apps
     /// (Activity.moveTaskToBack), instead of closing it.
     pub fn move_to_background() {
-        use jni::objects::{JObject, JValue};
         let Some(app) = APP.get() else { return };
         let Ok(vm) = (unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }) else { return };
         let Ok(mut env) = vm.attach_current_thread() else { return };
@@ -102,6 +101,168 @@ mod android {
         if env.call_method(&activity, "moveTaskToBack", "(Z)Z", &[JValue::Bool(1)]).is_err() {
             let _ = env.exception_clear();
         }
+    }
+
+    // ---------------------------------------------------------------- photos
+    //
+    // NativeActivity can't receive the system photo picker's result, so RustDo lists the
+    // phone's photos itself (MediaStore) and shows them in its own picker.
+
+    use jni::objects::{JByteArray, JValue};
+    use jni::JNIEnv;
+
+    /// Runs `f` with a JNI environment and the activity; a Java exception gives None.
+    fn with_env<T>(f: impl for<'a> FnOnce(&mut JNIEnv<'a>, &JObject<'a>) -> jni::errors::Result<T>) -> Option<T> {
+        let app = APP.get()?;
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr().cast()) }.ok()?;
+        let mut env = vm.attach_current_thread().ok()?;
+        // A global reference owned by android-activity: wrap it, never delete it.
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr().cast()) };
+        match f(&mut env, &activity) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_describe();
+                    let _ = env.exception_clear();
+                }
+                log::warn!(target: "rustdo", "photos: {e}");
+                None
+            }
+        }
+    }
+
+    fn sdk(env: &mut JNIEnv) -> jni::errors::Result<i32> {
+        env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()
+    }
+
+    /// The permission that lets RustDo see your photos (Android 13 split it out).
+    fn photo_permission(env: &mut JNIEnv) -> jni::errors::Result<&'static str> {
+        Ok(if sdk(env)? >= 33 { "android.permission.READ_MEDIA_IMAGES" } else { "android.permission.READ_EXTERNAL_STORAGE" })
+    }
+
+    pub fn photo_access() -> bool {
+        with_env(|env, activity| {
+            let name = photo_permission(env)?;
+            let name = env.new_string(name)?;
+            Ok(env.call_method(activity, "checkSelfPermission", "(Ljava/lang/String;)I", &[JValue::Object(&name)])?.i()? == 0)
+        })
+        .unwrap_or(false)
+    }
+
+    /// Shows Android's "Allow RustDo to access photos?" (the answer is seen by checking
+    /// `photo_access` again; NativeActivity doesn't get the callback).
+    pub fn ask_photo_access() {
+        with_env(|env, activity| {
+            let name = photo_permission(env)?;
+            let name = env.new_string(name)?;
+            let names = env.new_object_array(1, "java/lang/String", &name)?;
+            env.call_method(activity, "requestPermissions", "([Ljava/lang/String;I)V", &[JValue::Object(names.as_ref()), JValue::Int(7)])?;
+            Ok(())
+        });
+    }
+
+    fn images_uri<'a>(env: &mut JNIEnv<'a>) -> jni::errors::Result<JObject<'a>> {
+        env.get_static_field("android/provider/MediaStore$Images$Media", "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;")?.l()
+    }
+
+    /// The newest photos' MediaStore ids, newest first.
+    pub fn recent_photos(max: usize) -> Vec<i64> {
+        with_env(|env, activity| {
+            let resolver = env.call_method(activity, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
+            let uri = images_uri(env)?;
+            let column = env.new_string("_id")?;
+            let projection = env.new_object_array(1, "java/lang/String", &column)?;
+            let order = env.new_string("date_added DESC")?;
+            let null = JObject::null();
+            let cursor = env
+                .call_method(
+                    &resolver,
+                    "query",
+                    "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+                    &[JValue::Object(&uri), JValue::Object(projection.as_ref()), JValue::Object(&null), JValue::Object(&null), JValue::Object(&order)],
+                )?
+                .l()?;
+            let mut ids = Vec::new();
+            if cursor.is_null() {
+                return Ok(ids);
+            }
+            while ids.len() < max && env.call_method(&cursor, "moveToNext", "()Z", &[])?.z()? {
+                ids.push(env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(0)])?.j()?);
+            }
+            env.call_method(&cursor, "close", "()V", &[])?;
+            Ok(ids)
+        })
+        .unwrap_or_default()
+    }
+
+    /// One photo as JPEG or the file's own bytes: shrunk to fit `size` (a thumbnail for
+    /// the picker, or the picture itself). Android 10+ shrinks it (and reads any format
+    /// the phone can show, e.g. HEIC); older phones give a small thumbnail or the file.
+    pub fn photo(id: i64, size: i32) -> Option<Vec<u8>> {
+        with_env(|env, activity| {
+            env.with_local_frame(32, |env| -> jni::errors::Result<Vec<u8>> {
+                let resolver = env.call_method(activity, "getContentResolver", "()Landroid/content/ContentResolver;", &[])?.l()?;
+                let base = images_uri(env)?;
+                let uri = env
+                    .call_static_method("android/content/ContentUris", "withAppendedId", "(Landroid/net/Uri;J)Landroid/net/Uri;", &[JValue::Object(&base), JValue::Long(id)])?
+                    .l()?;
+                let null = JObject::null();
+                let modern = sdk(env)? >= 29;
+                let bitmap = if modern {
+                    let wanted = env.new_object("android/util/Size", "(II)V", &[JValue::Int(size), JValue::Int(size)])?;
+                    env.call_method(
+                        &resolver,
+                        "loadThumbnail",
+                        "(Landroid/net/Uri;Landroid/util/Size;Landroid/os/CancellationSignal;)Landroid/graphics/Bitmap;",
+                        &[JValue::Object(&uri), JValue::Object(&wanted), JValue::Object(&null)],
+                    )?
+                    .l()?
+                } else if size <= 512 {
+                    // MINI_KIND = 1
+                    env.call_static_method(
+                        "android/provider/MediaStore$Images$Thumbnails",
+                        "getThumbnail",
+                        "(Landroid/content/ContentResolver;JILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;",
+                        &[JValue::Object(&resolver), JValue::Long(id), JValue::Int(1), JValue::Object(&null)],
+                    )?
+                    .l()?
+                } else {
+                    // The file itself (RustDo shrinks it).
+                    let stream = env.call_method(&resolver, "openInputStream", "(Landroid/net/Uri;)Ljava/io/InputStream;", &[JValue::Object(&uri)])?.l()?;
+                    let buf = env.new_byte_array(64 * 1024)?;
+                    let mut data = Vec::new();
+                    let mut chunk = vec![0i8; 64 * 1024];
+                    loop {
+                        let n = env.call_method(&stream, "read", "([B)I", &[JValue::Object(buf.as_ref())])?.i()?;
+                        if n < 0 || data.len() > 60 * 1024 * 1024 {
+                            break;
+                        }
+                        let n = n as usize;
+                        env.get_byte_array_region(&buf, 0, &mut chunk[..n])?;
+                        data.extend(chunk[..n].iter().map(|b| *b as u8));
+                    }
+                    env.call_method(&stream, "close", "()V", &[])?;
+                    return Ok(data);
+                };
+                if bitmap.is_null() {
+                    return Ok(Vec::new());
+                }
+                let format = env
+                    .get_static_field("android/graphics/Bitmap$CompressFormat", "JPEG", "Landroid/graphics/Bitmap$CompressFormat;")?
+                    .l()?;
+                let out = env.new_object("java/io/ByteArrayOutputStream", "()V", &[])?;
+                env.call_method(
+                    &bitmap,
+                    "compress",
+                    "(Landroid/graphics/Bitmap$CompressFormat;ILjava/io/OutputStream;)Z",
+                    &[JValue::Object(&format), JValue::Int(88), JValue::Object(&out)],
+                )?;
+                env.call_method(&bitmap, "recycle", "()V", &[])?;
+                let bytes = JByteArray::from(env.call_method(&out, "toByteArray", "()[B", &[])?.l()?);
+                env.convert_byte_array(&bytes)
+            })
+        })
+        .filter(|b| !b.is_empty())
     }
 
     pub fn show_keyboard(show: bool) {
@@ -118,6 +279,30 @@ mod android {
 #[cfg(target_os = "android")]
 pub fn android_init(app: winit::platform::android::activity::AndroidApp) {
     android::init(app);
+}
+
+/// Android: whether RustDo may see your photos.
+#[cfg(target_os = "android")]
+pub fn android_photo_access() -> bool {
+    android::photo_access()
+}
+
+/// Android: asks for permission to see your photos.
+#[cfg(target_os = "android")]
+pub fn android_ask_photo_access() {
+    android::ask_photo_access()
+}
+
+/// Android: the newest photos (ids), newest first.
+#[cfg(target_os = "android")]
+pub fn android_recent_photos(max: usize) -> Vec<i64> {
+    android::recent_photos(max)
+}
+
+/// Android: one photo, shrunk to fit `size` pixels where the phone can.
+#[cfg(target_os = "android")]
+pub fn android_photo(id: i64, size: i32) -> Option<Vec<u8>> {
+    android::photo(id, size)
 }
 
 /// Folder for the app's data on Android (the app's private internal storage).

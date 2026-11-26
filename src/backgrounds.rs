@@ -210,6 +210,51 @@ pub fn load(data: Option<&std::path::Path>) -> Images {
 #[cfg(target_arch = "wasm32")]
 const WEB_PREFIX: &str = "rustdo.bg.";
 
+/// The ids of the stored images (cheap: no pictures are read).
+pub fn list_ids(data: Option<&std::path::Path>) -> Vec<String> {
+    let mut ids = Vec::new();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = data;
+        if let Some(ls) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
+            for i in 0..ls.length().unwrap_or(0) {
+                if let Some(id) = ls.key(i).ok().flatten().and_then(|k| k.strip_prefix(WEB_PREFIX).map(str::to_string)) {
+                    ids.push(id);
+                }
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(data) = data {
+        if let Ok(entries) = std::fs::read_dir(folder(data)) {
+            for e in entries.flatten() {
+                let path = e.path();
+                if path.extension().is_some_and(|x| x == "jpg") {
+                    if let Some(id) = path.file_stem().and_then(|s| s.to_str()).filter(|s| s.starts_with("img-")) {
+                        ids.push(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+    ids.sort();
+    ids
+}
+
+/// One stored image.
+pub fn load_one(data: Option<&std::path::Path>, id: &str) -> Option<Vec<u8>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = data;
+        let ls = web_sys::window()?.local_storage().ok()??;
+        from_base64(&ls.get_item(&format!("{WEB_PREFIX}{id}")).ok()??)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::fs::read(folder(data?).join(format!("{id}.jpg"))).ok()
+    }
+}
+
 /// Stores an image.
 pub fn save(data: Option<&std::path::Path>, id: &str, jpeg: &[u8]) -> Result<(), String> {
     #[cfg(target_arch = "wasm32")]

@@ -40,6 +40,15 @@ target_sdk_version = 34
 [[package.metadata.android.uses_permission]]
 name = "android.permission.INTERNET"
 
+# Your photos, for background and sticky-note pictures (RustDo's own photo picker;
+# Android 13+ asks for photos only, older versions for storage).
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_MEDIA_IMAGES"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.READ_EXTERNAL_STORAGE"
+max_sdk_version = 32
+
 [[package.metadata.android.uses_feature]]
 name = "android.hardware.touchscreen"
 required = false

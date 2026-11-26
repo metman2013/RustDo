@@ -256,9 +256,17 @@ pub struct TodoApp {
     /// "Background…" for one list (its id), from the list's menu.
     bg_dialog: Option<Uuid>,
     /// Web: a picture picked in the browser, waiting to be stored: (list or app-wide, bytes).
-    bg_web_pick: std::rc::Rc<std::cell::RefCell<Option<(Option<Uuid>, Vec<u8>)>>>,
+    bg_web_pick: WebPick,
     /// The look last applied: (dark theme, a background showing).
     bg_style: Option<(bool, bool)>,
+    /// When the pictures folder was last checked for pictures added elsewhere (a sticky
+    /// note's picture added in the companion), so they sync too.
+    bg_scanned: Option<Instant>,
+    /// Pictures removed by sync whose note textures should be dropped.
+    bg_forget: Vec<String>,
+    /// Android: RustDo's own photo picker, while it's open.
+    #[cfg(target_os = "android")]
+    photo_picker: Option<crate::photos::PhotoPicker>,
     /// Notes changes up to here are already known to the account sync.
     account_notes_seen: Option<Instant>,
     /// The "What's new" dialog: the releases to describe, newest first.
@@ -398,6 +406,10 @@ impl TodoApp {
             bg_textures: Default::default(),
             bg_dialog: None,
             bg_web_pick: Default::default(),
+            bg_scanned: None,
+            bg_forget: Vec::new(),
+            #[cfg(target_os = "android")]
+            photo_picker: None,
             bg_style: None,
             account_notes_seen: None,
             whats_new,
@@ -1113,7 +1125,7 @@ impl TodoApp {
     }
 
     /// Stores a picked picture (shrunk to a JPEG copy) and uses it.
-    fn add_picture(&mut self, target: Option<Uuid>, bytes: &[u8]) {
+    fn add_picture(&mut self, target: PicFor, bytes: &[u8]) {
         match backgrounds::prepare(bytes) {
             Ok(jpeg) => {
                 let id = backgrounds::image_id(&jpeg);
@@ -1122,9 +1134,37 @@ impl TodoApp {
                     return;
                 }
                 self.bg_images.insert(id.clone(), jpeg);
-                self.set_background(target, Some(Background::Custom(id)));
+                let picture = Background::Custom(id);
+                match target {
+                    PicFor::App => self.set_background(None, Some(picture)),
+                    PicFor::List(list) => self.set_background(Some(list), Some(picture)),
+                    PicFor::Note(note) => {
+                        let mut s = notes_ui::lock(&self.notes);
+                        if let Some(n) = s.notes.get_mut(note) {
+                            n.picture = Some(picture);
+                            s.changed();
+                        }
+                    }
+                }
             }
             Err(e) => self.notify(e),
+        }
+    }
+
+    /// Picks up pictures stored by another RustDo process (a sticky note's picture added
+    /// in the companion), so they're shown and synced too. Checked every few seconds.
+    fn scan_pictures(&mut self) {
+        if self.bg_scanned.is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(4)) {
+            return;
+        }
+        self.bg_scanned = Some(Instant::now());
+        let folder = self.storage.folder();
+        for id in backgrounds::list_ids(folder.as_deref()) {
+            if let std::collections::btree_map::Entry::Vacant(slot) = self.bg_images.entry(id) {
+                if let Some(jpeg) = backgrounds::load_one(folder.as_deref(), slot.key()) {
+                    slot.insert(jpeg);
+                }
+            }
         }
     }
 
@@ -1142,7 +1182,7 @@ impl TodoApp {
     }
 
     #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
-    fn pick_picture(&mut self, _ctx: &egui::Context, target: Option<Uuid>) {
+    fn pick_picture(&mut self, _ctx: &egui::Context, target: PicFor) {
         let picked = rfd::FileDialog::new()
             .set_title(tr("Pick a picture"))
             .add_filter(tr("Pictures"), &["jpg", "jpeg", "png"])
@@ -1156,7 +1196,7 @@ impl TodoApp {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn pick_picture(&mut self, ctx: &egui::Context, target: Option<Uuid>) {
+    fn pick_picture(&mut self, ctx: &egui::Context, target: PicFor) {
         let slot = self.bg_web_pick.clone();
         let ctx = ctx.clone();
         wasm_bindgen_futures::spawn_local(async move {
@@ -1169,7 +1209,26 @@ impl TodoApp {
     }
 
     #[cfg(target_os = "android")]
-    fn pick_picture(&mut self, _ctx: &egui::Context, _target: Option<Uuid>) {}
+    fn pick_picture(&mut self, _ctx: &egui::Context, target: PicFor) {
+        self.photo_picker = Some(crate::photos::PhotoPicker::new(target));
+    }
+
+    /// Android: RustDo's own photo picker, while it's open.
+    #[cfg(target_os = "android")]
+    fn photo_picker_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut picker) = self.photo_picker.take() else { return };
+        let mut outcome = crate::photos::Outcome::Open;
+        dialog_window(ctx, tr("Pick a picture"), self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 480.0));
+            outcome = picker.ui(ui);
+        });
+        match outcome {
+            crate::photos::Outcome::Open => self.photo_picker = Some(picker),
+            crate::photos::Outcome::Cancelled => {}
+            crate::photos::Outcome::Picked(bytes) => self.add_picture(picker.target, &bytes),
+            crate::photos::Outcome::Failed(e) => self.notify(e),
+        }
+    }
 
     /// The background choices as swatches: for the app (`target` None) or one list.
     fn background_picker(&mut self, ui: &mut egui::Ui, target: Option<Uuid>) {
@@ -1247,7 +1306,7 @@ impl TodoApp {
         }
         if pick {
             let ctx = ui.ctx().clone();
-            self.pick_picture(&ctx, target);
+            self.pick_picture(&ctx, target.map_or(PicFor::App, PicFor::List));
         }
     }
 
@@ -1618,6 +1677,7 @@ impl TodoApp {
                         for id in &applied.images_removed {
                             backgrounds::delete(folder.as_deref(), id);
                             self.bg_textures.retain(|k, _| !k.ends_with(id.as_str()));
+                            self.bg_forget.push(id.clone());
                         }
                         acc.last_sync = Some(Local::now().naive_local());
                         self.store.account = Some(acc);
@@ -2910,6 +2970,10 @@ impl TodoApp {
     /// Back on a phone: closes what's on top, one step at a time; at the menu, leaves the app.
     fn phone_back(&mut self, ctx: &egui::Context) {
         // A dialog first.
+        #[cfg(target_os = "android")]
+        if self.photo_picker.take().is_some() {
+            return;
+        }
         if self.whats_new.is_some() {
             self.whats_new = None;
             let current = Some(update::CURRENT_VERSION.to_string());
@@ -3301,10 +3365,8 @@ impl TodoApp {
     fn notes_panel(&mut self, ctx: &egui::Context) {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
-            if narrow {
-                if back_button(ui, tr("Lists")).clicked() {
-                    self.show_nav = true;
-                }
+            if narrow && back_button(ui, tr("Lists")).clicked() {
+                self.show_nav = true;
             }
             match notes_ui::notes_page(ui, &self.notes) {
                 notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
@@ -4349,6 +4411,16 @@ impl eframe::App for TodoApp {
         if let Some((target, bytes)) = picked {
             self.add_picture(target, &bytes);
         }
+        // A sticky note asked for a picture (web and Android; the desktop picks it there).
+        if let Some(note) = notes_ui::take_picture_request(ctx) {
+            self.pick_picture(ctx, PicFor::Note(note));
+        }
+        for id in std::mem::take(&mut self.bg_forget) {
+            notes_ui::forget_picture(ctx, &id);
+        }
+        self.scan_pictures();
+        #[cfg(target_os = "android")]
+        self.photo_picker_dialog(ctx);
         let showing = self.paint_background(ctx);
         self.apply_background_style(ctx, showing);
         self.background_dialog(ctx);
@@ -4480,7 +4552,21 @@ fn capped_texture_side(side: Option<usize>) -> Option<usize> {
 
 /// The part of an image (as UV coordinates) that fills `area` without stretching:
 /// cropped to the area's shape, centred, like CSS `background-size: cover`.
-fn cover_uv(image: Vec2, area: Vec2) -> Rect {
+/// Web: a picture picked in the browser, waiting to be stored.
+type WebPick = std::rc::Rc<std::cell::RefCell<Option<(PicFor, Vec<u8>)>>>;
+
+/// What a picked picture is for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PicFor {
+    /// The app-wide background.
+    App,
+    /// One list's background.
+    List(Uuid),
+    /// A sticky note.
+    Note(Uuid),
+}
+
+pub(crate) fn cover_uv(image: Vec2, area: Vec2) -> Rect {
     if image.x <= 0.0 || image.y <= 0.0 || area.x <= 0.0 || area.y <= 0.0 {
         return Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
     }

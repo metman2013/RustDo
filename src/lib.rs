@@ -13,6 +13,8 @@ pub mod mstodo;
 pub mod notes;
 pub mod notes_ui;
 pub mod notify;
+#[cfg(target_os = "android")]
+pub mod photos;
 pub mod showlist;
 pub mod platform;
 pub mod storage;
