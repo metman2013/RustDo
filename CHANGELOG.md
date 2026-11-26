@@ -12,6 +12,9 @@ Each release needs its entry in all three (a test checks the current version).
 
 ## 0.4.4 - 2026-11-28
 
+### New
+- Show list: a large, easy-to-read page with a list's tasks and their notes, for example a list of medications to show your doctor. Copy it as text to paste into an email or message, or on a computer print it or save it as a PDF. Find it next to the list's name, or right-click (long-press) a list.
+
 ### Improved
 - Phones: a clear back button (an arrow in a rounded button) replaces the small "<" on the menu, Settings, task details and Sticky notes.
 - Android: the back button and back gesture now work in RustDo. Back closes what's open, steps back to the list and to My Day, and from My Day leaves the app.

@@ -5,6 +5,9 @@ traduites. Les versions absentes ici s'affichent en anglais.
 
 ## 0.4.4 - 2026-11-28
 
+### Nouveautés
+- Afficher la liste : une grande page facile à lire avec les tâches d'une liste et leurs notes, par exemple une liste de médicaments à montrer à votre médecin. Copiez-la en texte pour la coller dans un e-mail ou un message, ou sur ordinateur imprimez-la ou enregistrez-la en PDF. Le bouton se trouve à côté du nom de la liste, ou par clic droit (appui long) sur une liste.
+
 ### Améliorations
 - Téléphones : un bouton Retour bien visible (une flèche dans un bouton arrondi) remplace le petit « < » dans le menu, les paramètres, les détails des tâches et les pense-bêtes.
 - Android : le bouton et le geste Retour fonctionnent désormais dans RustDo. Retour ferme ce qui est ouvert, revient à la liste puis à Ma journée, et depuis Ma journée quitte l'application.

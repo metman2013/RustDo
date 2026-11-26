@@ -12,6 +12,7 @@ pub mod mstodo;
 pub mod notes;
 pub mod notes_ui;
 pub mod notify;
+pub mod showlist;
 pub mod platform;
 pub mod storage;
 pub mod store_package;

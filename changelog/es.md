@@ -5,6 +5,9 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 
 ## 0.4.4 - 2026-11-28
 
+### Novedades
+- Mostrar lista: una página grande y fácil de leer con las tareas de una lista y sus notas, por ejemplo una lista de medicamentos para enseñar a tu médico. Cópiala como texto para pegarla en un correo o un mensaje o, en un ordenador, imprímela o guárdala como PDF. Está junto al nombre de la lista o al hacer clic derecho (mantener pulsada) en una lista.
+
 ### Mejoras
 - Teléfonos: un botón Atrás claro (una flecha en un botón redondeado) sustituye al pequeño «<» en el menú, la configuración, los detalles de la tarea y las notas rápidas.
 - Android: el botón y el gesto Atrás ya funcionan en RustDo. Atrás cierra lo que esté abierto, vuelve a la lista y a Mi día, y desde Mi día sale de la aplicación.

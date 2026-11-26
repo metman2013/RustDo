@@ -2,6 +2,7 @@
 
 use crate::account;
 use crate::mstodo;
+use crate::showlist;
 use crate::i18n::{self, plural, tr, trf};
 use crate::model::{
     format_time, from_12h, relative_date, sort_tasks, to_12h, PlannedBucket, Recurrence, SortMode, Step, Store, Task,
@@ -212,6 +213,8 @@ pub struct TodoApp {
     /// What's typed in that quick "subtasks for …" box.
     quick_step: String,
     renaming_list: Option<(Uuid, String)>,
+    /// "Show list": the view whose open tasks are shown full screen, to read or hand over.
+    show_list: Option<View>,
     /// Desktop: the list being dragged to a new place in the menu.
     list_drag: Option<Uuid>,
     rename_focus: bool,
@@ -350,6 +353,7 @@ impl TodoApp {
             quick_step: String::new(),
             renaming_list: None,
             list_drag: None,
+            show_list: None,
             rename_focus: false,
             confirm_delete_list: None,
             alerts: Vec::new(),
@@ -971,6 +975,68 @@ impl TodoApp {
             self.helper_handled = false; // start, wake or stop the companion
         }
         ui.separator();
+    }
+
+    // ------------------------------------------------------------------ show list
+
+    /// The view's open tasks, large and plain, to read or hand over; copy as text or print.
+    fn show_list_page(&mut self, ctx: &egui::Context, view: View, today: NaiveDate) {
+        let title = match view {
+            View::MyDay => tr("My Day").to_string(),
+            View::Important => tr("Important").to_string(),
+            View::Planned => tr("Planned").to_string(),
+            View::All => tr("All").to_string(),
+            View::Completed => tr("Completed").to_string(),
+            View::List(id) => self.store.list_name(id).to_string(),
+        };
+        let page = showlist::build(&self.store, view, &title, today);
+        let mut close = false;
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if back_button(ui, tr("Back")).clicked() {
+                    close = true;
+                }
+                if ui.button(tr("📋 Copy as text")).clicked() {
+                    ui.ctx().copy_text(showlist::to_text(&page));
+                    self.notify(tr("Copied. Paste it into an email or a message."));
+                }
+                if !cfg!(target_os = "android") && ui.button(tr("Print or save as PDF")).clicked() {
+                    match platform::open_printable(self.storage.folder(), &showlist::file_name(&title), &showlist::to_html(&page)) {
+                        Ok(()) => self.notify(tr("Opened in your browser: use its Print button (it can also save a PDF).")),
+                        Err(e) => self.notify(e),
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                ui.set_max_width(ui.available_width().min(760.0));
+                ui.label(RichText::new(&page.title).size(30.0).strong());
+                ui.label(RichText::new(&page.date).size(16.0).weak());
+                ui.add_space(10.0);
+                if page.items.is_empty() {
+                    ui.label(RichText::new(tr("Nothing in this list.")).size(18.0).weak());
+                }
+                for item in &page.items {
+                    ui.separator();
+                    ui.add(egui::Label::new(RichText::new(&item.title).size(22.0).strong()).wrap());
+                    if !item.details.is_empty() {
+                        ui.label(RichText::new(item.details.join(" · ")).size(16.0).weak());
+                    }
+                    if !item.notes.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(&item.notes).size(18.0)).wrap());
+                    }
+                    for (step, done) in &item.steps {
+                        ui.label(RichText::new(format!("{} {step}", if *done { "☑" } else { "☐" })).size(18.0));
+                    }
+                    ui.add_space(4.0);
+                }
+                ui.add_space(24.0);
+            });
+        });
+        if close {
+            self.show_list = None;
+        }
     }
 
     // ------------------------------------------------------------------ Microsoft To Do import
@@ -2576,7 +2642,9 @@ impl TodoApp {
             return;
         }
         // Then one screen back.
-        if self.show_settings {
+        if self.show_list.is_some() {
+            self.show_list = None;
+        } else if self.show_settings {
             self.show_settings = false;
         } else if !self.search.is_empty() {
             self.search.clear();
@@ -2616,7 +2684,9 @@ impl TodoApp {
             self.focus_search = true;
         }
         if esc {
-            if !self.search.is_empty() {
+            if self.show_list.is_some() {
+                self.show_list = None;
+            } else if !self.search.is_empty() {
                 self.search.clear();
             } else {
                 self.selected = None;
@@ -2769,6 +2839,11 @@ impl TodoApp {
                                         self.open_share_dialog(Some(id));
                                         ui.close_menu();
                                     }
+                                }
+                                if ui.button(tr("📄  Show list")).clicked() {
+                                    self.show_list = Some(View::List(id));
+                                    self.show_nav = false;
+                                    ui.close_menu();
                                 }
                                 if index > 0 && ui.button(tr("⬆  Move up")).clicked() {
                                     self.dirty |= self.store.move_list(id, index - 1);
@@ -3017,6 +3092,17 @@ impl TodoApp {
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
                 ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                if !searching && self.view != View::Completed {
+                    // Phones: just the icon (the header is narrow); wider screens: say what it does.
+                    let show = if narrow {
+                        egui::Button::new(RichText::new("📄").size(20.0)).min_size(Vec2::splat(if touch { 44.0 } else { 32.0 }))
+                    } else {
+                        egui::Button::new(tr("📄  Show list"))
+                    };
+                    if ui.add(show).on_hover_text(tr("Show list: to read, print or share")).clicked() {
+                        self.show_list = Some(self.view);
+                    }
+                }
                 // Planned is always grouped by date, so sorting doesn't apply there.
                 if self.view == View::Planned && !searching {
                     return;
@@ -3929,7 +4015,9 @@ impl eframe::App for TodoApp {
         // Wide screens: lists | tasks | details side by side.
         // Phones: one screen at a time (lists, or tasks, or one task's details).
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
-        if narrow {
+        if let Some(view) = self.show_list {
+            self.show_list_page(ctx, view, today);
+        } else if narrow {
             if self.show_settings {
                 self.settings_page(ctx);
             } else if self.show_nav {

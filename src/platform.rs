@@ -158,6 +158,39 @@ pub fn reload_page() {
     }
 }
 
+/// Opens a printable page in the browser (Show list › Print): a file on the desktop, a
+/// new tab in the web app. The browser's print dialog can also save it as a PDF.
+/// On the desktop the page is saved in `folder` (RustDo's own folder: the Store version's
+/// temp folder is private to it, so a browser couldn't open a file there).
+pub fn open_printable(folder: Option<std::path::PathBuf>, file_name: &str, html: &str) -> Result<(), String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = (file_name, folder);
+        let err = |e: wasm_bindgen::JsValue| format!("{e:?}");
+        let parts = js_sys::Array::new();
+        parts.push(&wasm_bindgen::JsValue::from_str(html));
+        let options = web_sys::BlobPropertyBag::new();
+        options.set_type("text/html");
+        let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options).map_err(err)?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob).map_err(err)?;
+        let window = web_sys::window().ok_or("no window")?;
+        match window.open_with_url_and_target(&url, "_blank").map_err(err)? {
+            Some(_) => Ok(()),
+            None => Err(crate::i18n::tr("The browser blocked the new tab. Allow pop-ups for rustdo.app and try again.").into()),
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let dir = folder.map(|f| f.join("Print")).unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join(file_name);
+        std::fs::write(&path, html).map_err(|e| e.to_string())?;
+        #[cfg(not(target_os = "android"))]
+        open_folder(&path);
+        Ok(())
+    }
+}
+
 /// Desktop: opens a folder in the system file manager.
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 pub fn open_folder(path: &std::path::Path) {
