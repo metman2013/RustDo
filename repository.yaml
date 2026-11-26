@@ -1,0 +1,5 @@
+# Home Assistant app repository: in Home Assistant, add this repository's GitHub address
+# to the app store's repositories to install RustDo Hub (see homeassistant/rustdo_hub).
+name: RustDo
+url: https://github.com/metman2013/RustDo
+maintainer: KoebleEffect

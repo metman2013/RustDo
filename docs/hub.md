@@ -38,6 +38,18 @@ docker compose up -d
   and ARM NAS boxes). Prefer to build it yourself? Run `docker build -t rustdo-hub hub/` from
   the repository folder.
 
+### Home Assistant
+
+If you run Home Assistant OS (or Supervised), the hub can run as a Home Assistant app:
+
+1. In Home Assistant, open **Settings › Apps** (called **Add-ons** in older versions) and
+   the app store, then **⋮ › Repositories**, and add `https://github.com/metman2013/RustDo`.
+2. Install **RustDo Hub** and press **Start**.
+3. In RustDo, use your Home Assistant's address with port 7979, for example
+   `homeassistant.local:7979`.
+
+The hub's data is included in Home Assistant's backups. More in the app's Documentation tab.
+
 ### Windows
 
 1. Download `RustDo-Hub-<version>-windows.exe` from the
