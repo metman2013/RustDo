@@ -5,7 +5,7 @@
 //! minimized. The notes live in one shared, locked [`Shared`] that the main window's
 //! "Sticky notes" page and the note windows all read and write.
 
-use crate::i18n::{plural, tr, trf};
+use crate::i18n::{tr, trf};
 use crate::notes::{self, Notes, StickyNote, MAX_TEXT_SIZE, MIN_TEXT_SIZE, PRESETS};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, CursorIcon, FontId, Id, Layout, Pos2, RichText, Sense, Stroke, UiBuilder, Vec2,

@@ -10,6 +10,16 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.6 - 2026-11-27
+
+### New
+- Background images: choose one for the whole app in Settings › Background, and give any list its own (right-click or long-press the list › Background…). Pick from built-in backgrounds or, on a computer or the web, your own picture. "Dim background" keeps tasks easy to read.
+- Backgrounds sync with Sync my devices, your own pictures too, so a picture chosen on your PC also shows on your phone. (Your RustDo Hub needs to be 0.4.6 or later to carry pictures.)
+- RustDo Hub can run as a Home Assistant app: in Home Assistant's app store, add the RustDo repository and install RustDo Hub. See the hub guide.
+
+### Fixed
+- RustDo Hub's Docker image now works when its data folder is owned by root (common on NAS boxes and in Home Assistant).
+
 ## 0.4.5 - 2026-11-26
 
 ### Fixed

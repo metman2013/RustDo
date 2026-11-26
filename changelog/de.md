@@ -3,6 +3,16 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.6 - 2026-11-27
+
+### Neu
+- Hintergrundbilder: Wähle unter Einstellungen › Hintergrund eines für die ganze App, und gib jeder Liste ihr eigenes (Rechtsklick oder langes Drücken auf die Liste › Hintergrund…). Wähle aus eingebauten Hintergründen oder, am Computer oder im Web, aus deinen eigenen Bildern. „Hintergrund abdunkeln“ hält die Aufgaben gut lesbar.
+- Hintergründe werden mit „Meine Geräte synchronisieren“ abgeglichen, auch deine eigenen Bilder: Ein am PC gewähltes Bild erscheint auch auf dem Smartphone. (Dafür braucht dein RustDo Hub Version 0.4.6 oder neuer.)
+- RustDo Hub kann als Home-Assistant-App laufen: Füge im App-Store von Home Assistant das RustDo-Repository hinzu und installiere RustDo Hub. Mehr in der Hub-Anleitung.
+
+### Behoben
+- Das Docker-Image von RustDo Hub funktioniert jetzt auch, wenn sein Datenordner root gehört (häufig bei NAS-Geräten und in Home Assistant).
+
 ## 0.4.5 - 2026-11-26
 
 ### Behoben

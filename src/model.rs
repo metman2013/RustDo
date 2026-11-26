@@ -1,6 +1,6 @@
 //! Core data model and business rules. No UI code lives here so it can be unit-tested.
 
-use crate::i18n::{tr, trf};
+use crate::i18n::tr;
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;

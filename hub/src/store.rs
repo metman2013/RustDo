@@ -106,7 +106,7 @@ pub struct AccountSyncResponse {
 }
 
 /// What an account may hold.
-const ACCOUNT_KINDS: [&str; 5] = ["list", "task", "note", "settings", "share"];
+const ACCOUNT_KINDS: [&str; 6] = ["list", "task", "note", "settings", "share", "image"];
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Db {

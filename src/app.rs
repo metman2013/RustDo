@@ -1,6 +1,7 @@
 //! The egui user interface.
 
 use crate::account;
+use crate::backgrounds::{self, Background};
 use crate::mstodo;
 use crate::showlist;
 use crate::i18n::{self, plural, tr, trf};
@@ -247,6 +248,17 @@ pub struct TodoApp {
     account_error: Option<String>,
     account_dialog: Option<AccountDialog>,
     ms_import: Option<MsImportDialog>,
+    // Backgrounds
+    /// Your own background pictures on this device (id → JPEG).
+    bg_images: backgrounds::Images,
+    /// Drawn backgrounds: "builtin:<id>" or "custom:<id>" → texture.
+    bg_textures: std::collections::HashMap<String, egui::TextureHandle>,
+    /// "Background…" for one list (its id), from the list's menu.
+    bg_dialog: Option<Uuid>,
+    /// Web: a picture picked in the browser, waiting to be stored: (list or app-wide, bytes).
+    bg_web_pick: std::rc::Rc<std::cell::RefCell<Option<(Option<Uuid>, Vec<u8>)>>>,
+    /// The look last applied: (dark theme, a background showing).
+    bg_style: Option<(bool, bool)>,
     /// Notes changes up to here are already known to the account sync.
     account_notes_seen: Option<Instant>,
     /// The "What's new" dialog: the releases to describe, newest first.
@@ -256,6 +268,7 @@ pub struct TodoApp {
 impl TodoApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (storage, moved_notice) = Storage::for_platform();
+        let bg_images = backgrounds::load(storage.folder().as_deref());
         let mut loaded = storage.load();
         // A load problem is more important to show than the "moved to Documents" notice.
         if loaded.warning.is_none() {
@@ -381,6 +394,11 @@ impl TodoApp {
             account_dialog: None,
             // Web: back from Microsoft's sign-in page, carry on with the import.
             ms_import: resume_ms_import(&cc.egui_ctx),
+            bg_images,
+            bg_textures: Default::default(),
+            bg_dialog: None,
+            bg_web_pick: Default::default(),
+            bg_style: None,
             account_notes_seen: None,
             whats_new,
         }
@@ -825,6 +843,20 @@ impl TodoApp {
             self.dirty = true;
         }
         ui.separator();
+        ui.label(RichText::new(tr("Background")).strong());
+        self.background_picker(ui, None);
+        let any = self.store.settings.background != Background::None || !self.store.settings.list_backgrounds.is_empty();
+        if any {
+            ui.horizontal(|ui| {
+                ui.label(tr("Dim background"));
+                let mut dim = self.store.settings.background_dim;
+                if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).show_value(false)).changed() {
+                    self.store.settings.background_dim = (dim * 20.0).round() / 20.0;
+                    self.dirty = true;
+                }
+            });
+        }
+        ui.separator();
         ui.label(RichText::new(tr("Time")).strong());
         let s = &mut self.store.settings;
         if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
@@ -978,6 +1010,267 @@ impl TodoApp {
             self.helper_handled = false; // start, wake or stop the companion
         }
         ui.separator();
+    }
+
+    // ------------------------------------------------------------------ backgrounds
+
+    /// The background for what's on screen: the open list's own, else the app's. Pages
+    /// meant for reading (Settings on a phone, Show list) stay plain.
+    fn current_background(&self) -> Background {
+        if self.show_list.is_some() || self.show_settings {
+            return Background::None;
+        }
+        if let (View::List(id), false) = (self.view, self.notes_page) {
+            if let Some(b) = self.store.settings.list_backgrounds.get(&id) {
+                return b.clone();
+            }
+        }
+        self.store.settings.background.clone()
+    }
+
+    /// The texture for a background (made once, then kept).
+    fn bg_texture(&mut self, ctx: &egui::Context, bg: &Background) -> Option<egui::TextureHandle> {
+        let (key, image) = match bg {
+            Background::None => return None,
+            Background::Builtin(id) => {
+                let key = format!("builtin:{id}");
+                if let Some(t) = self.bg_textures.get(&key) {
+                    return Some(t.clone());
+                }
+                let b = backgrounds::builtin(id)?;
+                let (w, h) = (480, 300);
+                (key, egui::ColorImage::from_rgba_unmultiplied([w, h], &backgrounds::render_builtin(b, w, h)))
+            }
+            Background::Custom(id) => {
+                let key = format!("custom:{id}");
+                if let Some(t) = self.bg_textures.get(&key) {
+                    return Some(t.clone());
+                }
+                let (w, h, px) = backgrounds::decode(self.bg_images.get(id)?)?;
+                (key, egui::ColorImage::from_rgba_unmultiplied([w, h], &px))
+            }
+        };
+        let texture = ctx.load_texture(&key, image, egui::TextureOptions::LINEAR);
+        self.bg_textures.insert(key, texture.clone());
+        Some(texture)
+    }
+
+    /// Draws the background behind everything, toned down by the Dim setting. Returns
+    /// whether one is showing.
+    fn paint_background(&mut self, ctx: &egui::Context) -> bool {
+        let bg = self.current_background();
+        let Some(texture) = self.bg_texture(ctx, &bg) else { return false };
+        let screen = ctx.screen_rect();
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        painter.image(texture.id(), screen, cover_uv(texture.size_vec2(), screen.size()), Color32::WHITE);
+        let base = if ctx.style().visuals.dark_mode { egui::Visuals::dark() } else { egui::Visuals::light() }.panel_fill;
+        let dim = (self.store.settings.background_dim.clamp(0.0, 0.9) * 255.0) as u8;
+        painter.rect_filled(screen, 0.0, Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), dim));
+        true
+    }
+
+    /// Over a background: panels let it show through and task rows become see-through
+    /// cards; without one, the normal look.
+    fn apply_background_style(&mut self, ctx: &egui::Context, showing: bool) {
+        let dark = ctx.style().visuals.dark_mode;
+        if self.bg_style == Some((dark, showing)) {
+            return;
+        }
+        self.bg_style = Some((dark, showing));
+        let mut v = if dark { egui::Visuals::dark() } else { egui::Visuals::light() };
+        if showing {
+            let p = v.panel_fill;
+            v.panel_fill = Color32::TRANSPARENT;
+            v.faint_bg_color = Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 220);
+        }
+        ctx.set_visuals(v);
+    }
+
+    /// The frame for the side panels (menu, details): a little see-through over a background.
+    fn side_frame(&self, ctx: &egui::Context) -> egui::Frame {
+        let frame = egui::Frame::side_top_panel(&ctx.style());
+        if self.bg_style.is_some_and(|(_, showing)| showing) {
+            let p = if ctx.style().visuals.dark_mode { egui::Visuals::dark() } else { egui::Visuals::light() }.panel_fill;
+            frame.fill(Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 200))
+        } else {
+            frame
+        }
+    }
+
+    /// Sets the app-wide background (`target` None) or a list's (`Some(list)`; `None` value =
+    /// use the app background).
+    fn set_background(&mut self, target: Option<Uuid>, value: Option<Background>) {
+        match (target, value) {
+            (None, value) => self.store.settings.background = value.unwrap_or_default(),
+            (Some(list), Some(value)) => {
+                self.store.settings.list_backgrounds.insert(list, value);
+            }
+            (Some(list), None) => {
+                self.store.settings.list_backgrounds.remove(&list);
+            }
+        }
+        self.dirty = true;
+    }
+
+    /// Stores a picked picture (shrunk to a JPEG copy) and uses it.
+    fn add_picture(&mut self, target: Option<Uuid>, bytes: &[u8]) {
+        match backgrounds::prepare(bytes) {
+            Ok(jpeg) => {
+                let id = backgrounds::image_id(&jpeg);
+                if let Err(e) = backgrounds::save(self.storage.folder().as_deref(), &id, &jpeg) {
+                    self.notify(e);
+                    return;
+                }
+                self.bg_images.insert(id.clone(), jpeg);
+                self.set_background(target, Some(Background::Custom(id)));
+            }
+            Err(e) => self.notify(e),
+        }
+    }
+
+    /// Removes a picture from this device (and, through sync, your others).
+    fn remove_picture(&mut self, id: &str) {
+        self.bg_images.remove(id);
+        backgrounds::delete(self.storage.folder().as_deref(), id);
+        self.bg_textures.retain(|k, _| !k.ends_with(id));
+        let gone = Background::Custom(id.to_string());
+        if self.store.settings.background == gone {
+            self.store.settings.background = Background::None;
+        }
+        self.store.settings.list_backgrounds.retain(|_, b| *b != gone);
+        self.dirty = true;
+    }
+
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn pick_picture(&mut self, _ctx: &egui::Context, target: Option<Uuid>) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr("Pick a picture"))
+            .add_filter(tr("Pictures"), &["jpg", "jpeg", "png"])
+            .pick_file();
+        if let Some(path) = picked {
+            match std::fs::read(&path) {
+                Ok(bytes) => self.add_picture(target, &bytes),
+                Err(e) => self.notify(trf("Couldn't read {path}: {e}", &[("path", &path.display()), ("e", &e)])),
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn pick_picture(&mut self, ctx: &egui::Context, target: Option<Uuid>) {
+        let slot = self.bg_web_pick.clone();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let file = rfd::AsyncFileDialog::new().add_filter(tr("Pictures"), &["jpg", "jpeg", "png"]).pick_file().await;
+            if let Some(file) = file {
+                *slot.borrow_mut() = Some((target, file.read().await));
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    fn pick_picture(&mut self, _ctx: &egui::Context, _target: Option<Uuid>) {}
+
+    /// The background choices as swatches: for the app (`target` None) or one list.
+    fn background_picker(&mut self, ui: &mut egui::Ui, target: Option<Uuid>) {
+        let current: Option<Background> = match target {
+            None => Some(self.store.settings.background.clone()),
+            Some(id) => self.store.settings.list_backgrounds.get(&id).cloned(),
+        };
+        // (value, name, texture): None value = "use the app background".
+        let mut choices: Vec<(Option<Background>, String, Option<egui::TextureHandle>)> = Vec::new();
+        if target.is_some() {
+            let app = self.store.settings.background.clone();
+            let tex = self.bg_texture(ui.ctx(), &app);
+            choices.push((None, tr("App background").to_string(), tex));
+        }
+        choices.push((Some(Background::None), tr("Plain").to_string(), None));
+        for b in &backgrounds::BUILTINS {
+            let bg = Background::Builtin(b.id.to_string());
+            let tex = self.bg_texture(ui.ctx(), &bg);
+            choices.push((Some(bg), backgrounds::builtin_name(b.id).to_string(), tex));
+        }
+        let custom: Vec<String> = self.bg_images.keys().cloned().collect();
+        for id in custom {
+            let bg = Background::Custom(id);
+            let tex = self.bg_texture(ui.ctx(), &bg);
+            choices.push((Some(bg), tr("Your picture").to_string(), tex));
+        }
+        let touch = is_touch(ui);
+        let size = if touch { Vec2::new(84.0, 56.0) } else { Vec2::new(68.0, 44.0) };
+        let mut chosen: Option<Option<Background>> = None;
+        let mut remove: Option<String> = None;
+        let mut pick = false;
+        ui.horizontal_wrapped(|ui| {
+            for (value, name, tex) in &choices {
+                let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+                let p = ui.painter();
+                let corner = egui::CornerRadius::same(6);
+                match tex {
+                    Some(t) => {
+                        p.add(egui::epaint::RectShape::filled(rect, corner, Color32::WHITE).with_texture(t.id(), cover_uv(t.size_vec2(), rect.size())));
+                    }
+                    None => {
+                        p.rect_filled(rect, corner, ui.visuals().extreme_bg_color);
+                    }
+                }
+                if value.is_none() {
+                    p.text(rect.center(), Align2::CENTER_CENTER, tr("App"), FontId::proportional(12.0), ui.visuals().strong_text_color());
+                } else if *value == Some(Background::None) {
+                    p.text(rect.center(), Align2::CENTER_CENTER, tr("Plain"), FontId::proportional(12.0), ui.visuals().text_color());
+                }
+                let selected = *value == current;
+                let stroke = if selected { Stroke::new(3.0_f32, ACCENT) } else { Stroke::new(1.0_f32, ui.visuals().weak_text_color()) };
+                p.rect_stroke(rect, corner, stroke, egui::StrokeKind::Inside);
+                let resp = resp.on_hover_text(name.as_str()).on_hover_cursor(CursorIcon::PointingHand);
+                if resp.clicked() {
+                    chosen = Some(value.clone());
+                }
+                if let Some(Background::Custom(id)) = value {
+                    resp.context_menu(|ui| {
+                        if ui.button(tr("🗑  Remove picture")).clicked() {
+                            remove = Some(id.clone());
+                            ui.close_menu();
+                        }
+                    });
+                }
+            }
+            if CAN_IMPORT_FILE && ui.add(egui::Button::new(tr("+ Picture…")).min_size(size)).on_hover_text(tr("Use your own picture (JPG or PNG)")).clicked() {
+                pick = true;
+            }
+        });
+        if let Some(value) = chosen {
+            self.set_background(target, value);
+        }
+        if let Some(id) = remove {
+            self.remove_picture(&id);
+        }
+        if pick {
+            let ctx = ui.ctx().clone();
+            self.pick_picture(&ctx, target);
+        }
+    }
+
+    /// "Background…" for one list.
+    fn background_dialog(&mut self, ctx: &egui::Context) {
+        let Some(list) = self.bg_dialog else { return };
+        if !self.store.lists.iter().any(|l| l.id == list) {
+            self.bg_dialog = None;
+            return;
+        }
+        let name = self.store.list_name(list).to_string();
+        let mut close = false;
+        dialog_window(ctx, trf("Background for “{name}”", &[("name", &name)]), self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 480.0));
+            self.background_picker(ui, Some(list));
+            ui.add_space(6.0);
+            if ui.button(tr("Done")).clicked() {
+                close = true;
+            }
+        });
+        if close || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.bg_dialog = None;
+        }
     }
 
     // ------------------------------------------------------------------ show list
@@ -1263,9 +1556,9 @@ impl TodoApp {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let out = if notes::AVAILABLE {
             let s = notes_ui::lock(&self.notes);
-            account::outgoing(&self.store, Some(&s.notes), acc, now_ms)
+            account::outgoing(&self.store, Some(&s.notes), Some(&self.bg_images), acc, now_ms)
         } else {
-            account::outgoing(&self.store, None, acc, now_ms)
+            account::outgoing(&self.store, None, Some(&self.bg_images), acc, now_ms)
         };
         self.account_rx = Some(account::sync(&acc.hub, out, ctx));
     }
@@ -1302,7 +1595,7 @@ impl TodoApp {
                         }
                         let applied = if notes::AVAILABLE {
                             let mut s = notes_ui::lock(&self.notes);
-                            let applied = account::apply(&mut self.store, Some(&mut s.notes), &mut acc, &out, &resp);
+                            let applied = account::apply(&mut self.store, Some(&mut s.notes), Some(&mut self.bg_images), &mut acc, &out, &resp);
                             if applied.notes > 0 {
                                 s.changed();
                                 s.save_if_due(true);
@@ -1310,8 +1603,22 @@ impl TodoApp {
                             self.account_notes_seen = Some(s.last_change());
                             applied
                         } else {
-                            account::apply(&mut self.store, None, &mut acc, &out, &resp)
+                            account::apply(&mut self.store, None, Some(&mut self.bg_images), &mut acc, &out, &resp)
                         };
+                        // Background pictures that came or went: keep the device's copies in step.
+                        let folder = self.storage.folder();
+                        for id in &applied.images_saved {
+                            if let Some(jpeg) = self.bg_images.get(id) {
+                                if let Err(e) = backgrounds::save(folder.as_deref(), id, jpeg) {
+                                    log::warn!(target: "rustdo", "couldn't store a synced background: {e}");
+                                }
+                            }
+                            self.bg_textures.retain(|k, _| !k.ends_with(id.as_str()));
+                        }
+                        for id in &applied.images_removed {
+                            backgrounds::delete(folder.as_deref(), id);
+                            self.bg_textures.retain(|k, _| !k.ends_with(id.as_str()));
+                        }
                         acc.last_sync = Some(Local::now().naive_local());
                         self.store.account = Some(acc);
                         self.account_error = None;
@@ -2707,6 +3014,7 @@ impl TodoApp {
 
     /// The list picker: a left side panel on wide screens, the whole screen on phones.
     fn sidebar(&mut self, ctx: &egui::Context, today: NaiveDate, narrow: bool) {
+        let side = self.side_frame(ctx);
         let body = |ui: &mut egui::Ui| {
                 ui.add_space(10.0);
                 let touch = is_touch(ui);
@@ -2843,6 +3151,10 @@ impl TodoApp {
                                         ui.close_menu();
                                     }
                                 }
+                                if ui.button(tr("🖼  Background…")).clicked() {
+                                    self.bg_dialog = Some(id);
+                                    ui.close_menu();
+                                }
                                 if ui.button(tr("📄  Show list")).clicked() {
                                     self.show_list = Some(View::List(id));
                                     self.show_nav = false;
@@ -2977,6 +3289,7 @@ impl TodoApp {
             });
         } else {
             egui::SidePanel::left("sidebar")
+                .frame(side)
                 .resizable(true)
                 .default_width(250.0)
                 .width_range(200.0..=400.0)
@@ -3439,6 +3752,7 @@ impl TodoApp {
 
     /// Task details: a right side panel on wide screens, the whole screen on phones.
     fn detail_panel(&mut self, ctx: &egui::Context, id: Uuid, now: NaiveDateTime, narrow: bool) {
+        let side = self.side_frame(ctx);
         let today = now.date();
         let clock_24h = self.store.settings.clock_24h;
         let lists: Vec<(Uuid, String)> =
@@ -3746,6 +4060,7 @@ impl TodoApp {
             egui::CentralPanel::default().show(ctx, body);
         } else {
             egui::SidePanel::right("details")
+                .frame(side)
                 .resizable(true)
                 .default_width(350.0)
                 .width_range(290.0..=560.0)
@@ -4029,6 +4344,15 @@ impl eframe::App for TodoApp {
 
         // Wide screens: lists | tasks | details side by side.
         // Phones: one screen at a time (lists, or tasks, or one task's details).
+        // Web: a picture picked in the browser.
+        let picked = self.bg_web_pick.borrow_mut().take();
+        if let Some((target, bytes)) = picked {
+            self.add_picture(target, &bytes);
+        }
+        let showing = self.paint_background(ctx);
+        self.apply_background_style(ctx, showing);
+        self.background_dialog(ctx);
+
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         if let Some(view) = self.show_list {
             self.show_list_page(ctx, view, today);
@@ -4152,6 +4476,23 @@ const MAX_ATLAS_SIDE: usize = 2048;
 
 fn capped_texture_side(side: Option<usize>) -> Option<usize> {
     Some(side.map_or(MAX_ATLAS_SIDE, |s| s.min(MAX_ATLAS_SIDE)))
+}
+
+/// The part of an image (as UV coordinates) that fills `area` without stretching:
+/// cropped to the area's shape, centred, like CSS `background-size: cover`.
+fn cover_uv(image: Vec2, area: Vec2) -> Rect {
+    if image.x <= 0.0 || image.y <= 0.0 || area.x <= 0.0 || area.y <= 0.0 {
+        return Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    }
+    let (ia, aa) = (image.x / image.y, area.x / area.y);
+    if ia > aa {
+        // Image is wider: crop the sides.
+        let w = aa / ia;
+        Rect::from_min_max(Pos2::new((1.0 - w) / 2.0, 0.0), Pos2::new((1.0 + w) / 2.0, 1.0))
+    } else {
+        let h = ia / aa;
+        Rect::from_min_max(Pos2::new(0.0, (1.0 - h) / 2.0), Pos2::new(1.0, (1.0 + h) / 2.0))
+    }
 }
 
 /// Phones: "‹ Back" as a clear, thumb-sized button. The chevron is drawn (the built-in

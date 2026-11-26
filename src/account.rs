@@ -19,6 +19,7 @@
 
 use crate::i18n::{tr, trf};
 use crate::model::{Store, Task, TaskList};
+use crate::backgrounds::Images;
 use crate::notes::{Notes, StickyNote};
 use crate::sync::Share;
 use chrono::NaiveDateTime;
@@ -32,7 +33,7 @@ const DEVICE_TASK_FIELDS: [&str; 1] = ["reminder_fired"];
 /// Sticky note fields that stay on each device.
 const DEVICE_NOTE_FIELDS: [&str; 3] = ["pos", "open", "on_top"];
 /// Settings that sync (the rest, like backups and the background companion, are per device).
-const SYNCED_SETTINGS: [&str; 3] = ["sort", "theme", "clock_24h"];
+const SYNCED_SETTINGS: [&str; 6] = ["sort", "theme", "clock_24h", "background", "background_dim", "list_backgrounds"];
 const SETTINGS_ID: &str = "settings";
 
 /// This device's link to an account (saved with the tasks).
@@ -149,8 +150,19 @@ fn settings_data(store: &Store) -> Value {
     let all = serde_json::to_value(&store.settings).unwrap_or(Value::Null);
     let mut out = serde_json::Map::new();
     for f in SYNCED_SETTINGS {
-        if let Some(v) = all.get(f) {
-            out.insert(f.into(), v.clone());
+        match all.get(f) {
+            Some(v) => {
+                out.insert(f.into(), v.clone());
+            }
+            // Left out of the saved settings when empty: send the empty value, so another
+            // device learns that a background was removed.
+            None if f == "background" => {
+                out.insert(f.into(), serde_json::to_value(crate::backgrounds::Background::None).unwrap_or(Value::Null));
+            }
+            None if f == "list_backgrounds" => {
+                out.insert(f.into(), serde_json::json!({}));
+            }
+            None => {}
         }
     }
     out.insert("default_list".into(), serde_json::to_value(store.default_list).unwrap_or(Value::Null));
@@ -169,7 +181,7 @@ fn shared_lists(store: &Store) -> HashSet<Uuid> {
 }
 
 /// Everything this device has to sync right now: `kind:id` → (kind, id, data).
-fn current(store: &Store, notes: Option<&Notes>) -> HashMap<String, (&'static str, String, Value)> {
+fn current(store: &Store, notes: Option<&Notes>, images: Option<&Images>) -> HashMap<String, (&'static str, String, Value)> {
     let shared = shared_lists(store);
     let mut out = HashMap::new();
     let mut put = |kind: &'static str, id: String, data: Value| {
@@ -188,11 +200,19 @@ fn current(store: &Store, notes: Option<&Notes>) -> HashMap<String, (&'static st
     for n in notes.map(|n| n.notes.as_slice()).unwrap_or_default() {
         put("note", n.id.to_string(), note_data(n));
     }
+    for (id, jpeg) in images.into_iter().flatten() {
+        put("image", id.clone(), image_data(jpeg));
+    }
     out
 }
 
+/// A background picture as it travels: its JPEG in base64.
+fn image_data(jpeg: &[u8]) -> Value {
+    serde_json::json!({ "jpeg": crate::backgrounds::to_base64(jpeg) })
+}
+
 /// The fingerprint of one item as it is on this device now (`None`: not here).
-fn local_fingerprint(store: &Store, notes: Option<&Notes>, kind: &str, id: &str) -> Option<u64> {
+fn local_fingerprint(store: &Store, notes: Option<&Notes>, images: Option<&Images>, kind: &str, id: &str) -> Option<u64> {
     let uuid = || Uuid::parse_str(id).ok();
     let shared = || shared_lists(store);
     let data = match kind {
@@ -201,6 +221,7 @@ fn local_fingerprint(store: &Store, notes: Option<&Notes>, kind: &str, id: &str)
         "task" => uuid().and_then(|u| store.tasks.iter().find(|t| t.id == u)).filter(|t| !shared().contains(&t.list_id)).map(task_data),
         "share" => uuid().and_then(|u| store.shares.iter().find(|s| s.list_id == u)).map(|s| share_data(s, store)),
         "note" => uuid().and_then(|u| notes?.notes.iter().find(|n| n.id == u)).map(note_data),
+        "image" => images.and_then(|i| i.get(id)).map(|j| image_data(j)),
         _ => None,
     };
     data.as_ref().map(fingerprint)
@@ -219,11 +240,11 @@ pub fn clear_for_pull(store: &mut Store) {
 }
 
 /// What this device changed since its last sync.
-pub fn outgoing(store: &Store, notes: Option<&Notes>, account: &Account, now_ms: i64) -> Outgoing {
+pub fn outgoing(store: &Store, notes: Option<&Notes>, images: Option<&Images>, account: &Account, now_ms: i64) -> Outgoing {
     let mut changes = Vec::new();
     let mut sent = HashMap::new();
     if !account.pull_only {
-        let now = current(store, notes);
+        let now = current(store, notes, images);
         for (k, (kind, id, data)) in &now {
             let fp = fingerprint(data);
             if account.known.get(k) != Some(&fp) {
@@ -260,6 +281,9 @@ fn order(kind: &str) -> u8 {
 pub struct Applied {
     /// Lists, tasks or settings.
     pub tasks: usize,
+    /// Background pictures that arrived (to store) or were removed (to delete), by id.
+    pub images_saved: Vec<String>,
+    pub images_removed: Vec<String>,
     pub notes: usize,
     /// Shared lists this device joined because another of the person's devices is in them.
     pub joined: usize,
@@ -267,7 +291,14 @@ pub struct Applied {
 
 /// Applies the hub's answer. If you edited something while the request was on its way,
 /// your edit is kept (it goes out next round, as the newest change).
-pub fn apply(store: &mut Store, mut notes: Option<&mut Notes>, account: &mut Account, out: &Outgoing, resp: &SyncResponse) -> Applied {
+pub fn apply(
+    store: &mut Store,
+    mut notes: Option<&mut Notes>,
+    mut images: Option<&mut Images>,
+    account: &mut Account,
+    out: &Outgoing,
+    resp: &SyncResponse,
+) -> Applied {
     for (k, fp) in &out.sent {
         match fp {
             Some(fp) => account.known.insert(k.clone(), *fp),
@@ -277,20 +308,35 @@ pub fn apply(store: &mut Store, mut notes: Option<&mut Notes>, account: &mut Acc
     let mut applied = Applied::default();
     // Settings name the default list, so they're applied last, once the lists are here.
     // Whether they were edited here is judged by how they were before this round.
-    let settings_before = local_fingerprint(store, notes.as_deref(), "settings", SETTINGS_ID);
+    let settings_before = local_fingerprint(store, notes.as_deref(), images.as_deref(), "settings", SETTINGS_ID);
     let mut items: Vec<&Item> = resp.changes.iter().filter(|i| i.kind != "settings").collect();
     // Where incoming lists go in the menu.
     let mut list_pos: HashMap<Uuid, f64> = HashMap::new();
     items.sort_by_key(|i| order(&i.kind));
     for item in items {
         let k = item.key();
-        let local = local_fingerprint(store, notes.as_deref(), &item.kind, &item.id);
+        let local = local_fingerprint(store, notes.as_deref(), images.as_deref(), &item.kind, &item.id);
         if item.deleted && local.is_none() {
             account.known.remove(&k);
             continue;
         }
         // Edited (or deleted) here since we sent: keep the local version.
         if local != account.known.get(&k).copied() {
+            continue;
+        }
+        // Background pictures have their own ids (not uuids).
+        if item.kind == "image" {
+            let Some(images) = images.as_deref_mut() else { continue };
+            if item.deleted {
+                images.remove(&item.id);
+                account.known.remove(&k);
+                applied.images_removed.push(item.id.clone());
+            } else if let Some(jpeg) = item.data.get("jpeg").and_then(Value::as_str).and_then(crate::backgrounds::from_base64) {
+                let fp = fingerprint(&image_data(&jpeg));
+                images.insert(item.id.clone(), jpeg);
+                account.known.insert(k, fp);
+                applied.images_saved.push(item.id.clone());
+            }
             continue;
         }
         let Ok(id) = Uuid::parse_str(&item.id) else { continue };
@@ -349,7 +395,7 @@ pub fn apply(store: &mut Store, mut notes: Option<&mut Notes>, account: &mut Acc
                     store.shares.push(Share { list_id: id, hub: hub.into(), code: code.into(), rev: 0, known: HashMap::new(), last_sync: None });
                     applied.joined += 1;
                 }
-                account.known.insert(k, local_fingerprint(store, notes.as_deref(), "share", &item.id).unwrap_or_default());
+                account.known.insert(k, local_fingerprint(store, notes.as_deref(), images.as_deref(), "share", &item.id).unwrap_or_default());
             }
             ("task", true) => {
                 if store.tasks.iter().any(|t| t.id == id && shared_lists(store).contains(&t.list_id)) {
@@ -606,18 +652,19 @@ mod tests {
     struct Device {
         store: Store,
         notes: Notes,
+        images: crate::backgrounds::Images,
         account: Account,
     }
 
     impl Device {
         fn new() -> Self {
-            Self { store: Store::new(), notes: Notes::default(), account: Account::new("http://hub".into(), "KEY".into()) }
+            Self { store: Store::new(), notes: Notes::default(), images: Default::default(), account: Account::new("http://hub".into(), "KEY".into()) }
         }
 
         fn round(&mut self, hub: &mut FakeHub, ms: i64) -> Applied {
-            let out = outgoing(&self.store, Some(&self.notes), &self.account, ms);
+            let out = outgoing(&self.store, Some(&self.notes), Some(&self.images), &self.account, ms);
             let resp = hub.sync(&out.request);
-            apply(&mut self.store, Some(&mut self.notes), &mut self.account, &out, &resp)
+            apply(&mut self.store, Some(&mut self.notes), Some(&mut self.images), &mut self.account, &out, &resp)
         }
     }
 
@@ -657,9 +704,9 @@ mod tests {
         assert!(note.open, "a new note shows on this device");
         assert_eq!(note.pos, None, "where it sits on A's screen stays on A");
         // Nothing left to send either way.
-        assert!(outgoing(&b.store, Some(&b.notes), &b.account, 3).request.changes.is_empty());
+        assert!(outgoing(&b.store, Some(&b.notes), Some(&b.images), &b.account, 3).request.changes.is_empty());
         a.round(&mut hub, 4);
-        assert!(outgoing(&a.store, Some(&a.notes), &a.account, 5).request.changes.is_empty());
+        assert!(outgoing(&a.store, Some(&a.notes), Some(&a.images), &a.account, 5).request.changes.is_empty());
     }
 
     #[test]
@@ -709,13 +756,13 @@ mod tests {
         b.round(&mut hub, 2);
         // B renames; A renames too but B's request is already out when A's lands.
         b.store.task_mut(id).unwrap().title = "B's milk".into();
-        let out = outgoing(&b.store, Some(&b.notes), &b.account, 5);
+        let out = outgoing(&b.store, Some(&b.notes), Some(&b.images), &b.account, 5);
         a.store.task_mut(id).unwrap().title = "A's milk".into();
         a.round(&mut hub, 6);
         // While B's request was on its way, B edited again: that edit stays.
         b.store.task_mut(id).unwrap().title = "B's oat milk".into();
         let resp = hub.sync(&out.request);
-        apply(&mut b.store, Some(&mut b.notes), &mut b.account, &out, &resp);
+        apply(&mut b.store, Some(&mut b.notes), Some(&mut b.images), &mut b.account, &out, &resp);
         assert_eq!(b.store.tasks[0].title, "B's oat milk");
     }
 
@@ -726,7 +773,7 @@ mod tests {
         let groceries = a.store.add_list("Groceries").unwrap();
         a.store.tasks.push(Task::new("Bananas", groceries, now()));
         a.store.shares.push(Share { list_id: groceries, hub: "http://hub".into(), code: "K7QM-2XPD".into(), rev: 3, known: HashMap::new(), last_sync: None });
-        let out = outgoing(&a.store, Some(&a.notes), &a.account, 1);
+        let out = outgoing(&a.store, Some(&a.notes), Some(&a.images), &a.account, 1);
         assert!(out.request.changes.iter().all(|i| i.kind != "task"), "a shared list's tasks never go into the account");
         assert!(out.request.changes.iter().any(|i| i.kind == "share" && i.data["code"] == "K7QM-2XPD"));
         a.round(&mut hub, 1);
@@ -756,7 +803,7 @@ mod tests {
         b.notes.get_mut(n).unwrap().pos = Some([5.0, 5.0]);
         b.notes.get_mut(n).unwrap().open = false;
         b.store.task_mut(t).unwrap().reminder_fired = true;
-        assert!(outgoing(&b.store, Some(&b.notes), &b.account, 3).request.changes.is_empty());
+        assert!(outgoing(&b.store, Some(&b.notes), Some(&b.images), &b.account, 3).request.changes.is_empty());
         // A's edit to the text arrives without moving B's note.
         a.notes.get_mut(n).unwrap().text = "Hello".into();
         a.round(&mut hub, 4);
@@ -781,6 +828,37 @@ mod tests {
             titles.sort();
             assert_eq!(titles, ["From A", "From B"]);
         }
+    }
+
+    #[test]
+    fn backgrounds_and_pictures_sync() {
+        use crate::backgrounds::Background;
+        let mut hub = FakeHub::default();
+        let mut a = Device::new();
+        let list = a.store.add_list("Groceries").unwrap();
+        a.images.insert("img-0000000000000abc".into(), vec![0xFF, 0xD8, 1, 2, 3]);
+        a.store.settings.background = Background::Builtin("ocean".into());
+        a.store.settings.background_dim = 0.6;
+        a.store.settings.list_backgrounds.insert(list, Background::Custom("img-0000000000000abc".into()));
+        a.round(&mut hub, 1);
+        let mut b = Device::new();
+        clear_for_pull(&mut b.store);
+        b.account.pull_only = true;
+        let got = b.round(&mut hub, 2);
+        assert_eq!(got.images_saved, ["img-0000000000000abc"]);
+        assert_eq!(b.images.get("img-0000000000000abc").map(Vec::as_slice), Some(&[0xFF, 0xD8, 1, 2, 3][..]));
+        assert_eq!(b.store.settings.background, Background::Builtin("ocean".into()));
+        assert_eq!(b.store.settings.background_dim, 0.6);
+        assert_eq!(b.store.settings.list_backgrounds.get(&list), Some(&Background::Custom("img-0000000000000abc".into())));
+        assert!(outgoing(&b.store, Some(&b.notes), Some(&b.images), &b.account, 3).request.changes.is_empty(), "nothing to send back");
+        // Removing the picture on A removes it on B.
+        a.images.clear();
+        a.store.settings.list_backgrounds.clear();
+        a.round(&mut hub, 10);
+        let got = b.round(&mut hub, 11);
+        assert_eq!(got.images_removed, ["img-0000000000000abc"]);
+        assert!(b.images.is_empty());
+        assert!(b.store.settings.list_backgrounds.is_empty());
     }
 
     #[test]

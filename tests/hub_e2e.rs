@@ -72,10 +72,10 @@ fn account_done(rx: std::sync::mpsc::Receiver<account::Done>) -> account::Done {
 /// One account round for a device (its tasks and sticky notes).
 fn account_round(store: &mut Store, notes: &mut Notes) {
     let mut acc = store.account.take().expect("sync is on");
-    let out = account::outgoing(store, Some(notes), &acc, chrono::Utc::now().timestamp_millis());
+    let out = account::outgoing(store, Some(notes), None, &acc, chrono::Utc::now().timestamp_millis());
     match account_done(account::sync(&acc.hub.clone(), out, &eframe::egui::Context::default())) {
         account::Done::Synced(out, Ok(resp)) => {
-            account::apply(store, Some(notes), &mut acc, &out, &resp);
+            account::apply(store, Some(notes), None, &mut acc, &out, &resp);
         }
         account::Done::Synced(_, Err(e)) => panic!("account sync failed: {e}"),
         _ => unreachable!(),
@@ -132,7 +132,7 @@ fn two_devices_sync_an_account() {
     let mut stranger = Store::new();
     stranger.account = Some(account::Account::new(hub.clone(), "ABCDE-ABCDE-ABCDE-ABCDE".into()));
     let acc = stranger.account.clone().unwrap();
-    let out = account::outgoing(&stranger, None, &acc, 1);
+    let out = account::outgoing(&stranger, None, None, &acc, 1);
     match account_done(account::sync(&hub, out, &eframe::egui::Context::default())) {
         account::Done::Synced(_, Err(e)) => assert!(e.contains("key"), "{e}"),
         _ => panic!("expected an error"),
