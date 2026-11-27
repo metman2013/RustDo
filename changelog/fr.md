@@ -3,6 +3,12 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.11 - 2026-11-28
+
+### Corrections
+- Tablettes et téléphones : le clavier à l'écran pouvait cacher le champ où vous tapiez (par exemple pour activer la synchronisation). Les dialogues se placent maintenant dans l'espace au-dessus du clavier et y défilent, et l'app web se réduit au-dessus du clavier au lieu de passer dessous.
+- Tablettes en paysage (app Android et app web) : le menu ne défilait pas jusqu'à Nouvelle liste, Importer, Notes adhésives et le bas du menu. Sur les écrans bas, tout le menu défile maintenant.
+
 ## 0.4.10 - 2026-11-28
 
 ### Corrections

@@ -3,6 +3,12 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.11 - 2026-11-28
+
+### Behoben
+- Tablets und Smartphones: Die Bildschirmtastatur konnte das Feld verdecken, in das du tippst (zum Beispiel beim Einschalten der Synchronisierung). Dialoge rücken jetzt in den Platz über der Tastatur und lassen sich dort scrollen, und die Web-App verkleinert sich über der Tastatur, statt dahinter zu verschwinden.
+- Tablets im Querformat (Android-App und Web-App): Das Menü ließ sich nicht bis zu „Neue Liste“, Import, Haftnotizen und dem unteren Ende scrollen. Auf niedrigen Bildschirmen scrollt jetzt das ganze Menü.
+
 ## 0.4.10 - 2026-11-28
 
 ### Behoben
