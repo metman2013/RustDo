@@ -10,6 +10,15 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.9 - 2026-11-28
+
+### Improved
+- The ≡ handle for dragging tasks now shows on phones and tablets whatever the sort order; moving a task switches to "My order" by itself.
+- After you add a task, its "Add a subtask" box opens right under it (not at the top of the list). Add another task and the box moves to that one; ✖ closes it.
+
+### Fixed
+- A list's page now shows the same icon as in the menu (🏠 for Tasks, 👥 for shared lists, 📋 for your own lists, 📚 for All), instead of ☰, which looked like the menu button.
+
 ## 0.4.8 - 2026-11-27
 
 ### Fixed

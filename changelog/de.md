@@ -3,6 +3,15 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.9 - 2026-11-28
+
+### Verbessert
+- Der ≡-Griff zum Ziehen von Aufgaben erscheint auf Smartphones und Tablets jetzt bei jeder Sortierung; beim Verschieben wechselt die Liste von selbst zu „Meine Reihenfolge“.
+- Nach dem Hinzufügen einer Aufgabe öffnet sich ihr Feld „Unteraufgabe hinzufügen“ direkt darunter (nicht oben in der Liste). Fügst du eine weitere Aufgabe hinzu, wandert das Feld dorthin; ✖ schließt es.
+
+### Behoben
+- Die Seite einer Liste zeigt jetzt dasselbe Symbol wie im Menü (🏠 für Aufgaben, 👥 für geteilte Listen, 📋 für eigene Listen, 📚 für Alle) statt ☰, das wie die Menü-Schaltfläche aussah.
+
 ## 0.4.8 - 2026-11-27
 
 ### Behoben

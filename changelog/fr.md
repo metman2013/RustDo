@@ -3,6 +3,15 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.9 - 2026-11-28
+
+### Améliorations
+- La poignée ≡ pour déplacer les tâches s'affiche maintenant sur téléphones et tablettes quel que soit le tri ; déplacer une tâche passe tout seul en « Mon ordre ».
+- Après l'ajout d'une tâche, son champ « Ajouter une sous-tâche » s'ouvre juste en dessous (et non en haut de la liste). Ajoutez une autre tâche et le champ passe à celle-ci ; ✖ le ferme.
+
+### Corrections
+- La page d'une liste affiche maintenant la même icône que dans le menu (🏠 pour Tâches, 👥 pour les listes partagées, 📋 pour vos listes, 📚 pour Tout) au lieu de ☰, qui ressemblait au bouton du menu.
+
 ## 0.4.8 - 2026-11-27
 
 ### Corrections

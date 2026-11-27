@@ -3,6 +3,15 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.9 - 2026-11-28
+
+### Mejoras
+- El asa ≡ para arrastrar tareas aparece ahora en teléfonos y tabletas con cualquier orden; al mover una tarea, la lista pasa sola a «Mi orden».
+- Al añadir una tarea, su cuadro «Añadir una subtarea» se abre justo debajo (no arriba de la lista). Si añades otra tarea, el cuadro pasa a esa; ✖ lo cierra.
+
+### Correcciones
+- La página de una lista muestra ahora el mismo icono que en el menú (🏠 para Tareas, 👥 para listas compartidas, 📋 para tus listas, 📚 para Todas) en lugar de ☰, que parecía el botón del menú.
+
 ## 0.4.8 - 2026-11-27
 
 ### Correcciones
