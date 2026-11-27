@@ -3,6 +3,21 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.7 - 2026-11-27
+
+### Nouveautés
+- Rangez vos tâches dans votre propre ordre : faites glisser une tâche vers le haut ou le bas (ou clic droit ou appui long › Monter, Descendre, Placer en haut). Le tri passe au nouveau « Mon ordre », synchronisé avec vos autres appareils et les listes partagées.
+- Sur téléphones et tablettes, les notes adhésives ont des boutons + / 🎨 / 🗑 plus grands, faciles à toucher.
+- RustDo pour Linux sur ARM64 (Raspberry Pi de bureau, portables ARM) : .deb, .rpm, AppImage et .tar.gz.
+- RustDo Hub pour Linux sans Docker : téléchargements prêts à l'emploi pour PC (x86_64) et Raspberry Pi (arm64), et un script d'installation qui configure le hub comme service lancé au démarrage de l'ordinateur.
+- RustDo pour Linux existe aussi en .rpm (Fedora, openSUSE) et en .tar.gz pour toute distribution, avec un script d'installation qui ajoute RustDo au menu des applications.
+- Installation pas à pas de RustDo Hub sur un NAS Synology (Container Manager), dans le guide du hub et dans « Comment fonctionnent la synchronisation et le partage » de RustDo.
+
+### Corrections
+- App web sur téléphones et tablettes Android : les lettres pouvaient paraître irrégulières, certaines coupées ou décalées (la puce graphique dessinait le texte avec trop peu de précision). Le texte est maintenant dessiné en pleine précision et reste aussi net que dans l'app Android.
+- Android : dans Paramètres › Fond, le bouton « + Image… » manquait, donc impossible d'utiliser vos propres photos. Il est là maintenant et ouvre le sélecteur de photos de RustDo.
+- Le texte est plus lisible sur les images de fond : les dates, les indications et les autres textes discrets ne se fondent plus dans l'image, en thème sombre comme en thème clair.
+
 ## 0.4.6 - 2026-11-27
 
 ### Nouveautés

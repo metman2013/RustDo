@@ -74,6 +74,8 @@ enum Action {
     ToggleMyDay(Uuid),
     Select(Uuid),
     Delete(Uuid),
+    /// Move a task in "My order": (the open tasks as shown, the task, its new place).
+    MoveTask(Vec<Uuid>, Uuid, usize),
 }
 
 enum AlertAction {
@@ -1105,6 +1107,17 @@ impl TodoApp {
             let p = v.panel_fill;
             v.panel_fill = Color32::TRANSPARENT;
             v.faint_bg_color = Color32::from_rgba_unmultiplied(p.r(), p.g(), p.b(), 220);
+            // Text stays readable over any picture: normal text gets full contrast, and
+            // faint text (dates, hints), which egui fades towards this colour, stays
+            // clearly lighter (dark theme) or darker (light theme) than the picture.
+            let w = &mut v.widgets.noninteractive;
+            if dark {
+                w.fg_stroke.color = Color32::from_gray(235);
+                w.weak_bg_fill = Color32::from_gray(150);
+            } else {
+                w.fg_stroke.color = Color32::from_gray(15);
+                w.weak_bg_fill = Color32::from_gray(110);
+            }
         }
         ctx.set_visuals(v);
     }
@@ -1305,7 +1318,7 @@ impl TodoApp {
                     });
                 }
             }
-            if CAN_IMPORT_FILE && ui.add(egui::Button::new(tr("+ Picture…")).min_size(size)).on_hover_text(tr("Use your own picture (JPG or PNG)")).clicked() {
+            if (CAN_IMPORT_FILE || cfg!(target_os = "android")) && ui.add(egui::Button::new(tr("+ Picture…")).min_size(size)).on_hover_text(tr("Use your own picture (JPG or PNG)")).clicked() {
                 pick = true;
             }
         });
@@ -2532,13 +2545,18 @@ impl TodoApp {
                 ui.label(RichText::new(tr("On Windows")).strong());
                 para(ui, tr("Download RustDo-Hub-<version>-windows.exe from the RustDo releases page and run it. It shows the hub's address, e.g. http://192.168.1.20:7979. When Windows Firewall asks, allow it on Private networks."));
                 ui.hyperlink_to(tr("RustDo releases"), releases);
-                ui.label(RichText::new(tr("With Docker (Synology and other NAS, Raspberry Pi, Linux)")).strong());
+                ui.label(RichText::new(tr("With Docker (NAS, Raspberry Pi, Linux)")).strong());
                 let cmd = "docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest";
                 ui.add(egui::Label::new(RichText::new(cmd).monospace().small()).wrap());
                 if ui.small_button(tr("📋 Copy command")).clicked() {
                     ui.ctx().copy_text(cmd.to_string());
                 }
                 para(ui, tr("The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979."));
+                ui.label(RichText::new(tr("On a Synology NAS")).strong());
+                para(ui, tr("In Container Manager, create a Project with the RustDo Hub compose file. The full guide has the steps, the firewall setting and how to update it."));
+                ui.hyperlink_to(tr("Synology steps"), format!("{}#synology-nas", hub_docs()));
+                ui.label(RichText::new(tr("On Linux without Docker")).strong());
+                para(ui, tr("Download RustDo-Hub-<version>-linux-x86_64 (or -linux-arm64 for a Raspberry Pi), rustdo-hub.service and install-linux.sh from the releases page into one folder, then run: sudo sh install-linux.sh. The hub then starts with the computer."));
 
                 step(ui, "2", tr("Sync your own devices"));
                 para(ui, tr("On your first device: Settings, Sync my devices, Turn on sync. Enter the hub's address and choose \"This is my first device\". RustDo shows a sync key."));
@@ -2623,7 +2641,7 @@ impl TodoApp {
                     tr("For phones and tablets: download the APK and open it. Android asks once to allow installing apps from your browser."),
                     &[(tr("Download the APK").to_string(), apk)],
                 );
-                row(ui, "Linux", tr("A .deb package (Debian, Ubuntu, Mint) or an AppImage for any distribution."), &[(tr("Downloads").to_string(), release.clone())]);
+                row(ui, "Linux", tr("A .deb (Debian, Ubuntu, Mint), an .rpm (Fedora, openSUSE), or for any distribution an AppImage or a .tar.gz with an install script."), &[(tr("Downloads").to_string(), release.clone())]);
                 row(
                     ui,
                     tr("Web app"),
@@ -2633,7 +2651,7 @@ impl TodoApp {
                 row(
                     ui,
                     "RustDo Hub",
-                    tr("Your own small server for sharing lists and syncing your devices: Docker, Windows or a Home Assistant app."),
+                    tr("Your own small server for sharing lists and syncing your devices: Docker, Synology, Linux, Windows or a Home Assistant app."),
                     &[(tr("How to set it up").to_string(), hub)],
                 );
             });
@@ -3027,6 +3045,9 @@ impl TodoApp {
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
+            Action::MoveTask(shown, id, to) => {
+                self.dirty |= self.store.move_task(&shown, id, to);
+            }
             Action::ToggleExpand(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
@@ -3550,7 +3571,24 @@ impl TodoApp {
                     self.show_nav = true;
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
-                ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                // Long list names are shortened (…) so the buttons beside them always fit
+                // without running into each other.
+                let buttons = match (narrow, touch) {
+                    (true, true) => 170.0,
+                    (true, false) => 140.0,
+                    (false, _) => 320.0,
+                };
+                let title_w = (ui.available_width() - buttons).max(60.0);
+                let label = egui::Label::new(RichText::new(format!("{icon}  {title}")).size(size).strong()).truncate();
+                let galley_w = {
+                    let text = egui::WidgetText::from(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                    text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x
+                };
+                if galley_w <= title_w {
+                    ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                } else {
+                    ui.add_sized(Vec2::new(title_w, size * 1.4), label);
+                }
                 if !searching && self.view != View::Completed {
                     // Phones: just the icon (the header is narrow); wider screens: say what it does.
                     let show = if narrow {
@@ -3640,12 +3678,13 @@ impl TodoApp {
             let scroll = egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                 let expanded = &self.expanded;
                 let step_inputs = &mut self.step_inputs;
-                let mut row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>| {
+                let mut row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>, order: Option<&[Uuid]>| {
                     let open = expanded.contains(&t.id);
-                    task_row(ui, store, t, view, show_list, selected == Some(t.id), today, open, actions);
+                    let r = task_row(ui, store, t, view, show_list, selected == Some(t.id), today, open, actions, order);
                     if open {
                         subtask_rows(ui, t, step_inputs.entry(t.id).or_default(), actions);
                     }
+                    r
                 };
 
                 if searching {
@@ -3657,7 +3696,7 @@ impl TodoApp {
                         empty_state(ui, "🔍", tr("No matching tasks."));
                     }
                     for t in found {
-                        row(ui, t, &mut actions);
+                        row(ui, t, &mut actions, None);
                     }
                     return;
                 }
@@ -3669,7 +3708,7 @@ impl TodoApp {
                         empty_state(ui, "✔", tr("Completed tasks will show up here."));
                     }
                     for t in done {
-                        row(ui, t, &mut actions);
+                        row(ui, t, &mut actions, None);
                     }
                     return;
                 }
@@ -3711,13 +3750,43 @@ impl TodoApp {
                         group.sort_by_key(|t| (t.planned_date(), !t.important));
                         section_header(ui, bucket.label(), group.len());
                         for t in group {
-                            row(ui, t, &mut actions);
+                            row(ui, t, &mut actions, None);
                         }
                     }
                 } else {
                     sort_tasks(&mut open, sort);
+                    // "My order": drag a task (desktop) or use Move up / down in its menu.
+                    let ids: Vec<Uuid> = open.iter().map(|t| t.id).collect();
+                    let drag_id = Id::new(("task_drag", view));
+                    let mut rects: Vec<(Uuid, Rect)> = Vec::new();
                     for t in open {
-                        row(ui, t, &mut actions);
+                        let r = row(ui, t, &mut actions, Some(&ids));
+                        if r.drag_started() && !touch {
+                            ui.ctx().data_mut(|d| d.insert_temp(drag_id, t.id));
+                        }
+                        rects.push((t.id, r.rect));
+                    }
+                    let dragged: Option<Uuid> = ui.ctx().data(|d| d.get_temp(drag_id));
+                    if let Some(dragged) = dragged {
+                        let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
+                        match pointer {
+                            Some(pos) if ids.contains(&dragged) => {
+                                let others: Vec<&(Uuid, Rect)> = rects.iter().filter(|(id, _)| *id != dragged).collect();
+                                let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
+                                let y = match others.get(to) {
+                                    Some((_, r)) => r.top() - 1.0,
+                                    None => others.last().map_or(pos.y, |(_, r)| r.bottom() + 1.0),
+                                };
+                                ui.painter().hline(ui.min_rect().x_range(), y, Stroke::new(2.0_f32, ACCENT));
+                                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                if released {
+                                    actions.push(Action::MoveTask(ids.clone(), dragged, to));
+                                    ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
+                                }
+                            }
+                            _ if released => ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id)),
+                            _ => {}
+                        }
                     }
                 }
 
@@ -3731,7 +3800,7 @@ impl TodoApp {
                     .default_open(false)
                     .show(ui, |ui| {
                         for t in done {
-                            row(ui, t, &mut actions);
+                            row(ui, t, &mut actions, None);
                         }
                     });
                 }
@@ -4585,7 +4654,7 @@ impl eframe::App for TodoApp {
 const TOUCH_ID: &str = "rustdo_touch_mode";
 
 /// Whether the finger-friendly layout is on (readable from any drawing function).
-fn is_touch(ui: &egui::Ui) -> bool {
+pub(crate) fn is_touch(ui: &egui::Ui) -> bool {
     ui.ctx().data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
 }
 
@@ -4896,7 +4965,8 @@ fn task_row(
     today: NaiveDate,
     expanded: bool,
     actions: &mut Vec<Action>,
-) {
+    order: Option<&[Uuid]>,
+) -> egui::Response {
     let vis = ui.visuals().clone();
     let weak = vis.weak_text_color();
 
@@ -4943,7 +5013,10 @@ fn task_row(
         (42.0, 52.0, 14.5, 11.5, 24.0, 9.5, 22.0, 44.0)
     };
     let height = if meta.is_empty() { h_one } else { h_two };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    // Desktop: open tasks can be dragged to arrange them ("My order"); on touch, dragging
+    // scrolls, and the task's menu has Move up / down instead.
+    let sense = if order.is_some() && !touch { Sense::click_and_drag() } else { Sense::click() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     let bg = if selected {
         vis.selection.bg_fill.gamma_multiply(0.35)
     } else if resp.hovered() {
@@ -5042,12 +5115,28 @@ fn task_row(
             actions.push(Action::ToggleDone(t.id));
             ui.close_menu();
         }
+        if let Some(ids) = order {
+            if let Some(i) = ids.iter().position(|x| *x == t.id) {
+                ui.separator();
+                for (show, label, to) in [
+                    (i > 0, tr("⬆  Move up"), i.saturating_sub(1)),
+                    (i + 1 < ids.len(), tr("⬇  Move down"), i + 1),
+                    (i > 1, tr("⬆  Move to top"), 0),
+                ] {
+                    if show && ui.button(label).on_hover_text(tr("Switches the list to “My order”")).clicked() {
+                        actions.push(Action::MoveTask(ids.to_vec(), t.id, to));
+                        ui.close_menu();
+                    }
+                }
+            }
+        }
         ui.separator();
         if ui.button(RichText::new(tr("🗑  Delete task")).color(DANGER)).clicked() {
             actions.push(Action::Delete(t.id));
             ui.close_menu();
         }
     });
+    resp
 }
 
 /// Version, system, paths and the end of each log: what's needed to look into a problem.

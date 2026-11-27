@@ -1085,8 +1085,6 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "910906e3f042ea6d2378ec12a6fd07698e14ddae68aed2d819ffe944a73aab9e"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -3074,7 +3072,7 @@ dependencies = [
 
 [[package]]
 name = "rustdo"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "android_logger",
  "base64",

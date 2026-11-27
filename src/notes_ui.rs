@@ -784,6 +784,8 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
 /// phone screen would fight with scrolling).
 const WALL_MIN_WIDTH: f32 = 560.0;
 const WALL_HEADER_H: f32 = 28.0;
+/// The top bar on touch screens: room for finger-sized buttons.
+const WALL_HEADER_TOUCH_H: f32 = 44.0;
 
 /// The web app's Sticky notes page: the notes themselves, on a wall you can arrange.
 fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
@@ -879,7 +881,7 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("📝").size(40.0));
-            let verb = if crate::platform::IS_MOBILE_OR_WEB && cfg!(target_os = "android") { tr("Tap") } else { tr("Click") };
+            let verb = if crate::app::is_touch(ui) { tr("Tap") } else { tr("Click") };
             ui.add(egui::Label::new(RichText::new(trf("No sticky notes yet. {verb} “+ New note” to add one.", &[("verb", &verb)])).weak()).wrap());
         });
         return page_action;
@@ -1012,7 +1014,9 @@ fn wall_card(
     let radius = CornerRadius::same(6);
     ui.painter().rect_filled(rect.translate(Vec2::new(2.0, 3.0)), radius, Color32::from_black_alpha(60));
     ui.painter().rect_filled(rect, radius, bg);
-    let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), WALL_HEADER_H));
+    let touch = crate::app::is_touch(ui);
+    let header_h = if touch { WALL_HEADER_TOUCH_H } else { WALL_HEADER_H };
+    let bar = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), header_h));
     paint_picture(ui, note, egui::Rect::from_min_max(bar.left_bottom(), rect.max), CornerRadius { nw: 0, ne: 0, sw: 6, se: 6 });
     ui.painter().rect_filled(bar, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, header);
 
@@ -1045,15 +1049,20 @@ fn wall_card(
     let mut bar_ui = card.new_child(
         UiBuilder::new().max_rect(bar.shrink2(Vec2::new(4.0, 1.0))).layout(Layout::left_to_right(Align::Center)),
     );
-    if bar_ui.add(egui::Button::new(RichText::new("+").size(17.0).color(ink)).frame(false)).on_hover_text(tr("New note")).clicked() {
+    // Touch: bigger icons with finger-sized (44 pt) tap areas.
+    let (icon_size, plus_size, tap) = if touch { (22.0, 26.0, Vec2::new(44.0, 40.0)) } else { (14.0, 17.0, Vec2::ZERO) };
+    if bar_ui.add(egui::Button::new(RichText::new("+").size(plus_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("New note")).clicked() {
         action = Some(WallAction::New);
     }
     bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        if ui.add(egui::Button::new(RichText::new("🗑").color(ink)).frame(false)).on_hover_text(tr("Delete note")).clicked() {
+        if ui.add(egui::Button::new(RichText::new("🗑").size(icon_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("Delete note")).clicked() {
             action = Some(WallAction::AskDelete);
         }
         let mut menu_action = NoteAction::None;
-        ui.menu_button(RichText::new("🎨").color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
+        if touch {
+            ui.spacing_mut().button_padding = Vec2::new(10.0, 6.0);
+        }
+        ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
             .response
             .on_hover_text(tr("Colour and text"));
         if matches!(menu_action, NoteAction::AskDelete) {
@@ -1061,7 +1070,7 @@ fn wall_card(
         }
     });
 
-    let body = egui::Rect::from_min_max(rect.min + Vec2::new(0.0, WALL_HEADER_H), rect.max);
+    let body = egui::Rect::from_min_max(rect.min + Vec2::new(0.0, header_h), rect.max);
     let mut body_ui = card.new_child(UiBuilder::new().max_rect(body.shrink(10.0)).layout(Layout::top_down(Align::Min)));
     if confirming {
         body_ui.label(RichText::new(tr("Delete this note?")).strong().size(16.0));

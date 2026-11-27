@@ -65,10 +65,13 @@ pub enum SortMode {
     DueDate,
     Alphabetical,
     Importance,
+    /// Your own order: drag tasks (or Move up / down) to arrange them.
+    Manual,
 }
 
 impl SortMode {
-    pub const ALL: [SortMode; 4] = [
+    pub const ALL: [SortMode; 5] = [
+        Self::Manual,
         Self::Created,
         Self::DueDate,
         Self::Alphabetical,
@@ -81,6 +84,7 @@ impl SortMode {
             Self::DueDate => tr("Due date"),
             Self::Alphabetical => tr("Alphabetical"),
             Self::Importance => tr("Importance"),
+            Self::Manual => tr("My order"),
         }
     }
 }
@@ -253,6 +257,13 @@ pub struct Task {
     /// the same export doesn't create duplicates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// Place in "My order" (smaller first; 0 = not placed yet, shown first, newest first).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub position: i64,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 impl Task {
@@ -273,6 +284,7 @@ impl Task {
             created: now,
             completed_at: None,
             source_id: None,
+            position: 0,
         }
     }
 
@@ -454,6 +466,55 @@ impl Store {
         true
     }
 
+    /// Moves a task to place `to` among `shown` (the tasks as they're listed now, the moved
+    /// one included) and switches to "My order". Usually only the moved task changes; the
+    /// shown tasks are numbered first if they aren't in a clear order yet (e.g. the first
+    /// time, or after sorting another way).
+    pub fn move_task(&mut self, shown: &[Uuid], id: Uuid, to: usize) -> bool {
+        const GAP: i64 = 1024;
+        let pos = |store: &Store, id: Uuid| store.task(id).map_or(0, |t| t.position);
+        let Some(from) = shown.iter().position(|x| *x == id) else { return false };
+        let mut order: Vec<Uuid> = shown.to_vec();
+        let ordered = self.settings.sort == SortMode::Manual
+            && order.windows(2).all(|w| pos(self, w[0]) + 1 < pos(self, w[1]));
+        if !ordered {
+            for (i, tid) in order.iter().enumerate() {
+                if let Some(t) = self.task_mut(*tid) {
+                    t.position = (i as i64 + 1) * GAP;
+                }
+            }
+        }
+        self.settings.sort = SortMode::Manual;
+        order.remove(from);
+        let to = to.min(order.len());
+        if to == from && ordered {
+            return false;
+        }
+        let before = to.checked_sub(1).map(|i| pos(self, order[i]));
+        let after = order.get(to).map(|t| pos(self, *t));
+        let new = match (before, after) {
+            (Some(b), Some(a)) if a - b >= 2 => b + (a - b) / 2,
+            (Some(_), Some(_)) => {
+                // No room left between them: number everything again, then place it.
+                order.insert(to, id);
+                for (i, tid) in order.iter().enumerate() {
+                    if let Some(t) = self.task_mut(*tid) {
+                        t.position = (i as i64 + 1) * GAP;
+                    }
+                }
+                return true;
+            }
+            (Some(b), None) => b + GAP,
+            (None, Some(a)) => a - GAP,
+            (None, None) => GAP,
+        };
+        if let Some(t) = self.task_mut(id) {
+            // 0 means "not placed yet" (new tasks): step past it.
+            t.position = if new == 0 { -1 } else { new };
+        }
+        true
+    }
+
     pub fn rename_list(&mut self, id: Uuid, name: &str) -> bool {
         let name = name.trim();
         match self.lists.iter_mut().find(|l| l.id == id) {
@@ -600,6 +661,7 @@ pub fn sort_tasks(tasks: &mut [&Task], mode: SortMode) {
         SortMode::DueDate => tasks.sort_by_key(|t| (t.due.is_none(), t.due, Reverse(t.created))),
         SortMode::Alphabetical => tasks.sort_by_key(|t| t.title.to_lowercase()),
         SortMode::Importance => tasks.sort_by_key(|t| (!t.important, Reverse(t.created))),
+        SortMode::Manual => tasks.sort_by_key(|t| (t.position, Reverse(t.created))),
     }
 }
 
@@ -693,6 +755,45 @@ mod tests {
         assert_eq!(Recurrence::Monthly.next_after(d(2026, 1, 31)), Some(d(2026, 2, 28)));
         assert_eq!(Recurrence::Yearly.next_after(d(2028, 2, 29)), Some(d(2029, 2, 28)));
         assert_eq!(Recurrence::Never.next_after(d(2026, 1, 1)), None);
+    }
+
+    #[test]
+    fn move_task_keeps_my_order() {
+        let now = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap().and_hms_opt(9, 0, 0).unwrap();
+        let mut s = Store::new();
+        let list = s.default_list;
+        let ids: Vec<Uuid> = (0..4).map(|i| s.add_task(&format!("t{i}"), View::List(list), now + chrono::Duration::minutes(i)).unwrap()).collect();
+        let shown = |s: &Store| {
+            let mut v: Vec<&Task> = s.tasks.iter().collect();
+            sort_tasks(&mut v, s.settings.sort);
+            v.iter().map(|t| t.id).collect::<Vec<_>>()
+        };
+        // Newest first to start with: t3 t2 t1 t0. Move t0 to the top.
+        let before = shown(&s);
+        assert_eq!(before, [ids[3], ids[2], ids[1], ids[0]]);
+        assert!(s.move_task(&before, ids[0], 0));
+        assert_eq!(s.settings.sort, SortMode::Manual);
+        assert_eq!(shown(&s), [ids[0], ids[3], ids[2], ids[1]]);
+        // Then t1 between t0 and t3: only t1 changes.
+        let before = shown(&s);
+        let others: Vec<i64> = [ids[0], ids[3], ids[2]].iter().map(|id| s.task(*id).unwrap().position).collect();
+        assert!(s.move_task(&before, ids[1], 1));
+        assert_eq!(shown(&s), [ids[0], ids[1], ids[3], ids[2]]);
+        let after: Vec<i64> = [ids[0], ids[3], ids[2]].iter().map(|id| s.task(*id).unwrap().position).collect();
+        assert_eq!(others, after);
+        // Down to the end, and a new task shows first.
+        let before = shown(&s);
+        assert!(s.move_task(&before, ids[0], 3));
+        assert_eq!(shown(&s), [ids[1], ids[3], ids[2], ids[0]]);
+        let new = s.add_task("new", View::List(list), now + chrono::Duration::hours(1)).unwrap();
+        assert_eq!(shown(&s)[0], new);
+        // Squeeze many moves into the same gap: still correct.
+        for _ in 0..30 {
+            let before = shown(&s);
+            let last = *before.last().unwrap();
+            assert!(s.move_task(&before, last, 1));
+            assert_eq!(shown(&s)[1], last);
+        }
     }
 
     #[test]

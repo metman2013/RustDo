@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.4.6"
+version = "0.4.7"
 
 [package]
 name = "rustdo"
@@ -121,8 +121,23 @@ assets = [
     ["README.md", "usr/share/doc/rustdo/", "644"],
 ]
 
+# Fedora / openSUSE / RHEL package (cargo generate-rpm, in CI).
+[package.metadata.generate-rpm]
+name = "rustdo"
+summary = "A fast, private to-do app"
+assets = [
+    { source = "target/release/rustdo", dest = "/usr/bin/rustdo", mode = "755" },
+    { source = "assets/rustdo.desktop", dest = "/usr/share/applications/rustdo.desktop", mode = "644" },
+    { source = "assets/rustdo.png", dest = "/usr/share/icons/hicolor/512x512/apps/rustdo.png", mode = "644" },
+    { source = "README.md", dest = "/usr/share/doc/rustdo/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/rustdo/LICENSE", mode = "644", doc = true },
+]
+
 # egui-winit with one change: Android's back button reaches the app (as Escape), so back
 # steps through RustDo instead of being dropped. See vendor/egui-winit/src/lib.rs
 # ("RustDo:"). Drop this when egui maps the back key itself.
 [patch.crates-io]
 egui-winit = { path = "vendor/egui-winit" }
+# egui_glow with high-precision shaders (crisp letters on mobile GPUs; see
+# vendor/egui_glow/src/shader/vertex.glsl).
+egui_glow = { path = "vendor/egui_glow" }

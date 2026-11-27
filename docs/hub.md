@@ -20,6 +20,8 @@ Pick one machine that's usually on. You only need one hub for the whole family.
 
 ### Docker (NAS, home server, Raspberry Pi, any Linux box)
 
+On a Synology NAS, see [Synology NAS](#synology-nas) for the steps in DSM.
+
 ```bash
 docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest
 ```
@@ -65,11 +67,78 @@ Shared lists are stored in `%APPDATA%\RustDo Hub\hub.json`.
 shortcut to the exe in that folder. In the shortcut's properties, set **Run** to
 *Minimized*.
 
+### Synology NAS
+
+On models with **Container Manager** (DSM 7.2; called **Docker** on DSM 7.0/7.1):
+
+1. In **File Station**, create a folder `docker/rustdo-hub` (in the `docker` shared folder;
+   create that shared folder first if it isn't there).
+2. Open **Container Manager › Project › Create**. Name it `rustdo-hub`, set the path to
+   `docker/rustdo-hub`, choose **Create docker-compose.yml**, and paste:
+
+   ```yaml
+   services:
+     rustdo-hub:
+       image: ghcr.io/metman2013/rustdo-hub:latest
+       container_name: rustdo-hub
+       restart: unless-stopped
+       init: true
+       ports:
+         - "7979:7979"
+       volumes:
+         - ./data:/data
+   ```
+3. Press **Next**, then **Done**. Container Manager downloads the hub and starts it.
+4. In RustDo, use your NAS's address with port 7979, for example `http://192.168.1.10:7979`
+   (or `http://<nas-name>.local:7979`).
+
+- Your lists are in `docker/rustdo-hub/data` (`hub.json`, plus a backup each day in
+  `backups`). Include that folder in Hyper Backup.
+- If the Synology firewall is on: **Control Panel › Security › Firewall › Edit Rules** and
+  allow TCP port 7979 from your local network.
+- **Update:** Container Manager › Project › rustdo-hub › **Action › Build** pulls the newest
+  image and restarts it (on older DSM: stop the project, **Image** › update, start it again).
+- **Use it away from home** with Synology's reverse proxy and your own subdomain: see
+  [Your own subdomain behind a reverse proxy](#your-own-subdomain-behind-a-reverse-proxy).
+
+**No Container Manager** (some ARM "j" and value models)? Download
+`RustDo-Hub-<version>-linux-arm64` (or `-linux-x86_64`) to a shared folder, e.g.
+`/volume1/rustdo-hub/`, then **Control Panel › Task Scheduler › Create › Triggered Task ›
+User-defined script**, event **Boot-up**, user **root**, with the script:
+
+```sh
+cd /volume1/rustdo-hub && chmod +x RustDo-Hub-*-linux-* && ./RustDo-Hub-*-linux-* --data /volume1/rustdo-hub/data >> hub.log 2>&1 &
+```
+
+Run the task once by hand (**Run**) to start it now. To update, replace the file with the
+newer one (keep just one `RustDo-Hub-…` file in the folder) and restart the NAS or run the
+task again after stopping the old hub. Older 32-bit ARM models aren't supported.
+
 ### Linux (without Docker)
 
-Build it with `cargo build --release` in the `hub/` folder, then run
-`hub/target/release/rustdo-hub`. Shared lists are stored in `./data`. You can change
-that with `--data <folder>`, and the port with `--port <n>`.
+Ready-made downloads on the [Releases page](https://github.com/metman2013/RustDo/releases):
+`RustDo-Hub-<version>-linux-x86_64` (PCs, most servers) and
+`RustDo-Hub-<version>-linux-arm64` (Raspberry Pi 4/5 with a 64-bit OS, ARM boards). They're
+single files that run on any distribution: nothing else to install.
+
+**As a service that starts with the computer** (systemd: Debian, Ubuntu, Raspberry Pi OS,
+Fedora, Arch, …): download your `RustDo-Hub-…-linux-…` file, `rustdo-hub.service` and
+`install-linux.sh` into one folder, then in that folder:
+
+```bash
+sudo sh install-linux.sh
+```
+
+It installs the hub to `/usr/local/bin`, starts it, and prints the hub address to use in
+RustDo. Lists are kept in `/var/lib/rustdo-hub`. To update, download the newer
+`RustDo-Hub-…` file into the same folder and run the script again.
+
+- Status: `systemctl status rustdo-hub` · Logs: `journalctl -u rustdo-hub`
+- With a firewall (ufw): `sudo ufw allow 7979/tcp`
+
+**Just try it:** `chmod +x RustDo-Hub-*-linux-*` then `./RustDo-Hub-<version>-linux-x86_64`.
+Lists are stored in `./data`; change that with `--data <folder>` and the port with
+`--port <n>`. Or build it from source with `cargo build --release` in the `hub/` folder.
 
 ## 2. Sync your own devices
 

@@ -1,0 +1,23 @@
+# RustDo Hub as a systemd service (Linux without Docker). install-linux.sh sets this up;
+# by hand: copy the binary to /usr/local/bin/rustdo-hub, this file to
+# /etc/systemd/system/, then: sudo systemctl enable --now rustdo-hub
+[Unit]
+Description=RustDo Hub (list sharing and device sync for RustDo)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/rustdo-hub --data /var/lib/rustdo-hub --port 7979
+# A system user made just for the hub; systemd creates /var/lib/rustdo-hub for it.
+DynamicUser=yes
+StateDirectory=rustdo-hub
+Restart=on-failure
+RestartSec=5
+# The hub only needs its data folder and the network.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
