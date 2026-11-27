@@ -3,6 +3,22 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.9 - 2026-11-28
+
+### Verbessert
+- Smartphones: Ziehe Haftnotizen am ≡-Griff in deine eigene Reihenfolge. Sie wird mit deinen anderen Smartphones abgeglichen (auf breiteren Bildschirmen platzierst du Notizen weiter frei auf der Pinnwand).
+- Ziehst du eine Aufgabe oder Notiz an den oberen oder unteren Bildschirmrand, scrollt die Liste mit, sodass sie überallhin in einer langen Liste kann.
+- Windows und Linux: Das RustDo-Symbol im Infobereich erscheint jetzt immer, wenn RustDo im Hintergrund läuft, auch wenn es nur für Erinnerungen da ist. Sein Menü hat „RustDo vollständig beenden“, das auch das Fenster schließt.
+- Windows: Unter Einstellungen › Hintergrund gibt es „Auch erinnern, wenn RustDo geschlossen ist“. Schaltest du das und die Haftnotizen im Hintergrund aus, beendet das Schließen RustDo vollständig.
+- Wenn du das Fenster zum ersten Mal schließt, während RustDo im Infobereich weiterläuft, sagt es dir das, mit einer Schaltfläche, um stattdessen vollständig zu beenden. Auch unter Einstellungen › Hintergrund gibt es „RustDo vollständig beenden“.
+- Version aus dem Microsoft Store: Solange das Fenster geschlossen ist, installiert RustDo ein wartendes Store-Update selbst und startet danach wieder, statt das Update im Infobereich aufzuhalten.
+- Der ≡-Griff zum Ziehen von Aufgaben erscheint auf Smartphones und Tablets jetzt bei jeder Sortierung; beim Verschieben wechselt die Liste von selbst zu „Meine Reihenfolge“.
+- Nach dem Hinzufügen einer Aufgabe öffnet sich ihr Feld „Unteraufgabe hinzufügen“ direkt darunter (nicht oben in der Liste). Fügst du eine weitere Aufgabe hinzu, wandert das Feld dorthin; ✖ schließt es.
+
+### Behoben
+- Die Seite einer Liste zeigt jetzt dasselbe Symbol wie im Menü (🏠 für Aufgaben, 👥 für geteilte Listen, 📋 für eigene Listen, 📚 für Alle) statt ☰, das wie die Menü-Schaltfläche aussah.
+- Smartphones und Tablets: Eine Aufgabe oben in der Liste am ≡-Griff nach unten zu ziehen, löste „Zum Aktualisieren ziehen“ aus, statt die Aufgabe zu verschieben.
+
 ## 0.4.8 - 2026-11-27
 
 ### Behoben

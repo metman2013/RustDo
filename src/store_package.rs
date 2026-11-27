@@ -94,3 +94,44 @@ pub fn set_startup_task(on: bool) -> bool {
         false
     }
 }
+
+/// Store package: if the Store has an update for RustDo waiting, installs it now, quietly.
+/// Windows closes RustDo to do it, and starts the background companion again afterwards
+/// (it asks to be restarted first). Called by the companion only while the main window is
+/// closed, so nobody is interrupted. Returns whether an update was found.
+///
+/// Without this, a running companion holds the update back until it's quit or the PC
+/// restarts. Errors (offline, auto-updates turned off in the Store) just leave things as
+/// they are.
+pub fn install_waiting_update() -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        use windows::core::HSTRING;
+        use windows::Services::Store::StoreContext;
+        use windows::Win32::System::Recovery::{RegisterApplicationRestart, RESTART_NO_CRASH, RESTART_NO_HANG, RESTART_NO_REBOOT};
+        if !is_packaged() {
+            return Ok(false);
+        }
+        let e = |e: windows::core::Error| e.message().to_string();
+        let store = StoreContext::GetDefault().map_err(e)?;
+        let updates = store.GetAppAndOptionalStorePackageUpdatesAsync().and_then(|op| op.get()).map_err(e)?;
+        if updates.Size().map_err(e)? == 0 {
+            return Ok(false);
+        }
+        if !store.CanSilentlyDownloadStorePackageUpdates().unwrap_or(false) {
+            log::info!(target: "rustdo", "a Store update is waiting, but Windows doesn't allow installing it quietly now");
+            return Ok(true);
+        }
+        // Come back after the update (not after a crash, hang or reboot: sign-in does that).
+        let restart = unsafe { RegisterApplicationRestart(&HSTRING::from("--companion"), RESTART_NO_CRASH | RESTART_NO_HANG | RESTART_NO_REBOOT) };
+        if let Err(err) = restart {
+            log::warn!(target: "rustdo", "couldn't ask to be restarted after the update: {err}");
+        }
+        log::info!(target: "rustdo", "installing a waiting Store update");
+        let result = store.TrySilentDownloadAndInstallStorePackageUpdatesAsync(&updates).and_then(|op| op.get()).map_err(e)?;
+        log::info!(target: "rustdo", "Store update finished: {:?}", result.OverallState());
+        Ok(true)
+    }
+    #[cfg(not(windows))]
+    Ok(false)
+}

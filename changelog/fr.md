@@ -3,6 +3,22 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.9 - 2026-11-28
+
+### Améliorations
+- Téléphones : rangez les notes adhésives dans votre ordre avec la poignée ≡ de chaque note. L'ordre est synchronisé avec vos autres téléphones (sur les écrans plus larges, les notes se placent toujours librement sur le mur).
+- Quand vous faites glisser une tâche ou une note près du haut ou du bas de l'écran, la liste défile avec, pour l'amener n'importe où dans une longue liste.
+- Windows et Linux : l'icône RustDo de la zone de notification s'affiche désormais dès que RustDo tourne en arrière-plan, même seulement pour les rappels. Son menu propose « Quitter complètement RustDo », qui ferme aussi la fenêtre.
+- Windows : Paramètres › Arrière-plan propose « Me rappeler même quand RustDo est fermé ». Désactivez-le avec les notes en arrière-plan, et fermer RustDo le ferme complètement.
+- La première fois que vous fermez la fenêtre alors que RustDo reste dans la zone de notification, il vous le signale, avec un bouton pour quitter complètement. Paramètres › Arrière-plan propose aussi « Quitter complètement RustDo ».
+- Version Microsoft Store : tant que la fenêtre est fermée, RustDo installe lui-même une mise à jour Store en attente puis redémarre, au lieu de la bloquer depuis la zone de notification.
+- La poignée ≡ pour déplacer les tâches s'affiche maintenant sur téléphones et tablettes quel que soit le tri ; déplacer une tâche passe tout seul en « Mon ordre ».
+- Après l'ajout d'une tâche, son champ « Ajouter une sous-tâche » s'ouvre juste en dessous (et non en haut de la liste). Ajoutez une autre tâche et le champ passe à celle-ci ; ✖ le ferme.
+
+### Corrections
+- La page d'une liste affiche maintenant la même icône que dans le menu (🏠 pour Tâches, 👥 pour les listes partagées, 📋 pour vos listes, 📚 pour Tout) au lieu de ☰, qui ressemblait au bouton du menu.
+- Téléphones et tablettes : faire glisser une tâche vers le bas par sa poignée ≡ en haut de la liste déclenchait « tirer pour actualiser » au lieu de déplacer la tâche.
+
 ## 0.4.8 - 2026-11-27
 
 ### Corrections

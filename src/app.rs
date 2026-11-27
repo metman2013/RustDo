@@ -43,6 +43,9 @@ const NARROW_WIDTH: f32 = 700.0;
 const NOTES_SECTION_H: f32 = 62.0;
 /// Sidebar room for the footer: version, What's new, Discord.
 const SIDEBAR_FOOTER_H: f32 = 74.0;
+/// Icons for a user's list and for "All" (☰ is the menu button).
+const LIST_ICON: &str = "📋";
+const ALL_ICON: &str = "📚";
 /// Discord's own colour, for the "Join the Discord" button.
 const DISCORD_BLUE: Color32 = Color32::from_rgb(0x58, 0x65, 0xF2);
 
@@ -215,10 +218,8 @@ pub struct TodoApp {
     expanded: std::collections::HashSet<Uuid>,
     /// What's typed in each list "Add a subtask" box (by task).
     step_inputs: std::collections::HashMap<Uuid, String>,
-    /// The task just added from "Add a task", offered for quick subtasks underneath.
+    /// The task just added from "Add a task": its "Add a subtask" box is open under it.
     last_added: Option<(Uuid, View)>,
-    /// What's typed in that quick "subtasks for …" box.
-    quick_step: String,
     renaming_list: Option<(Uuid, String)>,
     /// "Show list": the view whose open tasks are shown full screen, to read or hand over.
     show_list: Option<View>,
@@ -277,6 +278,11 @@ pub struct TodoApp {
     whats_new: Option<Vec<changelog::Release>>,
     /// "Get RustDo for your other devices" is open.
     get_apps: bool,
+    /// Desktop: the one-time "RustDo keeps running in the tray" message (shown instead of
+    /// closing the first time).
+    close_hint: bool,
+    /// Closing for real (quit completely, or after the message): don't ask again.
+    closing: bool,
 }
 
 impl TodoApp {
@@ -380,7 +386,6 @@ impl TodoApp {
             expanded: Default::default(),
             step_inputs: Default::default(),
             last_added: None,
-            quick_step: String::new(),
             renaming_list: None,
             list_drag: None,
             show_list: None,
@@ -420,6 +425,8 @@ impl TodoApp {
             account_notes_seen: None,
             whats_new,
             get_apps: false,
+            close_hint: false,
+            closing: false,
         }
     }
 
@@ -999,12 +1006,65 @@ impl TodoApp {
         self.companion_checked = Some(Instant::now());
         self.companion_running = companion::is_running();
         notes_ui::lock(&self.notes).reload_if_changed();
+        if companion::take_quit_app_request() {
+            // The tray's "Quit RustDo completely".
+            self.closing = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if companion::take_show_app_request() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         ctx.request_repaint_after(StdDuration::from_secs(1));
+    }
+
+    /// Desktop: the first time the window is closed while the background helper keeps
+    /// running, say where RustDo went (the tray) and offer to quit completely.
+    fn close_hint_check(&mut self, ctx: &egui::Context) {
+        if !companion::SUPPORTED || self.closing {
+            return;
+        }
+        let s = &self.store.settings;
+        if ctx.input(|i| i.viewport().close_requested()) && companion::wanted(s) && !s.close_hint_seen {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_hint = true;
+        }
+        if !self.close_hint {
+            return;
+        }
+        let what = if s.companion && companion::reminders_when_closed(s) {
+            tr("Your sticky notes stay on the desktop and reminders keep coming.")
+        } else if s.companion {
+            tr("Your sticky notes stay on the desktop.")
+        } else {
+            tr("Reminders keep coming.")
+        };
+        let mut choice = None;
+        dialog_window(ctx, tr("RustDo keeps running in the tray"), self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 420.0));
+            ui.add(egui::Label::new(what).wrap());
+            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Background.")).wrap());
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.add(egui::Button::new(RichText::new(tr("OK, close the window")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    choice = Some(false);
+                }
+                if ui.button(tr("Quit RustDo completely")).clicked() {
+                    choice = Some(true);
+                }
+            });
+        });
+        if let Some(quit) = choice {
+            self.close_hint = false;
+            self.closing = true;
+            self.store.settings.close_hint_seen = true;
+            self.persist();
+            if quit {
+                companion::request_quit();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     /// Settings › Background (desktop): the companion and its tray icon.
@@ -1022,6 +1082,12 @@ impl TodoApp {
         changed |= ui
             .add_enabled(s.companion, egui::Checkbox::new(&mut s.companion_autostart, sign_in))
             .changed();
+        if cfg!(windows) {
+            changed |= ui
+                .add_enabled(s.notifications, egui::Checkbox::new(&mut s.background_reminders, tr("Remind me even when RustDo is closed")))
+                .on_hover_text(tr("RustDo keeps running in the tray to show reminders."))
+                .changed();
+        }
         let note = if !s.companion {
             tr("Sticky notes show only while RustDo is open.")
         } else if cfg!(windows) {
@@ -1033,6 +1099,11 @@ impl TodoApp {
         if changed {
             self.dirty = true;
             self.helper_handled = false; // start, wake or stop the companion
+        }
+        if self.companion_running && ui.button(tr("Quit RustDo completely")).on_hover_text(tr("Closes this window and the tray icon. RustDo starts again when you open it.")).clicked() {
+            companion::request_quit();
+            self.closing = true;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         ui.separator();
     }
@@ -1235,6 +1306,18 @@ impl TodoApp {
     #[cfg(target_os = "android")]
     fn pick_picture(&mut self, _ctx: &egui::Context, target: PicFor) {
         self.photo_picker = Some(crate::photos::PhotoPicker::new(target));
+    }
+
+    /// A list's icon, the same in the menu and on its page: 👥 shared, 🏠 the default list,
+    /// 📋 any other (not ☰, which is the menu button beside it on phones).
+    fn list_icon(&self, id: Uuid) -> &'static str {
+        if self.store.shares.iter().any(|s| s.list_id == id) {
+            "👥"
+        } else if id == self.store.default_list {
+            "🏠"
+        } else {
+            LIST_ICON
+        }
     }
 
     /// Android: RustDo's own photo picker, while it's open.
@@ -3051,6 +3134,8 @@ impl TodoApp {
             Action::ToggleExpand(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
+                } else if self.last_added.is_some_and(|(last, _)| last == id) {
+                    self.last_added = None;
                 }
             }
             Action::ToggleStep(task, step) => {
@@ -3230,7 +3315,7 @@ impl TodoApp {
                     (View::MyDay, "☀", tr("My Day")),
                     (View::Important, "★", tr("Important")),
                     (View::Planned, "📅", tr("Planned")),
-                    (View::All, "☰", tr("All")),
+                    (View::All, ALL_ICON, tr("All")),
                     (View::Completed, "✔", tr("Completed")),
                 ];
                 for (view, icon, name) in smart {
@@ -3286,7 +3371,7 @@ impl TodoApp {
                             }
                             let count = self.store.open_count(View::List(id), today);
                             let shared = self.store.shares.iter().any(|s| s.list_id == id);
-                            let icon = if shared { "👥" } else if is_default { "🏠" } else { "☰" };
+                            let icon = self.list_icon(id);
                             let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
                             rows.push((id, r.rect));
@@ -3490,67 +3575,6 @@ impl TodoApp {
         });
     }
 
-    /// Under "Add a task": subtasks for the task just added ("Bedroom" then "Put comics
-    /// away"). Enter adds each one and stays in the box for the next.
-    fn quick_subtasks(&mut self, ui: &mut egui::Ui) {
-        let Some((id, view)) = self.last_added else { return };
-        if view != self.view {
-            return; // only under the list it was added in
-        }
-        let Some(title) = self.store.task(id).filter(|t| !t.done).map(|t| t.title.clone()) else {
-            self.last_added = None;
-            return;
-        };
-        let count = self.store.task(id).map_or(0, |t| t.steps.len());
-        let field_id = Id::new("quick_subtask");
-        let mut add = false;
-        let mut enter = false;
-        let mut close = false;
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.add_space(14.0);
-            let label = if count == 0 {
-                trf("Subtasks for “{title}”", &[("title", &title)])
-            } else {
-                trf("Subtasks for “{title}” ({count})", &[("title", &title), ("count", &count)])
-            };
-            ui.add(egui::Label::new(RichText::new(label).weak().small()).truncate());
-        });
-        ui.horizontal(|ui| {
-            ui.add_space(14.0);
-            let has_text = !self.quick_step.trim().is_empty();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                close = small_btn(ui, "✖").on_hover_text(tr("Done adding subtasks")).clicked();
-                add = has_text && ui.button(tr("Add")).clicked();
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.quick_step)
-                        .id(field_id)
-                        .hint_text(tr("+ Add a subtask (Enter after each)"))
-                        .min_size(field_height(ui))
-                        .vertical_align(Align::Center)
-                        .desired_width(ui.available_width()),
-                );
-                enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                if r.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
-                    close = true;
-                }
-            });
-        });
-        if (add || enter) && !self.quick_step.trim().is_empty() {
-            let text = std::mem::take(&mut self.quick_step);
-            if let Some(t) = self.store.task_mut(id) {
-                t.steps.push(Step::new(text.trim()));
-                self.expanded.insert(id);
-                self.dirty = true;
-            }
-            ui.memory_mut(|m| m.request_focus(field_id));
-        }
-        if close {
-            self.last_added = None;
-            self.quick_step.clear();
-        }
-    }
-
     // ------------------------------------------------------------------ task list
 
     fn main_panel(&mut self, ctx: &egui::Context, now: NaiveDateTime, narrow: bool) {
@@ -3566,9 +3590,9 @@ impl TodoApp {
                     View::MyDay => ("☀", tr("My Day").to_string()),
                     View::Important => ("★", tr("Important").to_string()),
                     View::Planned => ("📅", tr("Planned").to_string()),
-                    View::All => ("☰", tr("All").to_string()),
+                    View::All => (ALL_ICON, tr("All").to_string()),
                     View::Completed => ("✔", tr("Completed").to_string()),
-                    View::List(id) => ("☰", self.store.list_name(id).to_string()),
+                    View::List(id) => (self.list_icon(id), self.store.list_name(id).to_string()),
                 }
             };
 
@@ -3670,13 +3694,19 @@ impl TodoApp {
                 if add_clicked || (r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))) {
                     if let Some(id) = self.store.add_task(&self.new_task, self.view, now) {
                         self.new_task.clear();
+                        // Its "Add a subtask" box opens right under it (the previous new
+                        // task's box closes if nothing was added to it).
+                        if let Some((prev, _)) = self.last_added.take() {
+                            if self.store.task(prev).is_some_and(|t| t.steps.is_empty()) {
+                                self.expanded.remove(&prev);
+                            }
+                        }
+                        self.expanded.insert(id);
                         self.last_added = Some((id, self.view));
-                        self.quick_step.clear();
                         self.dirty = true;
                     }
                     r.request_focus();
                 }
-                self.quick_subtasks(ui);
                 ui.add_space(8.0);
             }
 
@@ -3791,6 +3821,7 @@ impl TodoApp {
                                 };
                                 ui.painter().hline(ui.min_rect().x_range(), y, Stroke::new(2.0_f32, ACCENT));
                                 ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                notes_ui::edge_scroll(ui, pos);
                                 if released {
                                     actions.push(Action::MoveTask(ids.clone(), dragged, to));
                                     ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
@@ -3884,6 +3915,13 @@ impl TodoApp {
         let (touching, down, delta, origin) = ui.input(|i| {
             (i.any_touches(), i.pointer.primary_down(), i.pointer.delta(), i.pointer.press_origin())
         });
+        // A task being moved by its ≡ handle isn't a pull (dragging it down would refresh).
+        let moving_task = ui.ctx().data(|d| d.get_temp::<Uuid>(Id::new(("task_drag", self.view)))).is_some();
+        if moving_task {
+            self.pull_active = false;
+            self.pull = 0.0;
+            return;
+        }
         if !self.pull_active {
             let starts_in_list = origin.zip(self.list_rect).is_some_and(|(p, r)| r.contains(p));
             if touching && down && starts_in_list && self.list_scroll_y <= 0.5 && delta.y > 0.0 {
@@ -4631,6 +4669,7 @@ impl eframe::App for TodoApp {
         }
 
         self.companion_tick(ctx);
+        self.close_hint_check(ctx);
         // While the companion runs, it shows the notes (they stay up after this window closes).
         if !(self.store.settings.companion && self.companion_running) {
             notes_ui::show_windows(ctx, &self.notes);
@@ -5058,9 +5097,9 @@ fn task_row(
     paint_star(ui, star_rect.center(), t.important, star.hovered());
 
     let text_left = rect.left() + text_gap;
-    // Touch, in "My order": a ≡ handle to drag the task up or down (dragging anywhere else
-    // on the row scrolls the list, as usual on a phone).
-    let handle = (touch && order.is_some() && store.settings.sort == SortMode::Manual).then(|| {
+    // Touch: a ≡ handle to drag the task up or down (dragging anywhere else on the row
+    // scrolls the list, as usual on a phone). Moving a task switches to "My order".
+    let handle = (touch && order.is_some()).then(|| {
         let left = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
         let r = Rect::from_center_size(Pos2::new(left - hit * 0.4 - 2.0, rect.center().y), Vec2::new(hit * 0.8, hit));
         let resp = ui.interact(r, Id::new(("task_handle", t.id)), Sense::drag());
@@ -5230,11 +5269,18 @@ fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut V
         let mut enter = false;
         let mut lost = false;
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // ✖ folds the box (and the subtasks) away.
+            let tip = if t.steps.is_empty() { tr("Done adding subtasks") } else { tr("Hide subtasks") };
+            if small_btn(ui, "✖").on_hover_text(tip).clicked() {
+                actions.push(Action::ToggleExpand(t.id));
+            }
             add = has_text && ui.small_button(tr("Add")).clicked();
             let r = ui.add(
                 egui::TextEdit::singleline(input)
                     .id(field_id)
-                    .hint_text(tr("+ Add a subtask"))
+                    .hint_text(tr("+ Add a subtask (Enter after each)"))
+                    .min_size(field_height(ui))
+                    .vertical_align(Align::Center)
                     .desired_width(ui.available_width()),
             );
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
