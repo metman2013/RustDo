@@ -10,6 +10,11 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.14 - 2026-11-28
+
+### Fixed
+- Android: in dialogs such as Turn on sync, the keyboard still opened and closed over and over. When the keyboard opened, the dialog was rebuilt to scroll, which deselected the field and closed the keyboard again. Dialogs now just move up above the keyboard, and the field stays selected. The same could happen with "+ New list" on a tablet in landscape.
+
 ## 0.4.13 - 2026-11-28
 
 ### Fixed
