@@ -501,8 +501,15 @@ pub fn safe_insets(pixels_per_point: f32) -> [f32; 4] {
         // WindowInsets measure exactly how far the system bars overlap *this window*, so
         // they're authoritative. The content rectangle can include offsets the window
         // already accounts for (v0.1.3 padded far too much by mixing the two), so it's
-        // only a fallback for when the JNI reading isn't available.
-        let px = jni.or(content).unwrap_or([0; 4]);
+        // only a fallback for when the JNI reading has never worked. A reading that fails
+        // now and then (e.g. while the keyboard animates) keeps the last good one, rather
+        // than switching to the other source and back, which made the page jump.
+        static LAST_JNI: std::sync::Mutex<Option<[i32; 4]>> = std::sync::Mutex::new(None);
+        let mut last = LAST_JNI.lock().unwrap_or_else(|e| e.into_inner());
+        if jni.is_some() {
+            *last = jni;
+        }
+        let px = last.or(content).unwrap_or([0; 4]);
         let ppp = pixels_per_point.max(0.1);
         return px.map(|p| p.max(0) as f32 / ppp);
     }

@@ -2,7 +2,7 @@
 # version (ghcr.io/metman2013/rustdo-hub:<version>); CI checks this version matches the
 # app's, and tools/set-version.ps1 updates it.
 name: RustDo Hub
-version: "0.4.12"
+version: "0.4.13"
 slug: rustdo_hub
 description: Sync RustDo between your devices and share lists with your family, on your own Home Assistant.
 url: https://github.com/metman2013/RustDo/blob/main/docs/hub.md

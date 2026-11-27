@@ -3,6 +3,12 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.13 - 2026-11-28
+
+### Corrections
+- App Android et app web sur téléphones et tablettes : taper dans un champ bas sur l'écran (« + Nouvelle liste », les champs de synchronisation et de partage) faisait s'ouvrir et se fermer le clavier sans arrêt, et la page sautait. Le clavier cachait le champ, ce qui le fermait, ce qui découvrait le champ, ce qui le rouvrait. Le clavier reste maintenant ouvert tant qu'un champ est sélectionné, et le champ remonte au-dessus du clavier.
+- Android : la page ne suit plus les mesures de hauteur du clavier qui alternent entre deux valeurs pendant son apparition.
+
 ## 0.4.12 - 2026-11-28
 
 ### Corrections

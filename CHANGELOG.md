@@ -10,6 +10,12 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.13 - 2026-11-28
+
+### Fixed
+- Android app and web app on phones and tablets: typing in a field low on the screen ("+ New list", the sync and sharing boxes) made the keyboard open and close over and over, so the page bounced. The keyboard covered the field, which made it close, which uncovered the field, which opened it again. The keyboard now stays open while a field is selected, and the field scrolls up above the keyboard.
+- Android: the page no longer follows readings of the keyboard's height that flicker between two answers while it slides in.
+
 ## 0.4.12 - 2026-11-28
 
 ### Fixed

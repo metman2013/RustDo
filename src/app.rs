@@ -198,6 +198,9 @@ pub struct TodoApp {
     /// Android: space taken by the status bar, navigation bar and keyboard (points).
     insets: [f32; 4],
     insets_checked: Option<Instant>,
+    /// Android: a new inset reading waiting for a second one that agrees (see
+    /// `apply_safe_insets`).
+    insets_pending: Option<[f32; 4]>,
     // Pull-to-refresh state.
     pull: f32,
     pull_active: bool,
@@ -368,6 +371,7 @@ impl TodoApp {
             backup_error_shown: false,
             export_nag_dismissed: false,
             insets: [0.0; 4],
+            insets_pending: None,
             insets_checked: None,
             pull: 0.0,
             pull_active: false,
@@ -3461,6 +3465,7 @@ impl TodoApp {
                         .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
                 );
+                keep_above_keyboard(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     if let Some(id) = self.store.add_list(&self.new_list) {
                         self.new_list.clear();
@@ -3862,12 +3867,28 @@ impl TodoApp {
         }
         if self.insets_checked.is_none_or(|t| t.elapsed() >= StdDuration::from_millis(250)) {
             let fresh = platform::safe_insets(ctx.pixels_per_point());
-            if fresh != self.insets {
+            // Take a new reading only once the next one agrees. While the keyboard slides
+            // in or out, Android can report two different answers in turn, and following
+            // each made the page jump up and down (most visibly at "+ New list", low on
+            // the lists page). The very first reading is taken straight away.
+            let first = self.insets == [0.0; 4];
+            if fresh == self.insets {
+                self.insets_pending = None;
+            } else if first || self.insets_pending == Some(fresh) {
                 self.insets = fresh;
+                self.insets_pending = None;
                 ctx.request_repaint();
+            } else {
+                self.insets_pending = Some(fresh);
+                ctx.request_repaint_after(StdDuration::from_millis(260));
             }
             self.insets_checked = Some(Instant::now());
         }
+        // Where the on-screen keyboard starts (screen y), for fields to scroll above it. Only
+        // a tall bottom inset is the keyboard (the navigation bar is always there).
+        let screen = ctx.screen_rect();
+        let keyboard_top = (self.insets[3] > screen.height() * 0.2).then(|| screen.bottom() - self.insets[3]);
+        ctx.data_mut(|d| d.insert_temp(Id::new(KEYBOARD_TOP_ID), keyboard_top));
         // The keyboard slides in and out over a few frames: keep measuring meanwhile.
         if self.keyboard_shown || self.insets[3] > 0.0 {
             ctx.request_repaint_after(StdDuration::from_millis(300));
@@ -4792,6 +4813,23 @@ fn discord_button(ui: &mut egui::Ui) {
     }
 }
 
+/// Where the on-screen keyboard starts, when it's up (Android).
+const KEYBOARD_TOP_ID: &str = "rustdo_keyboard_top";
+
+/// A selected text field that the on-screen keyboard covers scrolls up into view, so
+/// what's being typed can be seen. Call it right after adding the field.
+fn keep_above_keyboard(r: &egui::Response) {
+    if !r.has_focus() {
+        return;
+    }
+    let top: Option<f32> = r.ctx.data(|d| d.get_temp::<Option<f32>>(Id::new(KEYBOARD_TOP_ID))).flatten();
+    if let Some(top) = top {
+        if r.rect.bottom() > top - 8.0 {
+            r.scroll_to_me(Some(Align::Center));
+        }
+    }
+}
+
 /// A copy button that says "✔ Copied" for a moment after it's pressed (so it's clear it
 /// worked: on a phone nothing else shows it).
 fn copy_button(ui: &mut egui::Ui, label: &str, text: impl FnOnce() -> String) {
@@ -4825,6 +4863,7 @@ fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &
     if !platform::CAN_PASTE {
         let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint).min_size(field_height(ui)).desired_width(f32::INFINITY));
         menu(&r);
+        keep_above_keyboard(&r);
         return r;
     }
     ui.horizontal(|ui| {
@@ -4837,6 +4876,7 @@ fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &
                 .desired_width((ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0)),
         );
         menu(&r);
+        keep_above_keyboard(&r);
         if ui.add(egui::Button::new(tr("📋 Paste")).min_size(Vec2::new(button_w, field_height(ui).y))).clicked() {
             platform::request_paste(ui.ctx(), target);
         }
@@ -5346,6 +5386,7 @@ fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut V
             );
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
             lost = r.lost_focus();
+            keep_above_keyboard(&r);
         });
         if (add || enter) && !input.trim().is_empty() {
             actions.push(Action::AddStep(t.id, std::mem::take(input)));
