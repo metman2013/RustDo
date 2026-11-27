@@ -14,6 +14,7 @@
 //! it to wake up. It always shows its tray icon, so it's never running unseen, and the
 //! icon's menu can quit RustDo completely.
 
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 use crate::i18n::tr;
 use crate::model::Settings;
 use std::fs::File;

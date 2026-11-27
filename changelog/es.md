@@ -3,6 +3,11 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.13 - 2026-11-28
+
+### Correcciones
+- Android: al escribir en «+ Nueva lista» en el teléfono, la página podía saltar arriba y abajo. RustDo seguía cada medida de la altura del teclado mientras aparecía, incluso las que alternaban entre dos valores; ahora espera a medidas estables.
+
 ## 0.4.12 - 2026-11-28
 
 ### Correcciones

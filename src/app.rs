@@ -198,6 +198,9 @@ pub struct TodoApp {
     /// Android: space taken by the status bar, navigation bar and keyboard (points).
     insets: [f32; 4],
     insets_checked: Option<Instant>,
+    /// Android: a new inset reading waiting for a second one that agrees (see
+    /// `apply_safe_insets`).
+    insets_pending: Option<[f32; 4]>,
     // Pull-to-refresh state.
     pull: f32,
     pull_active: bool,
@@ -368,6 +371,7 @@ impl TodoApp {
             backup_error_shown: false,
             export_nag_dismissed: false,
             insets: [0.0; 4],
+            insets_pending: None,
             insets_checked: None,
             pull: 0.0,
             pull_active: false,
@@ -3862,9 +3866,20 @@ impl TodoApp {
         }
         if self.insets_checked.is_none_or(|t| t.elapsed() >= StdDuration::from_millis(250)) {
             let fresh = platform::safe_insets(ctx.pixels_per_point());
-            if fresh != self.insets {
+            // Take a new reading only once the next one agrees. While the keyboard slides
+            // in or out, Android can report two different answers in turn, and following
+            // each made the page jump up and down (most visibly at "+ New list", low on
+            // the lists page). The very first reading is taken straight away.
+            let first = self.insets == [0.0; 4];
+            if fresh == self.insets {
+                self.insets_pending = None;
+            } else if first || self.insets_pending == Some(fresh) {
                 self.insets = fresh;
+                self.insets_pending = None;
                 ctx.request_repaint();
+            } else {
+                self.insets_pending = Some(fresh);
+                ctx.request_repaint_after(StdDuration::from_millis(260));
             }
             self.insets_checked = Some(Instant::now());
         }

@@ -10,6 +10,11 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.13 - 2026-11-28
+
+### Fixed
+- Android: while typing in "+ New list" on a phone, the page could jump up and down. RustDo followed every reading of the keyboard's height while it slid in, including ones that flickered between two answers; it now waits for steady readings.
+
 ## 0.4.12 - 2026-11-28
 
 ### Fixed

@@ -3,6 +3,11 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.13 - 2026-11-28
+
+### Behoben
+- Android: Beim Tippen in „+ Neue Liste“ auf dem Smartphone konnte die Seite auf und ab springen. RustDo folgte jeder Messung der Tastaturhöhe beim Einblenden, auch solchen, die zwischen zwei Werten flackerten; jetzt wartet es auf stabile Werte.
+
 ## 0.4.12 - 2026-11-28
 
 ### Behoben
