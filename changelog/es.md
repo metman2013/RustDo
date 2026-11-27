@@ -11,6 +11,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 
 ### Correcciones
 - La página de una lista muestra ahora el mismo icono que en el menú (🏠 para Tareas, 👥 para listas compartidas, 📋 para tus listas, 📚 para Todas) en lugar de ☰, que parecía el botón del menú.
+- Teléfonos y tabletas: arrastrar hacia abajo una tarea por su asa ≡ al principio de la lista activaba «tirar para actualizar» en lugar de mover la tarea.
 
 ## 0.4.8 - 2026-11-27
 

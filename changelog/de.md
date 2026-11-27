@@ -11,6 +11,7 @@
 
 ### Behoben
 - Die Seite einer Liste zeigt jetzt dasselbe Symbol wie im Menü (🏠 für Aufgaben, 👥 für geteilte Listen, 📋 für eigene Listen, 📚 für Alle) statt ☰, das wie die Menü-Schaltfläche aussah.
+- Smartphones und Tablets: Eine Aufgabe oben in der Liste am ≡-Griff nach unten zu ziehen, löste „Zum Aktualisieren ziehen“ aus, statt die Aufgabe zu verschieben.
 
 ## 0.4.8 - 2026-11-27
 

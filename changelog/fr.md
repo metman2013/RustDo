@@ -11,6 +11,7 @@ traduites. Les versions absentes ici s'affichent en anglais.
 
 ### Corrections
 - La page d'une liste affiche maintenant la même icône que dans le menu (🏠 pour Tâches, 👥 pour les listes partagées, 📋 pour vos listes, 📚 pour Tout) au lieu de ☰, qui ressemblait au bouton du menu.
+- Téléphones et tablettes : faire glisser une tâche vers le bas par sa poignée ≡ en haut de la liste déclenchait « tirer pour actualiser » au lieu de déplacer la tâche.
 
 ## 0.4.8 - 2026-11-27
 

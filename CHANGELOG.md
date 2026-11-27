@@ -18,6 +18,7 @@ Each release needs its entry in all three (a test checks the current version).
 
 ### Fixed
 - A list's page now shows the same icon as in the menu (🏠 for Tasks, 👥 for shared lists, 📋 for your own lists, 📚 for All), instead of ☰, which looked like the menu button.
+- Phones and tablets: dragging a task down by its ≡ handle at the top of the list started "pull to refresh" instead of moving the task.
 
 ## 0.4.8 - 2026-11-27
 

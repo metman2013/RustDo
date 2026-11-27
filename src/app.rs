@@ -3843,6 +3843,13 @@ impl TodoApp {
         let (touching, down, delta, origin) = ui.input(|i| {
             (i.any_touches(), i.pointer.primary_down(), i.pointer.delta(), i.pointer.press_origin())
         });
+        // A task being moved by its ≡ handle isn't a pull (dragging it down would refresh).
+        let moving_task = ui.ctx().data(|d| d.get_temp::<Uuid>(Id::new(("task_drag", self.view)))).is_some();
+        if moving_task {
+            self.pull_active = false;
+            self.pull = 0.0;
+            return;
+        }
         if !self.pull_active {
             let starts_in_list = origin.zip(self.list_rect).is_some_and(|(p, r)| r.contains(p));
             if touching && down && starts_in_list && self.list_scroll_y <= 0.5 && delta.y > 0.0 {
