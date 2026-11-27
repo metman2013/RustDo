@@ -6,6 +6,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 ## 0.4.8 - 2026-11-27
 
 ### Correcciones
+- La página de notas adhesivas ahora empieza como las demás: ☰ (en teléfonos), el título, y luego «+ Nueva nota» y un menú «Más» (copia de seguridad, restaurar, ordenar), todo en una línea.
 - Teléfonos y tabletas: ahora las tareas se pueden arrastrar a tu propio orden. En «Mi orden», cada tarea tiene un asa ≡: arrástrala hacia arriba o hacia abajo (arrastrar en otro punto de la tarea sigue desplazando la lista).
 - Teléfonos y tabletas: las listas también se pueden reordenar arrastrando el asa ≡ de cada lista en el menú.
 - Las notas adhesivas tienen en teléfonos y tabletas una esquina más grande para cambiar su tamaño con el dedo.

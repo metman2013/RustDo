@@ -666,36 +666,76 @@ pub enum PageAction {
     None,
     Backup,
     Restore,
+    /// Phones: the ☰ button (back to the lists).
+    ShowLists,
+}
+
+/// What was pressed in the page's top row.
+#[derive(Default)]
+struct Header {
+    new_note: bool,
+    tidy: bool,
+}
+
+/// The top row, laid out like the task pages: (☰ on phones) 📝 Sticky notes, then
+/// "+ New note" and a "More" menu (back up, restore, tidy up) on the right.
+fn page_header(ui: &mut egui::Ui, phone: bool, can_tidy: bool, page_action: &mut PageAction) -> Header {
+    let mut out = Header::default();
+    let touch = crate::app::is_touch(ui);
+    ui.horizontal(|ui| {
+        if phone {
+            let menu = egui::Button::new(RichText::new("☰").size(if touch { 26.0 } else { 20.0 })).frame(false);
+            let menu = if touch { menu.min_size(Vec2::splat(44.0)) } else { menu };
+            if ui.add(menu).on_hover_text(tr("Lists")).clicked() {
+                *page_action = PageAction::ShowLists;
+            }
+        }
+        ui.label(RichText::new(tr("📝 Sticky notes")).size(if phone { 20.0 } else { 24.0 }).strong());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let min = if touch { Vec2::new(44.0, 44.0) } else { Vec2::ZERO };
+            ui.menu_button(tr("More"), |ui| {
+                if can_tidy && ui.button(tr("Tidy up")).on_hover_text(tr("Line all notes up neatly")).clicked() {
+                    out.tidy = true;
+                    ui.close_menu();
+                }
+                if ui.button(tr("Back up notes…")).on_hover_text(tr("Save all sticky notes to a file")).clicked() {
+                    *page_action = PageAction::Backup;
+                    ui.close_menu();
+                }
+                if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
+                    *page_action = PageAction::Restore;
+                    ui.close_menu();
+                }
+            });
+            // Small phones: just "+" (the row is narrow), like the task pages' icon buttons.
+            let short = phone && ui.available_width() < 200.0;
+            let label = if short { RichText::new("+").size(22.0) } else { RichText::new(tr("+ New note")) };
+            let new = egui::Button::new(label.color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6)).min_size(min);
+            if ui.add(new).on_hover_text(tr("New note")).clicked() {
+                out.new_note = true;
+            }
+        });
+    });
+    out
 }
 
 /// The main window's "Sticky notes" page: every note, to show, hide, create or delete.
 /// The web app shows the notes themselves there instead, on a wall.
-pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
+pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction {
     // Test hook (debug builds only): show the web wall in the desktop app.
     let test_wall = cfg!(debug_assertions) && std::env::var_os("RUSTDO_TEST_WALL").is_some();
     if notes::WALL || test_wall {
-        return wall_page(ui, shared);
+        return wall_page(ui, shared, phone);
     }
     let mut page_action = PageAction::None;
     let mut s = lock(shared);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
-                page_action = PageAction::Restore;
-            }
-            if ui.button(tr("Back up notes…")).on_hover_text(tr("Save all sticky notes to a file")).clicked() {
-                page_action = PageAction::Backup;
-            }
-            if ui.button(tr("+ New note")).clicked() {
-                // Next to the RustDo window (cascading from the newest note if there is one).
-                let near = s.notes.notes.last().filter(|n| n.open).and_then(|n| n.pos).or_else(|| {
-                    ui.ctx().input(|i| i.viewport().outer_rect).map(|r| [r.right() - 300.0, r.top() + 40.0])
-                });
-                s.new_note(near);
-            }
+    if page_header(ui, phone, false, &mut page_action).new_note {
+        // Next to the RustDo window (cascading from the newest note if there is one).
+        let near = s.notes.notes.last().filter(|n| n.open).and_then(|n| n.pos).or_else(|| {
+            ui.ctx().input(|i| i.viewport().outer_rect).map(|r| [r.right() - 300.0, r.top() + 40.0])
         });
-    });
+        s.new_note(near);
+    }
     ui.label(
         RichText::new(
             "Notes sit on your desktop as their own little windows while RustDo is running. \
@@ -788,82 +828,15 @@ const WALL_HEADER_H: f32 = 28.0;
 const WALL_HEADER_TOUCH_H: f32 = 44.0;
 
 /// The web app's Sticky notes page: the notes themselves, on a wall you can arrange.
-fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes) -> PageAction {
+fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction {
     let mut page_action = PageAction::None;
     let mut s = lock(shared);
     let narrow = ui.available_width() < WALL_MIN_WIDTH;
-    let mut tidy = false;
-    // Phones: title on its own line, buttons below (they don't fit beside it).
-    let buttons = |ui: &mut egui::Ui, s: &mut Shared, page_action: &mut PageAction, tidy: &mut bool| {
-            if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
-                *page_action = PageAction::Restore;
-            }
-            if ui.button(tr("Back up notes…")).on_hover_text(tr("Download all sticky notes as a file")).clicked() {
-                *page_action = PageAction::Backup;
-            }
-            if !narrow && !s.notes.notes.is_empty() && ui.button(tr("Tidy up")).on_hover_text(tr("Line all notes up neatly")).clicked() {
-                *tidy = true;
-            }
-            if ui.add(egui::Button::new(RichText::new(tr("+ New note")).color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
-                let near = s.notes.notes.last().and_then(|n| n.pos);
-                s.new_note(near.or(Some([-16.0, -16.0])));
-            }
-    };
-    if narrow {
-        // Phones: title, then the buttons left to right ("+ New note" first), wrapping
-        // onto a second line when they don't fit.
-        ui.label(RichText::new(tr("📝 Sticky notes")).size(24.0).strong());
-        ui.horizontal_wrapped(|ui| {
-            if ui.add(egui::Button::new(RichText::new(tr("+ New note")).color(Color32::WHITE)).fill(Color32::from_rgb(0x3B, 0x82, 0xF6))).clicked() {
-                let near = s.notes.notes.last().and_then(|n| n.pos);
-                s.new_note(near.or(Some([-16.0, -16.0])));
-            }
-            if ui.button(tr("Back up")).clicked() {
-                page_action = PageAction::Backup;
-            }
-            if ui.button(tr("Restore")).clicked() {
-                page_action = PageAction::Restore;
-            }
-        });
-    } else {
-        // Title and buttons on one line when they fit (the buttons' width is measured as
-        // they're drawn); on narrower screens, such as tablets with big touch buttons, the
-        // buttons go on their own line so they don't cover the title.
-        let title = RichText::new(tr("📝 Sticky notes")).size(24.0).strong();
-        let title_w = egui::WidgetText::from(title.clone())
-            .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body)
-            .size()
-            .x;
-        let buttons_id = Id::new("wall_buttons_width");
-        let buttons_w: f32 = ui.ctx().data(|d| d.get_temp(buttons_id)).unwrap_or(0.0);
-        let one_line = title_w + buttons_w + 24.0 <= ui.available_width();
-        let measured = if one_line {
-            ui.horizontal(|ui| {
-                ui.label(title);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let start = ui.cursor().max.x;
-                    buttons(ui, &mut s, &mut page_action, &mut tidy);
-                    start - ui.min_rect().min.x
-                })
-                .inner
-            })
-            .inner
-        } else {
-            ui.label(title);
-            ui.horizontal(|ui| {
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let start = ui.cursor().max.x;
-                    buttons(ui, &mut s, &mut page_action, &mut tidy);
-                    start - ui.min_rect().min.x
-                })
-                .inner
-            })
-            .inner
-        };
-        if (measured - buttons_w).abs() > 1.0 && measured.is_finite() {
-            ui.ctx().data_mut(|d| d.insert_temp(buttons_id, measured));
-            ui.ctx().request_repaint();
-        }
+    let header = page_header(ui, phone, !narrow && !s.notes.notes.is_empty(), &mut page_action);
+    let tidy = header.tidy;
+    if header.new_note {
+        let near = s.notes.notes.last().and_then(|n| n.pos);
+        s.new_note(near.or(Some([-16.0, -16.0])));
     }
     let kept = if cfg!(target_os = "android") { tr("on this phone") } else { tr("in this browser") };
     let hint = if narrow {

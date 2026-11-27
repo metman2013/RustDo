@@ -6,6 +6,7 @@
 ## 0.4.8 - 2026-11-27
 
 ### Behoben
+- Die Seite „Haftnotizen“ beginnt jetzt wie alle anderen Seiten: ☰ (auf Smartphones), der Titel, dann „+ Neue Notiz“ und ein Menü „Mehr“ (sichern, wiederherstellen, aufräumen), alles in einer Zeile.
 - Smartphones und Tablets: Aufgaben lassen sich jetzt in die eigene Reihenfolge ziehen. In „Meine Reihenfolge“ hat jede Aufgabe einen ≡-Griff: Ziehe ihn nach oben oder unten (Ziehen an anderer Stelle scrollt weiterhin die Liste).
 - Smartphones und Tablets: Auch Listen lassen sich jetzt neu anordnen, mit dem ≡-Griff an jeder Liste im Menü.
 - Haftnotizen haben auf Smartphones und Tablets eine größere Ecke zum Ändern der Größe mit dem Finger.

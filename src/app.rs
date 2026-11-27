@@ -3479,12 +3479,12 @@ impl TodoApp {
     fn notes_panel(&mut self, ctx: &egui::Context) {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
-            if narrow && back_button(ui, tr("Lists")).clicked() {
-                self.show_nav = true;
-            }
-            match notes_ui::notes_page(ui, &self.notes) {
+            // Same top as the task pages (☰ on phones, then the page's title and buttons).
+            ui.add_space(10.0);
+            match notes_ui::notes_page(ui, &self.notes, narrow) {
                 notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
+                notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::None => {}
             }
         });

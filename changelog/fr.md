@@ -6,6 +6,7 @@ traduites. Les versions absentes ici s'affichent en anglais.
 ## 0.4.8 - 2026-11-27
 
 ### Corrections
+- La page des notes adhésives commence maintenant comme les autres : ☰ (sur téléphone), le titre, puis « + Nouvelle note » et un menu « Plus » (sauvegarder, restaurer, ranger), le tout sur une ligne.
 - Téléphones et tablettes : les tâches se déplacent maintenant à la main dans votre ordre. En « Mon ordre », chaque tâche a une poignée ≡ : faites-la glisser vers le haut ou le bas (glisser ailleurs sur la tâche fait toujours défiler la liste).
 - Téléphones et tablettes : les listes aussi se réordonnent, avec la poignée ≡ de chaque liste dans le menu.
 - Sur téléphones et tablettes, les notes adhésives ont un coin plus grand pour les redimensionner au doigt.
