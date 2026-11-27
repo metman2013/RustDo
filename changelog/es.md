@@ -7,6 +7,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 
 ### Novedades
 - RustDo Hub para Linux sin Docker: descargas listas para PC (x86_64) y Raspberry Pi (arm64), y un script de instalación que configura el hub como servicio que arranca con el ordenador.
+- RustDo para Linux ahora también viene como .rpm (Fedora, openSUSE) y como .tar.gz para cualquier distribución, con un script de instalación que añade RustDo al menú de aplicaciones.
 - Configuración paso a paso de RustDo Hub en un NAS Synology (Container Manager), en la guía del hub y en «Cómo funcionan la sincronización y el uso compartido» de RustDo.
 
 ### Correcciones

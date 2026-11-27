@@ -141,6 +141,23 @@ jobs:
           chmod +x appimagetool-x86_64.AppImage
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir "out/RustDo-$V-x86_64.AppImage"
           cp target/debian/*.deb out/
+      # Fedora, openSUSE, RHEL and friends.
+      - name: Package .rpm
+        run: |
+          cargo install cargo-generate-rpm --locked
+          cargo generate-rpm
+          cp target/generate-rpm/*.rpm out/
+      # Any distribution (Arch, Gentoo, …): the program, its menu entry and icon, and an
+      # install script for a per-user (~/.local) or system-wide (/usr/local) install.
+      - name: Package .tar.gz
+        run: |
+          V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          D="RustDo-$V-linux-x86_64"
+          mkdir -p "$D"
+          cp target/release/rustdo assets/rustdo.desktop assets/rustdo.png LICENSE "$D/"
+          cp tools/linux-install.sh "$D/install.sh"
+          chmod +x "$D/install.sh" "$D/rustdo"
+          tar czf "out/$D.tar.gz" "$D"
           ls -la out
       - uses: actions/upload-artifact@v6
         with:

@@ -18,7 +18,7 @@ pub const TEXTS: &[(&str, &str)] = &[
     ("12-hour clock (9:30 PM)", "Format 12 heures (9:30 PM)"),
     ("2. Enter this code and sign in with the account you use for To Do:", "2. Saisissez ce code et connectez-vous avec le compte que vous utilisez pour To Do :"),
     ("24-hour clock (21:30)", "Format 24 heures (21:30)"),
-    ("A .deb package (Debian, Ubuntu, Mint) or an AppImage for any distribution.", "Un paquet .deb (Debian, Ubuntu, Mint) ou une AppImage pour toute distribution."),
+    ("A .deb (Debian, Ubuntu, Mint), an .rpm (Fedora, openSUSE), or for any distribution an AppImage or a .tar.gz with an install script.", "Un .deb (Debian, Ubuntu, Mint), un .rpm (Fedora, openSUSE) ou, pour toute distribution, une AppImage ou un .tar.gz avec un script d'installation."),
     ("A RustDo Hub is a small program you run yourself, on a PC, a NAS or a home server. RustDo uses it to keep your own devices in sync, and to share lists with the people you live with. Nothing goes through anyone's cloud.", "Un RustDo Hub est un petit programme que vous faites tourner vous-même, sur un PC, un NAS ou un serveur domestique. RustDo s'en sert pour synchroniser vos appareils et partager des listes avec les personnes avec qui vous vivez. Rien ne passe par le cloud de qui que ce soit."),
     ("A backup is saved automatically each day in this browser (last 7 days).", "Une sauvegarde est enregistrée automatiquement chaque jour dans ce navigateur (7 derniers jours)."),
     ("A backup is saved automatically each day on this phone (last 14 days). Uninstalling the app removes them.", "Une sauvegarde est enregistrée automatiquement chaque jour sur ce téléphone (14 derniers jours). La désinstallation de l'application les supprime."),

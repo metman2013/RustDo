@@ -2639,7 +2639,7 @@ impl TodoApp {
                     tr("For phones and tablets: download the APK and open it. Android asks once to allow installing apps from your browser."),
                     &[(tr("Download the APK").to_string(), apk)],
                 );
-                row(ui, "Linux", tr("A .deb package (Debian, Ubuntu, Mint) or an AppImage for any distribution."), &[(tr("Downloads").to_string(), release.clone())]);
+                row(ui, "Linux", tr("A .deb (Debian, Ubuntu, Mint), an .rpm (Fedora, openSUSE), or for any distribution an AppImage or a .tar.gz with an install script."), &[(tr("Downloads").to_string(), release.clone())]);
                 row(
                     ui,
                     tr("Web app"),
