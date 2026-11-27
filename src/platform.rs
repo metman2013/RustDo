@@ -265,6 +265,56 @@ mod android {
         .filter(|b| !b.is_empty())
     }
 
+    // ---------------------------------------------------------------- clipboard
+    //
+    // egui has no Android clipboard (only one inside the app), so copying and pasting
+    // go through Android's ClipboardManager.
+
+    fn clipboard_manager<'a>(env: &mut JNIEnv<'a>, activity: &JObject) -> jni::errors::Result<JObject<'a>> {
+        let name = env.new_string("clipboard")?;
+        env.call_method(activity, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", &[JValue::Object(&name)])?.l()
+    }
+
+    pub fn set_clipboard(text: &str) -> bool {
+        with_env(|env, activity| {
+            let manager = clipboard_manager(env, activity)?;
+            let label = env.new_string("RustDo")?;
+            let text = env.new_string(text)?;
+            let clip = env
+                .call_static_method(
+                    "android/content/ClipData",
+                    "newPlainText",
+                    "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+                    &[JValue::Object(&label), JValue::Object(&text)],
+                )?
+                .l()?;
+            env.call_method(&manager, "setPrimaryClip", "(Landroid/content/ClipData;)V", &[JValue::Object(&clip)])?;
+            Ok(())
+        })
+        .is_some()
+    }
+
+    pub fn clipboard_text() -> Option<String> {
+        with_env(|env, activity| {
+            let manager = clipboard_manager(env, activity)?;
+            let clip = env.call_method(&manager, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?.l()?;
+            if clip.is_null() || env.call_method(&clip, "getItemCount", "()I", &[])?.i()? < 1 {
+                return Ok(None);
+            }
+            let item = env.call_method(&clip, "getItemAt", "(I)Landroid/content/ClipData$Item;", &[JValue::Int(0)])?.l()?;
+            let text = env
+                .call_method(&item, "coerceToText", "(Landroid/content/Context;)Ljava/lang/CharSequence;", &[JValue::Object(activity)])?
+                .l()?;
+            if text.is_null() {
+                return Ok(None);
+            }
+            let text = env.call_method(&text, "toString", "()Ljava/lang/String;", &[])?.l()?;
+            let text: String = env.get_string(&jni::objects::JString::from(text))?.into();
+            Ok(Some(text))
+        })
+        .flatten()
+    }
+
     pub fn show_keyboard(show: bool) {
         if let Some(app) = APP.get() {
             if show {
@@ -303,6 +353,56 @@ pub fn android_recent_photos(max: usize) -> Vec<i64> {
 #[cfg(target_os = "android")]
 pub fn android_photo(id: i64, size: i32) -> Option<Vec<u8>> {
     android::photo(id, size)
+}
+
+/// Copies `text` so it can be pasted anywhere: egui's clipboard (desktop and web), and on
+/// Android the phone's own clipboard, which egui can't reach.
+pub fn copy_text(ctx: &eframe::egui::Context, text: String) {
+    #[cfg(target_os = "android")]
+    if !android::set_clipboard(&text) {
+        log::warn!(target: "rustdo", "couldn't copy to the Android clipboard");
+    }
+    ctx.copy_text(text);
+}
+
+/// Whether a Paste button can read the clipboard here (Android and the browser; on the
+/// desktop Ctrl+V does it).
+pub const CAN_PASTE: bool = cfg!(any(target_os = "android", target_arch = "wasm32"));
+
+fn paste_id(target: &str) -> eframe::egui::Id {
+    eframe::egui::Id::new(("rustdo_paste", target))
+}
+
+/// Reads the clipboard for the field `target`; [`take_paste`] hands the text over (right
+/// away on Android, a moment later in the browser, which may first ask for permission).
+pub fn request_paste(ctx: &eframe::egui::Context, target: &'static str) {
+    #[cfg(target_os = "android")]
+    if let Some(text) = android::clipboard_text() {
+        ctx.data_mut(|d| d.insert_temp(paste_id(target), text));
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Some(promise) = web_sys::window().map(|w| w.navigator().clipboard().read_text()) else { return };
+            match wasm_bindgen_futures::JsFuture::from(promise).await {
+                Ok(v) => {
+                    if let Some(text) = v.as_string() {
+                        ctx.data_mut(|d| d.insert_temp(paste_id(target), text));
+                        ctx.request_repaint();
+                    }
+                }
+                Err(e) => log::warn!(target: "rustdo", "couldn't read the clipboard: {e:?}"),
+            }
+        });
+    }
+    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    let _ = (ctx, target);
+}
+
+/// Text pasted into the field `target`, once.
+pub fn take_paste(ctx: &eframe::egui::Context, target: &'static str) -> Option<String> {
+    ctx.data_mut(|d| d.remove_temp::<String>(paste_id(target)))
 }
 
 /// Folder for the app's data on Android (the app's private internal storage).

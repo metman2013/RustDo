@@ -13,6 +13,7 @@ use crate::i18n::tr;
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 /// What's behind the tasks.

@@ -3,6 +3,12 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.10 - 2026-11-28
+
+### Correcciones
+- Android: copiar no llegaba al portapapeles del teléfono, así que una clave de sincronización, un código para compartir, una lista o una copia de seguridad copiados no se podían pegar en otras apps. Ahora cada botón Copiar usa el portapapeles de Android y muestra «✔ Copiado» un momento.
+- Android y la app web en teléfonos y tabletas: los campos de dirección del hub, clave de sincronización y código para compartir tienen un botón 📋 Pegar, para meter directamente una clave copiada en otro lugar.
+
 ## 0.4.9 - 2026-11-28
 
 ### Mejoras

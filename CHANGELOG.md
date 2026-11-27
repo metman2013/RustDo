@@ -10,6 +10,12 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.10 - 2026-11-28
+
+### Fixed
+- Android: copying didn't reach the phone's clipboard, so a copied sync key, share code, list or backup couldn't be pasted into other apps. Every Copy button now uses Android's clipboard, and says "✔ Copied" for a moment.
+- Android, and the web app on phones and tablets: the hub address, sync key and share code fields have a 📋 Paste button, so a key copied elsewhere goes straight in.
+
 ## 0.4.9 - 2026-11-28
 
 ### Improved

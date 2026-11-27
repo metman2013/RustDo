@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.4.9"
+version = "0.4.10"
 
 [package]
 name = "rustdo"
@@ -88,6 +88,8 @@ web-sys = { version = "0.3", features = [
     "Blob", "BlobPropertyBag", "Url", "HtmlElement", "HtmlAnchorElement", "Location", "MediaQueryList",
     "Notification", "NotificationOptions", "NotificationPermission",
     "Navigator", "ServiceWorkerContainer", "ServiceWorkerRegistration", "History",
+    # Paste buttons (sync key, share code, hub address).
+    "Clipboard",
 ] }
 # Web: Microsoft sign-in for the To Do import (PKCE).
 sha2 = "0.10"
