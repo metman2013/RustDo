@@ -6,6 +6,9 @@ traduites. Les versions absentes ici s'affichent en anglais.
 ## 0.4.7 - 2026-11-27
 
 ### Nouveautés
+- Rangez vos tâches dans votre propre ordre : faites glisser une tâche vers le haut ou le bas (ou clic droit ou appui long › Monter, Descendre, Placer en haut). Le tri passe au nouveau « Mon ordre », synchronisé avec vos autres appareils et les listes partagées.
+- Sur téléphones et tablettes, les notes adhésives ont des boutons + / 🎨 / 🗑 plus grands, faciles à toucher.
+- RustDo pour Linux sur ARM64 (Raspberry Pi de bureau, portables ARM) : .deb, .rpm, AppImage et .tar.gz.
 - RustDo Hub pour Linux sans Docker : téléchargements prêts à l'emploi pour PC (x86_64) et Raspberry Pi (arm64), et un script d'installation qui configure le hub comme service lancé au démarrage de l'ordinateur.
 - RustDo pour Linux existe aussi en .rpm (Fedora, openSUSE) et en .tar.gz pour toute distribution, avec un script d'installation qui ajoute RustDo au menu des applications.
 - Installation pas à pas de RustDo Hub sur un NAS Synology (Container Manager), dans le guide du hub et dans « Comment fonctionnent la synchronisation et le partage » de RustDo.

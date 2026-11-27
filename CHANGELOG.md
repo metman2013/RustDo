@@ -13,6 +13,9 @@ Each release needs its entry in all three (a test checks the current version).
 ## 0.4.7 - 2026-11-27
 
 ### New
+- Arrange tasks in your own order: drag a task up or down (or right-click or long-press it › Move up, Move down, Move to top). Sort switches to the new "My order", which syncs to your other devices and to shared lists.
+- Sticky notes on phones and tablets have bigger + / 🎨 / 🗑 buttons that are easy to tap.
+- RustDo for Linux on ARM64 (Raspberry Pi desktops, ARM laptops): .deb, .rpm, AppImage and .tar.gz.
 - RustDo Hub for Linux without Docker: ready-made downloads for PCs (x86_64) and Raspberry Pi (arm64), and an install script that sets the hub up as a service that starts with the computer.
 - RustDo for Linux now also comes as an .rpm (Fedora, openSUSE) and as a .tar.gz for any distribution, with an install script that adds RustDo to your app menu.
 - Step-by-step RustDo Hub setup for Synology NAS (Container Manager), in the hub guide and in RustDo's own "How syncing and sharing work".

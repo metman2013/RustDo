@@ -6,6 +6,9 @@
 ## 0.4.7 - 2026-11-27
 
 ### Neu
+- Aufgaben in eigener Reihenfolge: Ziehe eine Aufgabe nach oben oder unten (oder Rechtsklick bzw. langes Drücken › Nach oben, Nach unten, Ganz nach oben). Die Sortierung wechselt zu „Meine Reihenfolge“, die mit deinen anderen Geräten und geteilten Listen abgeglichen wird.
+- Haftnotizen haben auf Smartphones und Tablets größere + / 🎨 / 🗑-Schaltflächen, die sich leicht antippen lassen.
+- RustDo für Linux auf ARM64 (Raspberry-Pi-Desktops, ARM-Laptops): .deb, .rpm, AppImage und .tar.gz.
 - RustDo Hub für Linux ohne Docker: fertige Downloads für PCs (x86_64) und Raspberry Pi (arm64) sowie ein Installationsskript, das den Hub als Dienst einrichtet, der mit dem Computer startet.
 - RustDo für Linux gibt es jetzt auch als .rpm (Fedora, openSUSE) und als .tar.gz für jede Distribution, mit einem Installationsskript, das RustDo ins App-Menü aufnimmt.
 - Schritt-für-Schritt-Einrichtung von RustDo Hub auf einem Synology-NAS (Container Manager), in der Hub-Anleitung und in RustDos „So funktionieren Synchronisieren und Teilen“.

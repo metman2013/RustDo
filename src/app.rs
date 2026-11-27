@@ -74,6 +74,8 @@ enum Action {
     ToggleMyDay(Uuid),
     Select(Uuid),
     Delete(Uuid),
+    /// Move a task in "My order": (the open tasks as shown, the task, its new place).
+    MoveTask(Vec<Uuid>, Uuid, usize),
 }
 
 enum AlertAction {
@@ -3043,6 +3045,9 @@ impl TodoApp {
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
+            Action::MoveTask(shown, id, to) => {
+                self.dirty |= self.store.move_task(&shown, id, to);
+            }
             Action::ToggleExpand(id) => {
                 if !self.expanded.remove(&id) {
                     self.expanded.insert(id);
@@ -3566,7 +3571,24 @@ impl TodoApp {
                     self.show_nav = true;
                 }
                 let size = if narrow { 20.0 } else { 24.0 };
-                ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                // Long list names are shortened (…) so the buttons beside them always fit
+                // without running into each other.
+                let buttons = match (narrow, touch) {
+                    (true, true) => 170.0,
+                    (true, false) => 140.0,
+                    (false, _) => 320.0,
+                };
+                let title_w = (ui.available_width() - buttons).max(60.0);
+                let label = egui::Label::new(RichText::new(format!("{icon}  {title}")).size(size).strong()).truncate();
+                let galley_w = {
+                    let text = egui::WidgetText::from(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                    text.into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, egui::TextStyle::Body).size().x
+                };
+                if galley_w <= title_w {
+                    ui.label(RichText::new(format!("{icon}  {title}")).size(size).strong());
+                } else {
+                    ui.add_sized(Vec2::new(title_w, size * 1.4), label);
+                }
                 if !searching && self.view != View::Completed {
                     // Phones: just the icon (the header is narrow); wider screens: say what it does.
                     let show = if narrow {
@@ -3656,12 +3678,13 @@ impl TodoApp {
             let scroll = egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                 let expanded = &self.expanded;
                 let step_inputs = &mut self.step_inputs;
-                let mut row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>| {
+                let mut row = |ui: &mut egui::Ui, t: &Task, actions: &mut Vec<Action>, order: Option<&[Uuid]>| {
                     let open = expanded.contains(&t.id);
-                    task_row(ui, store, t, view, show_list, selected == Some(t.id), today, open, actions);
+                    let r = task_row(ui, store, t, view, show_list, selected == Some(t.id), today, open, actions, order);
                     if open {
                         subtask_rows(ui, t, step_inputs.entry(t.id).or_default(), actions);
                     }
+                    r
                 };
 
                 if searching {
@@ -3673,7 +3696,7 @@ impl TodoApp {
                         empty_state(ui, "🔍", tr("No matching tasks."));
                     }
                     for t in found {
-                        row(ui, t, &mut actions);
+                        row(ui, t, &mut actions, None);
                     }
                     return;
                 }
@@ -3685,7 +3708,7 @@ impl TodoApp {
                         empty_state(ui, "✔", tr("Completed tasks will show up here."));
                     }
                     for t in done {
-                        row(ui, t, &mut actions);
+                        row(ui, t, &mut actions, None);
                     }
                     return;
                 }
@@ -3727,13 +3750,43 @@ impl TodoApp {
                         group.sort_by_key(|t| (t.planned_date(), !t.important));
                         section_header(ui, bucket.label(), group.len());
                         for t in group {
-                            row(ui, t, &mut actions);
+                            row(ui, t, &mut actions, None);
                         }
                     }
                 } else {
                     sort_tasks(&mut open, sort);
+                    // "My order": drag a task (desktop) or use Move up / down in its menu.
+                    let ids: Vec<Uuid> = open.iter().map(|t| t.id).collect();
+                    let drag_id = Id::new(("task_drag", view));
+                    let mut rects: Vec<(Uuid, Rect)> = Vec::new();
                     for t in open {
-                        row(ui, t, &mut actions);
+                        let r = row(ui, t, &mut actions, Some(&ids));
+                        if r.drag_started() && !touch {
+                            ui.ctx().data_mut(|d| d.insert_temp(drag_id, t.id));
+                        }
+                        rects.push((t.id, r.rect));
+                    }
+                    let dragged: Option<Uuid> = ui.ctx().data(|d| d.get_temp(drag_id));
+                    if let Some(dragged) = dragged {
+                        let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
+                        match pointer {
+                            Some(pos) if ids.contains(&dragged) => {
+                                let others: Vec<&(Uuid, Rect)> = rects.iter().filter(|(id, _)| *id != dragged).collect();
+                                let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
+                                let y = match others.get(to) {
+                                    Some((_, r)) => r.top() - 1.0,
+                                    None => others.last().map_or(pos.y, |(_, r)| r.bottom() + 1.0),
+                                };
+                                ui.painter().hline(ui.min_rect().x_range(), y, Stroke::new(2.0_f32, ACCENT));
+                                ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                if released {
+                                    actions.push(Action::MoveTask(ids.clone(), dragged, to));
+                                    ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
+                                }
+                            }
+                            _ if released => ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id)),
+                            _ => {}
+                        }
                     }
                 }
 
@@ -3747,7 +3800,7 @@ impl TodoApp {
                     .default_open(false)
                     .show(ui, |ui| {
                         for t in done {
-                            row(ui, t, &mut actions);
+                            row(ui, t, &mut actions, None);
                         }
                     });
                 }
@@ -4601,7 +4654,7 @@ impl eframe::App for TodoApp {
 const TOUCH_ID: &str = "rustdo_touch_mode";
 
 /// Whether the finger-friendly layout is on (readable from any drawing function).
-fn is_touch(ui: &egui::Ui) -> bool {
+pub(crate) fn is_touch(ui: &egui::Ui) -> bool {
     ui.ctx().data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
 }
 
@@ -4912,7 +4965,8 @@ fn task_row(
     today: NaiveDate,
     expanded: bool,
     actions: &mut Vec<Action>,
-) {
+    order: Option<&[Uuid]>,
+) -> egui::Response {
     let vis = ui.visuals().clone();
     let weak = vis.weak_text_color();
 
@@ -4959,7 +5013,10 @@ fn task_row(
         (42.0, 52.0, 14.5, 11.5, 24.0, 9.5, 22.0, 44.0)
     };
     let height = if meta.is_empty() { h_one } else { h_two };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::click());
+    // Desktop: open tasks can be dragged to arrange them ("My order"); on touch, dragging
+    // scrolls, and the task's menu has Move up / down instead.
+    let sense = if order.is_some() && !touch { Sense::click_and_drag() } else { Sense::click() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
     let bg = if selected {
         vis.selection.bg_fill.gamma_multiply(0.35)
     } else if resp.hovered() {
@@ -5058,12 +5115,28 @@ fn task_row(
             actions.push(Action::ToggleDone(t.id));
             ui.close_menu();
         }
+        if let Some(ids) = order {
+            if let Some(i) = ids.iter().position(|x| *x == t.id) {
+                ui.separator();
+                for (show, label, to) in [
+                    (i > 0, tr("⬆  Move up"), i.saturating_sub(1)),
+                    (i + 1 < ids.len(), tr("⬇  Move down"), i + 1),
+                    (i > 1, tr("⬆  Move to top"), 0),
+                ] {
+                    if show && ui.button(label).on_hover_text(tr("Switches the list to “My order”")).clicked() {
+                        actions.push(Action::MoveTask(ids.to_vec(), t.id, to));
+                        ui.close_menu();
+                    }
+                }
+            }
+        }
         ui.separator();
         if ui.button(RichText::new(tr("🗑  Delete task")).color(DANGER)).clicked() {
             actions.push(Action::Delete(t.id));
             ui.close_menu();
         }
     });
+    resp
 }
 
 /// Version, system, paths and the end of each log: what's needed to look into a problem.

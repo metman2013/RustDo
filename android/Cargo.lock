@@ -1085,8 +1085,6 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.31.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "910906e3f042ea6d2378ec12a6fd07698e14ddae68aed2d819ffe944a73aab9e"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -1772,6 +1770,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3072,15 +3072,17 @@ dependencies = [
 
 [[package]]
 name = "rustdo"
-version = "0.4.3"
+version = "0.4.7"
 dependencies = [
  "android_logger",
+ "base64",
  "chrono",
  "csv",
  "directories",
  "eframe",
  "egui_extras",
  "ehttp",
+ "image",
  "jni 0.21.1",
  "js-sys",
  "log",
@@ -3104,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "rustdo-android"
-version = "0.4.3"
+version = "0.4.7"
 dependencies = [
  "rustdo",
 ]
