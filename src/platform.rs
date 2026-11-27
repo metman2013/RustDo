@@ -365,9 +365,8 @@ pub fn copy_text(ctx: &eframe::egui::Context, text: String) {
     ctx.copy_text(text);
 }
 
-/// Whether a Paste button can read the clipboard here (Android and the browser; on the
-/// desktop Ctrl+V does it).
-pub const CAN_PASTE: bool = cfg!(any(target_os = "android", target_arch = "wasm32"));
+/// Whether Paste (button or right-click) can read the clipboard here: everywhere.
+pub const CAN_PASTE: bool = true;
 
 fn paste_id(target: &str) -> eframe::egui::Id {
     eframe::egui::Id::new(("rustdo_paste", target))
@@ -397,7 +396,10 @@ pub fn request_paste(ctx: &eframe::egui::Context, target: &'static str) {
         });
     }
     #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
-    let _ = (ctx, target);
+    match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+        Ok(text) => ctx.data_mut(|d| d.insert_temp(paste_id(target), text)),
+        Err(e) => log::warn!(target: "rustdo", "couldn't read the clipboard: {e}"),
+    }
 }
 
 /// Text pasted into the field `target`, once.

@@ -7,7 +7,7 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 
 ### Correcciones
 - Android: copiar no llegaba al portapapeles del teléfono, así que una clave de sincronización, un código para compartir, una lista o una copia de seguridad copiados no se podían pegar en otras apps. Ahora cada botón Copiar usa el portapapeles de Android y muestra «✔ Copiado» un momento.
-- Android y la app web en teléfonos y tabletas: los campos de dirección del hub, clave de sincronización y código para compartir tienen un botón 📋 Pegar, para meter directamente una clave copiada en otro lugar.
+- Los campos de dirección del hub, clave de sincronización y código para compartir tienen un botón 📋 Pegar, y Pegar con clic derecho (o manteniendo pulsado), en Windows, Linux, Android y la web, para meter directamente una clave copiada en otro lugar.
 
 ## 0.4.9 - 2026-11-28
 

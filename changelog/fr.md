@@ -7,7 +7,7 @@ traduites. Les versions absentes ici s'affichent en anglais.
 
 ### Corrections
 - Android : la copie n'atteignait pas le presse-papiers du téléphone, donc une clé de synchronisation, un code de partage, une liste ou une sauvegarde copiés ne pouvaient pas être collés dans d'autres apps. Chaque bouton Copier utilise maintenant le presse-papiers d'Android et affiche « ✔ Copié » un instant.
-- Android, et l'app web sur téléphones et tablettes : les champs adresse du hub, clé de synchronisation et code de partage ont un bouton 📋 Coller, pour y mettre directement une clé copiée ailleurs.
+- Les champs adresse du hub, clé de synchronisation et code de partage ont un bouton 📋 Coller, et Coller par clic droit (ou appui long), sous Windows, Linux, Android et sur le web, pour y mettre directement une clé copiée ailleurs.
 
 ## 0.4.9 - 2026-11-28
 

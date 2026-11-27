@@ -54,6 +54,9 @@ base64 = "0.22"
 directories = "5"
 rfd = "0.15"
 ureq = { version = "2", optional = true }
+# Paste buttons and right-click Paste in text fields (egui can't read the clipboard on
+# request). The same version egui already uses.
+arboard = { version = "3", default-features = false }
 
 # Windows: scheduled toast notifications for reminders (same version egui already uses).
 [target.'cfg(windows)'.dependencies]

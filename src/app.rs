@@ -4790,16 +4790,26 @@ fn copy_button(ui: &mut egui::Ui, label: &str, text: impl FnOnce() -> String) {
     }
 }
 
-/// A one-line text field with a "📋 Paste" button beside it where the clipboard can be read
-/// that way (Android, and the web app on touch screens, which have no Ctrl+V). The pasted
-/// text replaces what's in the field.
+/// A one-line text field with a "📋 Paste" button beside it, and Paste when it's
+/// right-clicked (egui text boxes have no menu of their own, and phones have no Ctrl+V).
+/// The pasted text replaces what's in the field.
 fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &'static str) -> egui::Response {
     if let Some(text) = platform::take_paste(ui.ctx(), target) {
         *value = text.trim().to_string();
     }
-    let paste = platform::CAN_PASTE && (cfg!(target_os = "android") || is_touch(ui));
-    if !paste {
-        return ui.add(egui::TextEdit::singleline(value).hint_text(hint).min_size(field_height(ui)).desired_width(f32::INFINITY));
+    // Right-click (or long-press) the field: Paste, like other apps' text boxes.
+    let menu = |r: &egui::Response| {
+        r.context_menu(|ui| {
+            if ui.button(tr("📋 Paste")).clicked() {
+                platform::request_paste(ui.ctx(), target);
+                ui.close_menu();
+            }
+        });
+    };
+    if !platform::CAN_PASTE {
+        let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint).min_size(field_height(ui)).desired_width(f32::INFINITY));
+        menu(&r);
+        return r;
     }
     ui.horizontal(|ui| {
         let button_w = if is_touch(ui) { 96.0 } else { 80.0 };
@@ -4810,6 +4820,7 @@ fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &
                 .vertical_align(Align::Center)
                 .desired_width((ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0)),
         );
+        menu(&r);
         if ui.add(egui::Button::new(tr("📋 Paste")).min_size(Vec2::new(button_w, field_height(ui).y))).clicked() {
             platform::request_paste(ui.ctx(), target);
         }

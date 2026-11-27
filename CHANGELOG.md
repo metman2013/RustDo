@@ -14,7 +14,7 @@ Each release needs its entry in all three (a test checks the current version).
 
 ### Fixed
 - Android: copying didn't reach the phone's clipboard, so a copied sync key, share code, list or backup couldn't be pasted into other apps. Every Copy button now uses Android's clipboard, and says "✔ Copied" for a moment.
-- Android, and the web app on phones and tablets: the hub address, sync key and share code fields have a 📋 Paste button, so a key copied elsewhere goes straight in.
+- The hub address, sync key and share code fields have a 📋 Paste button, and Paste when you right-click (or long-press) them, on Windows, Linux, Android and the web, so a key copied elsewhere goes straight in.
 
 ## 0.4.9 - 2026-11-28
 
