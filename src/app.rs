@@ -3290,9 +3290,21 @@ impl TodoApp {
                             let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
                             rows.push((id, r.rect));
-                            // Desktop: drag a list to move it (on touch, dragging scrolls).
+                            // Desktop: drag a list to move it. Touch: dragging the row scrolls,
+                            // so a ≡ handle (left of the count) moves it instead.
                             if !is_touch(ui) && r.drag_started() {
                                 self.list_drag = Some(id);
+                            }
+                            if is_touch(ui) && list_count > 1 {
+                                let h = Rect::from_center_size(Pos2::new(r.rect.right() - 62.0, r.rect.center().y), Vec2::new(40.0, r.rect.height()));
+                                let handle = ui.interact(h, Id::new(("list_handle", id)), Sense::drag());
+                                let color = if handle.dragged() { ACCENT } else { ui.visuals().weak_text_color() };
+                                for dy in [-5.0, 0.0, 5.0] {
+                                    ui.painter().hline((h.center().x - 8.0)..=(h.center().x + 8.0), h.center().y + dy, Stroke::new(2.0_f32, color));
+                                }
+                                if handle.drag_started() {
+                                    self.list_drag = Some(id);
+                                }
                             }
                             if r.clicked() {
                                 self.view = View::List(id);

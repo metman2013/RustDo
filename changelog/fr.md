@@ -7,6 +7,8 @@ traduites. Les versions absentes ici s'affichent en anglais.
 
 ### Corrections
 - Téléphones et tablettes : les tâches se déplacent maintenant à la main dans votre ordre. En « Mon ordre », chaque tâche a une poignée ≡ : faites-la glisser vers le haut ou le bas (glisser ailleurs sur la tâche fait toujours défiler la liste).
+- Téléphones et tablettes : les listes aussi se réordonnent, avec la poignée ≡ de chaque liste dans le menu.
+- Sur téléphones et tablettes, les notes adhésives ont un coin plus grand pour les redimensionner au doigt.
 
 ## 0.4.7 - 2026-11-27
 

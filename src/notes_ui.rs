@@ -1106,13 +1106,16 @@ fn wall_card(
     }
 
     // Resize from the bottom-right corner.
-    let grip = egui::Rect::from_min_max(rect.max - Vec2::splat(18.0), rect.max);
+    // Touch: a finger-sized corner (the lines are drawn bigger to match).
+    let grip_size = if touch { 40.0 } else { 18.0 };
+    let grip = egui::Rect::from_min_max(rect.max - Vec2::splat(grip_size), rect.max);
     if movable {
+        let step = if touch { 7.0 } else { 4.0 };
         for i in 1..=3 {
-            let d = i as f32 * 4.0;
+            let d = i as f32 * step;
             ui.painter().line_segment(
                 [grip.right_bottom() - Vec2::new(d, 3.0), grip.right_bottom() - Vec2::new(3.0, d)],
-                Stroke::new(1.0_f32, ink.gamma_multiply(0.5)),
+                Stroke::new(if touch { 1.5_f32 } else { 1.0 }, ink.gamma_multiply(0.5)),
             );
         }
         let g = ui.interact(grip, Id::new(("wall_grip", id)), Sense::drag()).on_hover_cursor(CursorIcon::ResizeNwSe);

@@ -331,6 +331,20 @@ jobs:
           chmod +x out/RustDo-Hub-* out/install-linux.sh
           file out/RustDo-Hub-*
           "./out/RustDo-Hub-$V-linux-x86_64" --help | grep -q Usage
+      # install-linux.sh as people run it, on a real systemd machine: the hub must start as
+      # a service, answer, save its data, and survive an update (running the script again).
+      - name: Linux installer (systemd)
+        run: |
+          cd out
+          sudo sh install-linux.sh
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7979/api/hello && break; sleep 1; done
+          curl -fsS -X POST http://127.0.0.1:7979/api/account/new >/dev/null
+          sudo test -s /var/lib/rustdo-hub/hub.json || { echo "::error::the hub service didn't save its data"; sudo journalctl -u rustdo-hub --no-pager; exit 1; }
+          sudo sh install-linux.sh
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:7979/api/hello && break; sleep 1; done
+          systemctl is-active rustdo-hub
+          systemctl show rustdo-hub -p User -p DynamicUser
+          sudo systemctl disable --now rustdo-hub
       - uses: actions/upload-artifact@v6
         with:
           name: hub-linux
