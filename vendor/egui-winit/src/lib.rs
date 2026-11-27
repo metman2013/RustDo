@@ -863,7 +863,12 @@ impl State {
             self.clipboard.set_text(copied_text);
         }
 
-        let allow_ime = ime.is_some();
+        // RustDo: on Android, keep the on-screen keyboard while a text field is selected,
+        // even when egui reports no IME area. egui only reports it for a field that's on
+        // screen, and the keyboard itself can push a low field out of view: hiding the
+        // keyboard then brought the field back, which showed the keyboard again, over and
+        // over (the page "danced").
+        let allow_ime = ime.is_some() || (cfg!(target_os = "android") && self.egui_ctx.wants_keyboard_input());
         if self.allow_ime != allow_ime {
             self.allow_ime = allow_ime;
             profiling::scope!("set_ime_allowed");

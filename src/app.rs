@@ -3465,6 +3465,7 @@ impl TodoApp {
                         .vertical_align(Align::Center)
                         .desired_width(f32::INFINITY),
                 );
+                keep_above_keyboard(&r);
                 if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
                     if let Some(id) = self.store.add_list(&self.new_list) {
                         self.new_list.clear();
@@ -3883,6 +3884,11 @@ impl TodoApp {
             }
             self.insets_checked = Some(Instant::now());
         }
+        // Where the on-screen keyboard starts (screen y), for fields to scroll above it. Only
+        // a tall bottom inset is the keyboard (the navigation bar is always there).
+        let screen = ctx.screen_rect();
+        let keyboard_top = (self.insets[3] > screen.height() * 0.2).then(|| screen.bottom() - self.insets[3]);
+        ctx.data_mut(|d| d.insert_temp(Id::new(KEYBOARD_TOP_ID), keyboard_top));
         // The keyboard slides in and out over a few frames: keep measuring meanwhile.
         if self.keyboard_shown || self.insets[3] > 0.0 {
             ctx.request_repaint_after(StdDuration::from_millis(300));
@@ -4807,6 +4813,23 @@ fn discord_button(ui: &mut egui::Ui) {
     }
 }
 
+/// Where the on-screen keyboard starts, when it's up (Android).
+const KEYBOARD_TOP_ID: &str = "rustdo_keyboard_top";
+
+/// A selected text field that the on-screen keyboard covers scrolls up into view, so
+/// what's being typed can be seen. Call it right after adding the field.
+fn keep_above_keyboard(r: &egui::Response) {
+    if !r.has_focus() {
+        return;
+    }
+    let top: Option<f32> = r.ctx.data(|d| d.get_temp::<Option<f32>>(Id::new(KEYBOARD_TOP_ID))).flatten();
+    if let Some(top) = top {
+        if r.rect.bottom() > top - 8.0 {
+            r.scroll_to_me(Some(Align::Center));
+        }
+    }
+}
+
 /// A copy button that says "✔ Copied" for a moment after it's pressed (so it's clear it
 /// worked: on a phone nothing else shows it).
 fn copy_button(ui: &mut egui::Ui, label: &str, text: impl FnOnce() -> String) {
@@ -4840,6 +4863,7 @@ fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &
     if !platform::CAN_PASTE {
         let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint).min_size(field_height(ui)).desired_width(f32::INFINITY));
         menu(&r);
+        keep_above_keyboard(&r);
         return r;
     }
     ui.horizontal(|ui| {
@@ -4852,6 +4876,7 @@ fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &
                 .desired_width((ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0)),
         );
         menu(&r);
+        keep_above_keyboard(&r);
         if ui.add(egui::Button::new(tr("📋 Paste")).min_size(Vec2::new(button_w, field_height(ui).y))).clicked() {
             platform::request_paste(ui.ctx(), target);
         }
@@ -5361,6 +5386,7 @@ fn subtask_rows(ui: &mut egui::Ui, t: &Task, input: &mut String, actions: &mut V
             );
             enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
             lost = r.lost_focus();
+            keep_above_keyboard(&r);
         });
         if (add || enter) && !input.trim().is_empty() {
             actions.push(Action::AddStep(t.id, std::mem::take(input)));

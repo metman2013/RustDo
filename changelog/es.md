@@ -6,7 +6,8 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 ## 0.4.13 - 2026-11-28
 
 ### Correcciones
-- Android: al escribir en «+ Nueva lista» en el teléfono, la página podía saltar arriba y abajo. RustDo seguía cada medida de la altura del teclado mientras aparecía, incluso las que alternaban entre dos valores; ahora espera a medidas estables.
+- App de Android y app web en teléfonos y tabletas: al escribir en un campo bajo en la pantalla («+ Nueva lista», los cuadros de sincronizar y compartir), el teclado se abría y cerraba sin parar y la página saltaba. El teclado tapaba el campo, lo que lo cerraba, lo que destapaba el campo, lo que lo volvía a abrir. Ahora el teclado sigue abierto mientras hay un campo seleccionado, y el campo sube por encima del teclado.
+- Android: la página ya no sigue las medidas de la altura del teclado que alternan entre dos valores mientras aparece.
 
 ## 0.4.12 - 2026-11-28
 

@@ -13,7 +13,8 @@ Each release needs its entry in all three (a test checks the current version).
 ## 0.4.13 - 2026-11-28
 
 ### Fixed
-- Android: while typing in "+ New list" on a phone, the page could jump up and down. RustDo followed every reading of the keyboard's height while it slid in, including ones that flickered between two answers; it now waits for steady readings.
+- Android app and web app on phones and tablets: typing in a field low on the screen ("+ New list", the sync and sharing boxes) made the keyboard open and close over and over, so the page bounced. The keyboard covered the field, which made it close, which uncovered the field, which opened it again. The keyboard now stays open while a field is selected, and the field scrolls up above the keyboard.
+- Android: the page no longer follows readings of the keyboard's height that flicker between two answers while it slides in.
 
 ## 0.4.12 - 2026-11-28
 

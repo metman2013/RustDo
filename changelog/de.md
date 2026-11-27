@@ -6,7 +6,8 @@
 ## 0.4.13 - 2026-11-28
 
 ### Behoben
-- Android: Beim Tippen in „+ Neue Liste“ auf dem Smartphone konnte die Seite auf und ab springen. RustDo folgte jeder Messung der Tastaturhöhe beim Einblenden, auch solchen, die zwischen zwei Werten flackerten; jetzt wartet es auf stabile Werte.
+- Android-App und Web-App auf Smartphones und Tablets: Beim Tippen in ein Feld weit unten auf dem Bildschirm („+ Neue Liste“, die Felder für Synchronisieren und Teilen) ging die Tastatur immer wieder auf und zu, und die Seite hüpfte. Die Tastatur verdeckte das Feld, wodurch sie sich schloss, wodurch das Feld wieder sichtbar wurde, wodurch sie sich wieder öffnete. Jetzt bleibt die Tastatur offen, solange ein Feld ausgewählt ist, und das Feld rückt über die Tastatur.
+- Android: Die Seite folgt beim Einblenden der Tastatur keinen Messwerten mehr, die zwischen zwei Höhen flackern.
 
 ## 0.4.12 - 2026-11-28
 
