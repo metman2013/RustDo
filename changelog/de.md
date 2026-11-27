@@ -3,6 +3,12 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.10 - 2026-11-28
+
+### Behoben
+- Android: Kopieren erreichte die Zwischenablage des Telefons nicht, sodass ein kopierter Sync-Schlüssel, Freigabecode, eine Liste oder Sicherung nicht in anderen Apps eingefügt werden konnte. Jede Kopieren-Schaltfläche nutzt jetzt die Zwischenablage von Android und zeigt kurz „✔ Kopiert“.
+- Die Felder für Hub-Adresse, Sync-Schlüssel und Freigabecode haben eine Schaltfläche 📋 Einfügen und „Einfügen“ per Rechtsklick (oder langem Drücken), unter Windows, Linux, Android und im Web, sodass ein anderswo kopierter Schlüssel direkt hineinkommt.
+
 ## 0.4.9 - 2026-11-28
 
 ### Verbessert

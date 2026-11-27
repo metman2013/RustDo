@@ -978,7 +978,7 @@ impl TodoApp {
             );
             ui.horizontal_wrapped(|ui| {
                 if ui.button(tr("Copy diagnostic info")).on_hover_text(tr("Version, system and the last lines of the log")).clicked() {
-                    ui.ctx().copy_text(diagnostic_report());
+                    platform::copy_text(ui.ctx(), diagnostic_report());
                     self.close_settings(ui);
                     self.notify(tr("Diagnostic info copied. Paste it into your message or the Discord."));
                 }
@@ -1460,7 +1460,7 @@ impl TodoApp {
                     close = true;
                 }
                 if ui.button(tr("📋 Copy as text")).clicked() {
-                    ui.ctx().copy_text(showlist::to_text(&page));
+                    platform::copy_text(ui.ctx(), showlist::to_text(&page));
                     self.notify(tr("Copied. Paste it into an email or a message."));
                 }
                 if !cfg!(target_os = "android") && ui.button(tr("Print or save as PDF")).clicked() {
@@ -1554,9 +1554,7 @@ impl TodoApp {
                 ui.label(tr("2. Enter this code and sign in with the account you use for To Do:"));
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(code).monospace().size(24.0).strong());
-                    if ui.button(tr("📋 Copy code")).clicked() {
-                        ui.ctx().copy_text(code.clone());
-                    }
+                    copy_button(ui, tr("📋 Copy code"), || code.clone());
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
@@ -1851,9 +1849,7 @@ impl TodoApp {
                 );
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button(tr("📋 Copy key")).clicked() {
-                        ui.ctx().copy_text(key.clone());
-                    }
+                    copy_button(ui, tr("📋 Copy key"), || key.clone());
                     if ui.button(tr("Done")).clicked() {
                         close = true;
                     }
@@ -1863,16 +1859,12 @@ impl TodoApp {
             ui.add(egui::Label::new(tr("Your lists, tasks, sticky notes and settings stay the same on every device that uses the same RustDo Hub and sync key. Lists you share with family keep their own codes.")).wrap());
             ui.add_space(6.0);
             ui.label(RichText::new(tr("Hub address")).small());
-            ui.add(
-                egui::TextEdit::singleline(&mut dialog.hub)
-                    .hint_text(tr("e.g. https://todo.example.com or 192.168.1.20"))
-                    .desired_width(f32::INFINITY),
-            );
+            field_with_paste(ui, &mut dialog.hub, tr("e.g. https://todo.example.com or 192.168.1.20"), "sync_hub");
             ui.add_space(4.0);
             ui.radio_value(&mut dialog.join, false, tr("This is my first device: start syncing"));
             ui.radio_value(&mut dialog.join, true, tr("I already have a sync key"));
             if dialog.join {
-                ui.add(egui::TextEdit::singleline(&mut dialog.key).hint_text(tr("ABCDE-FGHJK-MNPQR-STUVW")).desired_width(f32::INFINITY));
+                field_with_paste(ui, &mut dialog.key, tr("ABCDE-FGHJK-MNPQR-STUVW"), "sync_key");
             }
             if let Some(err) = &dialog.error {
                 ui.label(RichText::new(err).color(DANGER).small());
@@ -2136,9 +2128,7 @@ impl TodoApp {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add(egui::Label::new(RichText::new(&share.code).monospace().size(26.0).strong()).selectable(true));
-                        if ui.button(tr("Copy")).clicked() {
-                            ui.ctx().copy_text(share.code.clone());
-                        }
+                        copy_button(ui, tr("Copy"), || share.code.clone());
                     });
                     ui.label(RichText::new(trf("Hub: {hub}", &[("hub", &share.hub)])).weak().small());
                     let status = match (&self.sync_error, share.last_sync) {
@@ -2168,19 +2158,11 @@ impl TodoApp {
                 }
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr("Hub address")).small());
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut dialog.hub)
-                        .hint_text("e.g. 192.168.1.20:7979")
-                        .desired_width(f32::INFINITY),
-                );
+                let r = field_with_paste(ui, &mut dialog.hub, "e.g. 192.168.1.20:7979", "share_hub");
                 submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && list.is_some();
                 if list.is_none() {
                     ui.label(RichText::new(tr("Share code")).small());
-                    let r = ui.add(
-                        egui::TextEdit::singleline(&mut dialog.code)
-                            .hint_text(tr("e.g. K7QM-2XPD"))
-                            .desired_width(f32::INFINITY),
-                    );
+                    let r = field_with_paste(ui, &mut dialog.code, tr("e.g. K7QM-2XPD"), "share_code");
                     submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 }
                 if let Some(e) = &dialog.error {
@@ -2579,7 +2561,7 @@ impl TodoApp {
         #[cfg(target_os = "android")]
         {
             let _ = name;
-            ctx.copy_text(json);
+            platform::copy_text(ctx, json);
             self.notify(tr("Backup copied. Paste it into a note or email to keep it safe."));
         }
         self.store.settings.last_export = Some(now);
@@ -2632,7 +2614,7 @@ impl TodoApp {
                 let cmd = "docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest";
                 ui.add(egui::Label::new(RichText::new(cmd).monospace().small()).wrap());
                 if ui.small_button(tr("📋 Copy command")).clicked() {
-                    ui.ctx().copy_text(cmd.to_string());
+                    platform::copy_text(ui.ctx(), cmd.to_string());
                 }
                 para(ui, tr("The hub's address is then the machine's address with port 7979, e.g. http://192.168.1.20:7979."));
                 ui.label(RichText::new(tr("On a Synology NAS")).strong());
@@ -2924,7 +2906,7 @@ impl TodoApp {
             self.notify(tr("There are no sticky notes to back up yet."));
             return;
         }
-        ctx.copy_text(serde_json::to_string_pretty(&snapshot).unwrap_or_default());
+        platform::copy_text(ctx, serde_json::to_string_pretty(&snapshot).unwrap_or_default());
         let n = snapshot.notes.len();
         self.notify(format!(
             "{} {}",
@@ -4792,6 +4774,59 @@ fn discord_button(ui: &mut egui::Ui) {
     if ui.add(button).on_hover_text(tr("Chat, ideas and help: opens in your browser")).on_hover_cursor(CursorIcon::PointingHand).clicked() {
         ui.ctx().open_url(egui::OpenUrl::new_tab(update::DISCORD));
     }
+}
+
+/// A copy button that says "✔ Copied" for a moment after it's pressed (so it's clear it
+/// worked: on a phone nothing else shows it).
+fn copy_button(ui: &mut egui::Ui, label: &str, text: impl FnOnce() -> String) {
+    let id = Id::new(("copied", label));
+    let now = ui.input(|i| i.time);
+    let recent = ui.data(|d| d.get_temp::<f64>(id)).is_some_and(|t| now - t < 2.0);
+    let shown = if recent { tr("✔ Copied") } else { label };
+    if ui.button(shown).clicked() {
+        platform::copy_text(ui.ctx(), text());
+        ui.data_mut(|d| d.insert_temp(id, now));
+        ui.ctx().request_repaint_after(StdDuration::from_millis(2100));
+    }
+}
+
+/// A one-line text field with a "📋 Paste" button beside it, and Paste when it's
+/// right-clicked (egui text boxes have no menu of their own, and phones have no Ctrl+V).
+/// The pasted text replaces what's in the field.
+fn field_with_paste(ui: &mut egui::Ui, value: &mut String, hint: &str, target: &'static str) -> egui::Response {
+    if let Some(text) = platform::take_paste(ui.ctx(), target) {
+        *value = text.trim().to_string();
+    }
+    // Right-click (or long-press) the field: Paste, like other apps' text boxes.
+    let menu = |r: &egui::Response| {
+        r.context_menu(|ui| {
+            if ui.button(tr("📋 Paste")).clicked() {
+                platform::request_paste(ui.ctx(), target);
+                ui.close_menu();
+            }
+        });
+    };
+    if !platform::CAN_PASTE {
+        let r = ui.add(egui::TextEdit::singleline(value).hint_text(hint).min_size(field_height(ui)).desired_width(f32::INFINITY));
+        menu(&r);
+        return r;
+    }
+    ui.horizontal(|ui| {
+        let button_w = if is_touch(ui) { 96.0 } else { 80.0 };
+        let r = ui.add(
+            egui::TextEdit::singleline(value)
+                .hint_text(hint)
+                .min_size(field_height(ui))
+                .vertical_align(Align::Center)
+                .desired_width((ui.available_width() - button_w - ui.spacing().item_spacing.x).max(80.0)),
+        );
+        menu(&r);
+        if ui.add(egui::Button::new(tr("📋 Paste")).min_size(Vec2::new(button_w, field_height(ui).y))).clicked() {
+            platform::request_paste(ui.ctx(), target);
+        }
+        r
+    })
+    .inner
 }
 
 /// Phones: "‹ Back" as a clear, thumb-sized button. The chevron is drawn (the built-in

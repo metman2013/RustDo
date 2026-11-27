@@ -3072,9 +3072,10 @@ dependencies = [
 
 [[package]]
 name = "rustdo"
-version = "0.4.9"
+version = "0.4.10"
 dependencies = [
  "android_logger",
+ "arboard",
  "base64",
  "chrono",
  "csv",

@@ -1,6 +1,6 @@
 [workspace.package]
 # The one place to bump the version for a release (desktop, web and Android).
-version = "0.4.9"
+version = "0.4.10"
 
 [package]
 name = "rustdo"
@@ -54,6 +54,9 @@ base64 = "0.22"
 directories = "5"
 rfd = "0.15"
 ureq = { version = "2", optional = true }
+# Paste buttons and right-click Paste in text fields (egui can't read the clipboard on
+# request). The same version egui already uses.
+arboard = { version = "3", default-features = false }
 
 # Windows: scheduled toast notifications for reminders (same version egui already uses).
 [target.'cfg(windows)'.dependencies]
@@ -88,6 +91,8 @@ web-sys = { version = "0.3", features = [
     "Blob", "BlobPropertyBag", "Url", "HtmlElement", "HtmlAnchorElement", "Location", "MediaQueryList",
     "Notification", "NotificationOptions", "NotificationPermission",
     "Navigator", "ServiceWorkerContainer", "ServiceWorkerRegistration", "History",
+    # Paste buttons (sync key, share code, hub address).
+    "Clipboard",
 ] }
 # Web: Microsoft sign-in for the To Do import (PKCE).
 sha2 = "0.10"
