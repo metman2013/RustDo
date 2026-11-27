@@ -3,6 +3,11 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.12 - 2026-11-28
+
+### Behoben
+- Android-Smartphones: Seit 0.4.11 waren Fenster wie „Neuigkeiten“ an den Bildschirmrand gequetscht und ohne Schließen-Schaltfläche, weil die Navigationsleiste für die Tastatur gehalten wurde. Sie sehen wieder aus wie vorher und rücken weiterhin über die Tastatur, wenn sie offen ist.
+
 ## 0.4.11 - 2026-11-28
 
 ### Behoben

@@ -4886,8 +4886,9 @@ fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 fn dialog_window<'a>(ctx: &egui::Context, title: impl Into<egui::WidgetText>, insets: [f32; 4]) -> egui::Window<'a> {
     let window = egui::Window::new(title).collapsible(false).resizable(false);
     // The on-screen keyboard is up (Android): keep the dialog in the space above it, and
-    // let it scroll there (a field being typed in scrolls into view).
-    if insets[3] > 0.5 {
+    // let it scroll there (a field being typed in scrolls into view). The bottom inset is
+    // also the navigation bar, which is always there: only a tall one is the keyboard.
+    if insets[3] > ctx.screen_rect().height() * 0.2 {
         let room = (ctx.screen_rect().height() - insets[1] - insets[3] - 24.0).max(120.0);
         return window
             .anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 8.0))

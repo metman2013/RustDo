@@ -10,6 +10,11 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.12 - 2026-11-28
+
+### Fixed
+- Android phones: since 0.4.11, windows such as What's new were squeezed against the screen edge and missing their Close button, because the navigation bar was taken for the keyboard. They look as before again, and still move above the keyboard when it's open.
+
 ## 0.4.11 - 2026-11-28
 
 ### Fixed

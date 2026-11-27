@@ -3,6 +3,11 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.12 - 2026-11-28
+
+### Corrections
+- Téléphones Android : depuis la 0.4.11, des fenêtres comme Nouveautés étaient tassées contre le bord de l'écran et sans bouton Fermer, car la barre de navigation était prise pour le clavier. Elles s'affichent de nouveau comme avant, et remontent toujours au-dessus du clavier quand il est ouvert.
+
 ## 0.4.11 - 2026-11-28
 
 ### Corrections

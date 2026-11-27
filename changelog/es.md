@@ -3,6 +3,11 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.12 - 2026-11-28
+
+### Correcciones
+- Teléfonos Android: desde la 0.4.11, ventanas como Novedades quedaban apretadas contra el borde y sin el botón Cerrar, porque la barra de navegación se tomaba por el teclado. Vuelven a verse como antes, y siguen subiendo por encima del teclado cuando está abierto.
+
 ## 0.4.11 - 2026-11-28
 
 ### Correcciones
