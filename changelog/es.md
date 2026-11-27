@@ -3,6 +3,12 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.11 - 2026-11-28
+
+### Correcciones
+- Tabletas y teléfonos: el teclado en pantalla podía tapar el cuadro en el que escribías (por ejemplo al activar la sincronización). Ahora los diálogos se colocan en el espacio sobre el teclado y se desplazan ahí, y la app web se ajusta por encima del teclado en lugar de quedar detrás.
+- Tabletas en horizontal (app de Android y app web): el menú no se podía desplazar hasta Nueva lista, Importar, Notas adhesivas y el final del menú. En pantallas bajas ahora se desplaza todo el menú.
+
 ## 0.4.10 - 2026-11-28
 
 ### Correcciones

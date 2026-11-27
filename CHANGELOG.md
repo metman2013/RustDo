@@ -10,6 +10,12 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.11 - 2026-11-28
+
+### Fixed
+- Tablets and phones: the on-screen keyboard could cover the box you were typing in (for example when turning on sync). Dialogs now move into the space above the keyboard and scroll there, and the web app shrinks to fit above the keyboard instead of hiding behind it.
+- Tablets in landscape (Android app and web app): the menu couldn't scroll down to New list, Import, Sticky notes and the bottom of the menu. On short screens the whole menu now scrolls.
+
 ## 0.4.10 - 2026-11-28
 
 ### Fixed

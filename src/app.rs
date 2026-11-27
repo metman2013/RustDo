@@ -3248,7 +3248,16 @@ impl TodoApp {
     /// The list picker: a left side panel on wide screens, the whole screen on phones.
     fn sidebar(&mut self, ctx: &egui::Context, today: NaiveDate, narrow: bool) {
         let side = self.side_frame(ctx);
-        let body = |ui: &mut egui::Ui| {
+        // Wide but short screens (a tablet in landscape): everything doesn't fit with the
+        // footer pinned to the bottom, so the whole sidebar scrolls as one, like on a phone.
+        let flow = narrow || {
+            let touch = ctx.data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false);
+            let row = if touch { 48.0 } else { 30.0 } + 4.0;
+            let rows = 5.0 + self.store.lists.len().min(4) as f32 + if notes::AVAILABLE { 2.0 } else { 0.0 };
+            let needed = 120.0 + rows * row + if touch { 140.0 } else { 86.0 } + SIDEBAR_FOOTER_H;
+            ctx.screen_rect().height() - self.insets[1] - self.insets[3] < needed
+        };
+        let mut body = |ui: &mut egui::Ui| {
                 ui.add_space(10.0);
                 let touch = is_touch(ui);
                 ui.horizontal(|ui| {
@@ -3326,8 +3335,9 @@ impl TodoApp {
                     (false, false) => 52.0,
                 } + if notes::AVAILABLE { NOTES_SECTION_H } else { 0.0 }
                     + SIDEBAR_FOOTER_H;
-                // Phone layout: the whole screen scrolls as one page, so show every list.
-                let max_h = if narrow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
+                // Phone layout (and short screens): the whole sidebar scrolls as one page, so
+                // show every list.
+                let max_h = if flow { f32::INFINITY } else { (ui.available_height() - reserved).max(60.0) };
                 egui::ScrollArea::vertical()
                     .max_height(max_h)
                     .auto_shrink([false, true])
@@ -3512,7 +3522,7 @@ impl TodoApp {
                         }
                     });
                 };
-                if narrow {
+                if flow {
                     ui.add_space(8.0);
                     ui.separator();
                     footer(ui, &mut self.whats_new);
@@ -3538,7 +3548,13 @@ impl TodoApp {
                 .resizable(true)
                 .default_width(250.0)
                 .width_range(200.0..=400.0)
-                .show(ctx, body);
+                .show(ctx, |ui| {
+                    if flow {
+                        egui::ScrollArea::vertical().id_salt("sidebar_page").auto_shrink([false; 2]).show(ui, |ui| body(ui));
+                    } else {
+                        body(ui);
+                    }
+                });
         }
     }
 
@@ -4869,6 +4885,15 @@ fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// (import summaries, pasted backups) scrolls inside the dialog's own ScrollArea.
 fn dialog_window<'a>(ctx: &egui::Context, title: impl Into<egui::WidgetText>, insets: [f32; 4]) -> egui::Window<'a> {
     let window = egui::Window::new(title).collapsible(false).resizable(false);
+    // The on-screen keyboard is up (Android): keep the dialog in the space above it, and
+    // let it scroll there (a field being typed in scrolls into view).
+    if insets[3] > 0.5 {
+        let room = (ctx.screen_rect().height() - insets[1] - insets[3] - 24.0).max(120.0);
+        return window
+            .anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 8.0))
+            .max_height(room)
+            .vscroll(true);
+    }
     if ctx.screen_rect().width() < NARROW_WIDTH {
         window.anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 16.0))
     } else {
