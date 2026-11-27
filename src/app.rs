@@ -3290,9 +3290,21 @@ impl TodoApp {
                             let selected = self.view == View::List(id) && !searching && !self.notes_page;
                             let r = nav_row(ui, selected, icon, &name, count);
                             rows.push((id, r.rect));
-                            // Desktop: drag a list to move it (on touch, dragging scrolls).
+                            // Desktop: drag a list to move it. Touch: dragging the row scrolls,
+                            // so a ≡ handle (left of the count) moves it instead.
                             if !is_touch(ui) && r.drag_started() {
                                 self.list_drag = Some(id);
+                            }
+                            if is_touch(ui) && list_count > 1 {
+                                let h = Rect::from_center_size(Pos2::new(r.rect.right() - 62.0, r.rect.center().y), Vec2::new(40.0, r.rect.height()));
+                                let handle = ui.interact(h, Id::new(("list_handle", id)), Sense::drag());
+                                let color = if handle.dragged() { ACCENT } else { ui.visuals().weak_text_color() };
+                                for dy in [-5.0, 0.0, 5.0] {
+                                    ui.painter().hline((h.center().x - 8.0)..=(h.center().x + 8.0), h.center().y + dy, Stroke::new(2.0_f32, color));
+                                }
+                                if handle.drag_started() {
+                                    self.list_drag = Some(id);
+                                }
                             }
                             if r.clicked() {
                                 self.view = View::List(id);
@@ -3467,12 +3479,12 @@ impl TodoApp {
     fn notes_panel(&mut self, ctx: &egui::Context) {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
         egui::CentralPanel::default().show(ctx, |ui| {
-            if narrow && back_button(ui, tr("Lists")).clicked() {
-                self.show_nav = true;
-            }
-            match notes_ui::notes_page(ui, &self.notes) {
+            // Same top as the task pages (☰ on phones, then the page's title and buttons).
+            ui.add_space(10.0);
+            match notes_ui::notes_page(ui, &self.notes, narrow) {
                 notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
+                notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::None => {}
             }
         });
@@ -5046,7 +5058,27 @@ fn task_row(
     paint_star(ui, star_rect.center(), t.important, star.hovered());
 
     let text_left = rect.left() + text_gap;
-    let right_edge = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
+    // Touch, in "My order": a ≡ handle to drag the task up or down (dragging anywhere else
+    // on the row scrolls the list, as usual on a phone).
+    let handle = (touch && order.is_some() && store.settings.sort == SortMode::Manual).then(|| {
+        let left = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
+        let r = Rect::from_center_size(Pos2::new(left - hit * 0.4 - 2.0, rect.center().y), Vec2::new(hit * 0.8, hit));
+        let resp = ui.interact(r, Id::new(("task_handle", t.id)), Sense::drag());
+        let color = if resp.dragged() { ACCENT } else { weak };
+        for dy in [-5.0, 0.0, 5.0] {
+            let y = r.center().y + dy;
+            ui.painter().hline((r.center().x - 8.0)..=(r.center().x + 8.0), y, Stroke::new(2.0_f32, color));
+        }
+        if resp.drag_started() {
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(("task_drag", view)), t.id));
+        }
+        resp
+    });
+    let right_edge = handle
+        .as_ref()
+        .map(|h| h.rect.left())
+        .or_else(|| expand.as_ref().map(|e| e.rect.left()))
+        .unwrap_or(star_rect.left());
     let text_width = (right_edge - 8.0 - text_left).max(10.0);
 
     let mut title_job = LayoutJob::single_section(

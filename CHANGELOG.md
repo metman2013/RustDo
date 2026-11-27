@@ -10,6 +10,14 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.8 - 2026-11-27
+
+### Fixed
+- The Sticky notes page now starts like every other page: ☰ (on phones), the title, then "+ New note" and a More menu (back up, restore, tidy up), all on one line.
+- Phones and tablets: tasks can now be dragged into your own order. In "My order", each task has a ≡ handle: drag it up or down (dragging elsewhere on a task still scrolls the list).
+- Phones and tablets: lists can be dragged into a new order too, by the ≡ handle on each list in the menu.
+- Sticky notes on phones and tablets have a bigger corner to resize them with a finger.
+
 ## 0.4.7 - 2026-11-27
 
 ### New
