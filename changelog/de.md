@@ -3,6 +3,11 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.8 - 2026-11-27
+
+### Behoben
+- Smartphones und Tablets: Aufgaben lassen sich jetzt in die eigene Reihenfolge ziehen. In „Meine Reihenfolge“ hat jede Aufgabe einen ≡-Griff: Ziehe ihn nach oben oder unten (Ziehen an anderer Stelle scrollt weiterhin die Liste).
+
 ## 0.4.7 - 2026-11-27
 
 ### Neu

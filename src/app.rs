@@ -5046,7 +5046,27 @@ fn task_row(
     paint_star(ui, star_rect.center(), t.important, star.hovered());
 
     let text_left = rect.left() + text_gap;
-    let right_edge = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
+    // Touch, in "My order": a ≡ handle to drag the task up or down (dragging anywhere else
+    // on the row scrolls the list, as usual on a phone).
+    let handle = (touch && order.is_some() && store.settings.sort == SortMode::Manual).then(|| {
+        let left = expand.as_ref().map_or(star_rect.left(), |e| e.rect.left());
+        let r = Rect::from_center_size(Pos2::new(left - hit * 0.4 - 2.0, rect.center().y), Vec2::new(hit * 0.8, hit));
+        let resp = ui.interact(r, Id::new(("task_handle", t.id)), Sense::drag());
+        let color = if resp.dragged() { ACCENT } else { weak };
+        for dy in [-5.0, 0.0, 5.0] {
+            let y = r.center().y + dy;
+            ui.painter().hline((r.center().x - 8.0)..=(r.center().x + 8.0), y, Stroke::new(2.0_f32, color));
+        }
+        if resp.drag_started() {
+            ui.ctx().data_mut(|d| d.insert_temp(Id::new(("task_drag", view)), t.id));
+        }
+        resp
+    });
+    let right_edge = handle
+        .as_ref()
+        .map(|h| h.rect.left())
+        .or_else(|| expand.as_ref().map(|e| e.rect.left()))
+        .unwrap_or(star_rect.left());
     let text_width = (right_edge - 8.0 - text_left).max(10.0);
 
     let mut title_job = LayoutJob::single_section(

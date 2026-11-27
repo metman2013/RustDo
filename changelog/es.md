@@ -3,6 +3,11 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.8 - 2026-11-27
+
+### Correcciones
+- Teléfonos y tabletas: ahora las tareas se pueden arrastrar a tu propio orden. En «Mi orden», cada tarea tiene un asa ≡: arrástrala hacia arriba o hacia abajo (arrastrar en otro punto de la tarea sigue desplazando la lista).
+
 ## 0.4.7 - 2026-11-27
 
 ### Novedades

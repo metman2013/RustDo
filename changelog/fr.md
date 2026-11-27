@@ -3,6 +3,11 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.8 - 2026-11-27
+
+### Corrections
+- Téléphones et tablettes : les tâches se déplacent maintenant à la main dans votre ordre. En « Mon ordre », chaque tâche a une poignée ≡ : faites-la glisser vers le haut ou le bas (glisser ailleurs sur la tâche fait toujours défiler la liste).
+
 ## 0.4.7 - 2026-11-27
 
 ### Nouveautés

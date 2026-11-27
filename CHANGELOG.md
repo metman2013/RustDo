@@ -10,6 +10,11 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.8 - 2026-11-27
+
+### Fixed
+- Phones and tablets: tasks can now be dragged into your own order. In "My order", each task has a ≡ handle: drag it up or down (dragging elsewhere on a task still scrolls the list).
+
 ## 0.4.7 - 2026-11-27
 
 ### New
