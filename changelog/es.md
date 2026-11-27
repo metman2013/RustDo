@@ -3,6 +3,11 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.14 - 2026-11-28
+
+### Correcciones
+- Android: en diálogos como Activar la sincronización, el teclado seguía abriéndose y cerrándose sin parar. Al abrirse el teclado, el diálogo se reconstruía para poder desplazarse, lo que deseleccionaba el campo y volvía a cerrar el teclado. Ahora los diálogos solo suben por encima del teclado y el campo sigue seleccionado. Lo mismo podía pasar con «+ Nueva lista» en una tableta en horizontal.
+
 ## 0.4.13 - 2026-11-28
 
 ### Correcciones

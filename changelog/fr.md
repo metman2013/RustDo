@@ -3,6 +3,11 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.14 - 2026-11-28
+
+### Corrections
+- Android : dans les dialogues comme Activer la synchronisation, le clavier s'ouvrait et se fermait encore sans arrêt. À l'ouverture du clavier, le dialogue était reconstruit pour défiler, ce qui désélectionnait le champ et refermait le clavier. Les dialogues remontent maintenant simplement au-dessus du clavier, et le champ reste sélectionné. La même chose pouvait arriver avec « + Nouvelle liste » sur une tablette en paysage.
+
 ## 0.4.13 - 2026-11-28
 
 ### Corrections

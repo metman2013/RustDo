@@ -3259,7 +3259,11 @@ impl TodoApp {
             let row = if touch { 48.0 } else { 30.0 } + 4.0;
             let rows = 5.0 + self.store.lists.len().min(4) as f32 + if notes::AVAILABLE { 2.0 } else { 0.0 };
             let needed = 120.0 + rows * row + if touch { 140.0 } else { 86.0 } + SIDEBAR_FOOTER_H;
-            ctx.screen_rect().height() - self.insets[1] - self.insets[3] < needed
+            // Not counting the on-screen keyboard: the layout mustn't change when it opens
+            // (that would make the selected "+ New list" field a new widget and close it).
+            let screen_h = ctx.screen_rect().height();
+            let bottom = if self.insets[3] > screen_h * 0.2 { 0.0 } else { self.insets[3] };
+            screen_h - self.insets[1] - bottom < needed
         };
         let mut body = |ui: &mut egui::Ui| {
                 ui.add_space(10.0);
@@ -4925,15 +4929,14 @@ fn back_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
 /// (import summaries, pasted backups) scrolls inside the dialog's own ScrollArea.
 fn dialog_window<'a>(ctx: &egui::Context, title: impl Into<egui::WidgetText>, insets: [f32; 4]) -> egui::Window<'a> {
     let window = egui::Window::new(title).collapsible(false).resizable(false);
-    // The on-screen keyboard is up (Android): keep the dialog in the space above it, and
-    // let it scroll there (a field being typed in scrolls into view). The bottom inset is
-    // also the navigation bar, which is always there: only a tall one is the keyboard.
+    // The on-screen keyboard is up (Android): move the dialog to the top, into the space
+    // above it. Only its position changes: making it scroll here (0.4.11) wrapped its
+    // contents in a new scroll area, which egui treats as new widgets, so the selected
+    // field lost focus, the keyboard closed, the dialog moved back and the keyboard opened
+    // again, over and over. The bottom inset is also the navigation bar, which is always
+    // there: only a tall one is the keyboard.
     if insets[3] > ctx.screen_rect().height() * 0.2 {
-        let room = (ctx.screen_rect().height() - insets[1] - insets[3] - 24.0).max(120.0);
-        return window
-            .anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 8.0))
-            .max_height(room)
-            .vscroll(true);
+        return window.anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 16.0));
     }
     if ctx.screen_rect().width() < NARROW_WIDTH {
         window.anchor(Align2::CENTER_TOP, Vec2::new(0.0, insets[1] + 16.0))

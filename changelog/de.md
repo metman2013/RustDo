@@ -3,6 +3,11 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.14 - 2026-11-28
+
+### Behoben
+- Android: In Dialogen wie „Synchronisierung einschalten“ ging die Tastatur weiterhin immer wieder auf und zu. Beim Öffnen der Tastatur wurde der Dialog zum Scrollen neu aufgebaut, wodurch das Feld die Auswahl verlor und die Tastatur sich wieder schloss. Dialoge rücken jetzt nur über die Tastatur, und das Feld bleibt ausgewählt. Dasselbe konnte bei „+ Neue Liste“ auf einem Tablet im Querformat passieren.
+
 ## 0.4.13 - 2026-11-28
 
 ### Behoben
