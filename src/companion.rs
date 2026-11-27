@@ -10,8 +10,9 @@
 //! reloads it when the other saves.
 //!
 //! Started at sign-in with "Start the companion when I sign in" turned off but reminders on
-//! (Windows), it runs quietly for reminders only: no tray icon, no notes, until RustDo is
-//! opened and asks it to wake up.
+//! (Windows), it runs for reminders only: no sticky notes, until RustDo is opened and asks
+//! it to wake up. It always shows its tray icon, so it's never running unseen, and the
+//! icon's menu can quit RustDo completely.
 
 use crate::i18n::tr;
 use crate::model::Settings;
@@ -34,7 +35,12 @@ pub fn is_sign_in_launch(args: &[String]) -> bool {
 
 /// Whether the companion should be running at all.
 pub fn wanted(settings: &Settings) -> bool {
-    SUPPORTED && (settings.companion || (cfg!(windows) && settings.notifications))
+    SUPPORTED && (settings.companion || reminders_when_closed(settings))
+}
+
+/// Windows: reminders keep arriving after RustDo is closed (the companion shows them).
+pub fn reminders_when_closed(settings: &Settings) -> bool {
+    cfg!(windows) && settings.notifications && settings.background_reminders
 }
 
 /// Whether it shows the tray icon and sticky notes (not just reminders).
@@ -44,7 +50,7 @@ pub fn full(settings: &Settings, started_at_sign_in: bool) -> bool {
 
 /// Whether it should start when the user signs in.
 pub fn starts_at_sign_in(settings: &Settings) -> bool {
-    SUPPORTED && ((settings.companion && settings.companion_autostart) || (cfg!(windows) && settings.notifications))
+    SUPPORTED && ((settings.companion && settings.companion_autostart) || reminders_when_closed(settings))
 }
 
 /// A small folder for the lock and request files (not the user's Documents).
@@ -73,6 +79,10 @@ const APP_LOCK: &str = "app.lock";
 const SHOW_APP_REQUEST: &str = "show-app.request";
 /// RustDo asks a quiet (reminders-only) companion to show its tray icon and notes.
 const WAKE_REQUEST: &str = "companion-wake.request";
+/// "Quit RustDo completely" in the tray: the main window closes too.
+const QUIT_APP_REQUEST: &str = "quit-app.request";
+/// "Quit RustDo completely" in the main window: the companion stops too.
+const QUIT_COMPANION_REQUEST: &str = "quit-companion.request";
 
 /// Held by the companion while it runs.
 pub fn lock_companion() -> Option<File> {
@@ -122,6 +132,17 @@ pub fn request_show_app() {
 
 pub fn take_show_app_request() -> bool {
     take_request(SHOW_APP_REQUEST)
+}
+
+/// The tray's "Quit RustDo completely" asked the main window to close.
+pub fn take_quit_app_request() -> bool {
+    take_request(QUIT_APP_REQUEST)
+}
+
+/// Asks the companion to stop (RustDo is quitting completely). Until RustDo is opened
+/// again or the next sign-in.
+pub fn request_quit() {
+    request(QUIT_COMPANION_REQUEST);
 }
 
 /// Starts the companion if it should be running (and isn't), and keeps the start-at-sign-in
@@ -287,7 +308,12 @@ mod process {
         settings: Settings,
         started_at_sign_in: bool,
         tray: Option<TrayIcon>,
+        /// What the tray icon was built for: the full companion (notes too) or reminders only.
+        tray_full: bool,
         commands: Receiver<TrayCommand>,
+        /// When to next ask the Store about an update (Store package only).
+        #[cfg(windows)]
+        next_update_check: Instant,
         command_tx: std::sync::mpsc::Sender<TrayCommand>,
         last_poll: Instant,
         settings_stamp: Option<std::time::SystemTime>,
@@ -338,7 +364,10 @@ mod process {
                 settings,
                 started_at_sign_in,
                 tray: None,
+                tray_full: false,
                 commands: rx,
+                #[cfg(windows)]
+                next_update_check: Instant::now() + Duration::from_secs(10 * 60),
                 command_tx: tx,
                 last_poll: Instant::now(),
                 settings_stamp: None,
@@ -354,12 +383,14 @@ mod process {
             full(&self.settings, self.started_at_sign_in)
         }
 
-        /// Tray icon and reminders follow the settings.
+        /// Tray icon and reminders follow the settings. The icon is always there while the
+        /// companion runs (with fewer items when it's only for reminders).
         fn sync_parts(&mut self) {
-            if self.full() && self.tray.is_none() {
-                self.tray = build_tray().ok();
-            } else if !self.full() {
+            let full = self.full();
+            if self.tray.is_none() || self.tray_full != full {
                 self.tray = None;
+                self.tray = build_tray(full).map_err(|e| log::warn!(target: "rustdo", "tray icon: {e}")).ok();
+                self.tray_full = full;
             }
             #[cfg(windows)]
             if self.settings.notifications && self.reminders.as_ref().is_none_or(|h| h.is_finished()) {
@@ -380,6 +411,13 @@ mod process {
             if take_request(WAKE_REQUEST) {
                 self.started_at_sign_in = false;
             }
+            // RustDo is quitting completely.
+            if take_request(QUIT_COMPANION_REQUEST) {
+                self.handle(ctx, TrayCommand::Quit);
+                return;
+            }
+            #[cfg(windows)]
+            self.step_aside_for_update(ctx);
             if !wanted(&self.settings) {
                 notes_ui::lock(&self.notes).save_if_due(true);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -387,6 +425,23 @@ mod process {
             }
             self.sync_parts();
             notes_ui::lock(&self.notes).reload_if_changed();
+        }
+
+        /// Store package: every few hours, while the main window is closed, install a
+        /// waiting Store update (Windows closes and restarts us for it). Otherwise the
+        /// running companion would hold the update back.
+        #[cfg(windows)]
+        fn step_aside_for_update(&mut self, _ctx: &egui::Context) {
+            const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+            if !crate::store_package::is_packaged() || Instant::now() < self.next_update_check || app_is_open() {
+                return;
+            }
+            self.next_update_check = Instant::now() + EVERY;
+            notes_ui::lock(&self.notes).save_if_due(true);
+            std::thread::spawn(|| match crate::store_package::install_waiting_update() {
+                Ok(found) => log::info!(target: "rustdo", "Store update check: {}", if found { "update found" } else { "up to date" }),
+                Err(e) => log::warn!(target: "rustdo", "Store update check failed: {e}"),
+            });
         }
 
         fn handle(&mut self, ctx: &egui::Context, cmd: TrayCommand) {
@@ -407,6 +462,10 @@ mod process {
                 TrayCommand::ShowAll => notes_ui::lock(&self.notes).set_all_open(true),
                 TrayCommand::HideAll => notes_ui::lock(&self.notes).set_all_open(false),
                 TrayCommand::Quit => {
+                    // "Quit RustDo completely": the main window closes too.
+                    if app_is_open() {
+                        request(QUIT_APP_REQUEST);
+                    }
                     notes_ui::lock(&self.notes).save_if_due(true);
                     self.tray = None;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -436,25 +495,26 @@ mod process {
         }
     }
 
-    fn build_tray() -> Result<TrayIcon, String> {
+    /// The tray icon: `full` with the sticky-note items, else just for reminders.
+    fn build_tray(full: bool) -> Result<TrayIcon, String> {
         let menu = Menu::new();
-        let items = [
-            MenuItem::with_id("open", tr("Open RustDo"), true, None),
-            MenuItem::with_id("new", tr("New sticky note"), true, None),
-        ];
-        let notes_items = [
-            MenuItem::with_id("show", tr("Show all notes"), true, None),
-            MenuItem::with_id("hide", tr("Hide all notes"), true, None),
-        ];
-        let quit = MenuItem::with_id("quit", tr("Quit RustDo companion"), true, None);
-        menu.append_items(&[&items[0], &items[1], &PredefinedMenuItem::separator(), &notes_items[0], &notes_items[1]])
-            .map_err(|e| e.to_string())?;
+        let open = MenuItem::with_id("open", tr("Open RustDo"), true, None);
+        let quit = MenuItem::with_id("quit", tr("Quit RustDo completely"), true, None);
+        if full {
+            let new = MenuItem::with_id("new", tr("New sticky note"), true, None);
+            let show = MenuItem::with_id("show", tr("Show all notes"), true, None);
+            let hide = MenuItem::with_id("hide", tr("Hide all notes"), true, None);
+            menu.append_items(&[&open, &new, &PredefinedMenuItem::separator(), &show, &hide]).map_err(|e| e.to_string())?;
+        } else {
+            menu.append(&open).map_err(|e| e.to_string())?;
+        }
         menu.append_items(&[&PredefinedMenuItem::separator(), &quit]).map_err(|e| e.to_string())?;
+        let tooltip = if full { tr("RustDo: sticky notes and reminders") } else { tr("RustDo: reminders") };
         let png = eframe::icon_data::from_png_bytes(include_bytes!("../web/icons/icon-192.png")).map_err(|e| e.to_string())?;
         let icon = tray_icon::Icon::from_rgba(png.rgba, png.width, png.height).map_err(|e| e.to_string())?;
         TrayIconBuilder::new()
             .with_id("rustdo")
-            .with_tooltip(tr("RustDo: sticky notes and reminders"))
+            .with_tooltip(tooltip)
             .with_title("RustDo")
             .with_icon(icon)
             .with_menu(Box::new(menu))
@@ -470,6 +530,13 @@ mod tests {
 
     fn s(companion: bool, autostart: bool, notifications: bool) -> Settings {
         Settings { companion, companion_autostart: autostart, notifications, ..Settings::default() }
+    }
+
+    #[test]
+    fn reminders_when_closed_can_be_turned_off() {
+        // Sticky notes off and "Remind me even when RustDo is closed" off: nothing stays.
+        let off = Settings { background_reminders: false, ..s(false, true, true) };
+        assert!(!wanted(&off) && !starts_at_sign_in(&off));
     }
 
     #[test]

@@ -872,7 +872,8 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
     let mut actions: Vec<(Uuid, WallAction)> = Vec::new();
     if narrow {
         egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-            let ids: Vec<Uuid> = s.notes.notes.iter().rev().map(|n| n.id).collect();
+            let ids: Vec<Uuid> = s.notes.column_order();
+            let mut rects: Vec<(Uuid, egui::Rect)> = Vec::new();
             for id in ids {
                 let Shared { notes, confirm_delete, focus, .. } = &mut *s;
                 let Some(note) = notes.get_mut(id) else { continue };
@@ -885,7 +886,34 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
                 if focus_this {
                     *focus = None;
                 }
+                rects.push((id, rect));
                 ui.add_space(10.0);
+            }
+            // A note being dragged by its handle: show where it will go, move it on release.
+            let drag_id = Id::new("note_drag");
+            if let Some(dragged) = ui.ctx().data(|d| d.get_temp::<Uuid>(drag_id)) {
+                let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
+                match pointer {
+                    Some(pos) => {
+                        let others: Vec<&(Uuid, egui::Rect)> = rects.iter().filter(|(id, _)| *id != dragged).collect();
+                        let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
+                        let y = match others.get(to) {
+                            Some((_, r)) => r.top() - 5.0,
+                            None => others.last().map_or(pos.y, |(_, r)| r.bottom() + 5.0),
+                        };
+                        ui.painter().hline(ui.min_rect().x_range(), y, Stroke::new(3.0_f32, Color32::from_rgb(0x3B, 0x82, 0xF6)));
+                        ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                        edge_scroll(ui, pos);
+                        if released {
+                            if s.notes.move_in_column(dragged, to) {
+                                s.changed();
+                            }
+                            ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
+                        }
+                    }
+                    None if released => ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id)),
+                    None => {}
+                }
             }
         });
     } else {
@@ -1038,6 +1066,19 @@ fn wall_card(
         ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
             .response
             .on_hover_text(tr("Colour and text"));
+        // The phone column: a ≡ handle drags the note up or down (the rest scrolls).
+        if !movable {
+            let size = if touch { tap } else { Vec2::new(24.0, 20.0) };
+            let (r, handle) = ui.allocate_exact_size(size, Sense::drag());
+            let handle = handle.on_hover_text(tr("Drag to move the note up or down")).on_hover_cursor(CursorIcon::Grab);
+            let color = if handle.dragged() { ink } else { ink.gamma_multiply(0.6) };
+            for dy in [-5.0, 0.0, 5.0] {
+                ui.painter().hline((r.center().x - 8.0)..=(r.center().x + 8.0), r.center().y + dy, Stroke::new(2.0_f32, color));
+            }
+            if handle.drag_started() {
+                ui.ctx().data_mut(|d| d.insert_temp(Id::new("note_drag"), id));
+            }
+        }
         if matches!(menu_action, NoteAction::AskDelete) {
             action = Some(WallAction::AskDelete);
         }
@@ -1265,4 +1306,22 @@ fn pick_picture(ui: &mut egui::Ui, note: &mut StickyNote) {
 fn pick_picture(ui: &mut egui::Ui, note: &mut StickyNote) {
     request_picture(ui.ctx(), note.id);
     ui.close_menu();
+}
+
+/// While something is dragged near the top or bottom of a scrolling list, scroll it, so
+/// it can be carried further than the screen shows.
+pub fn edge_scroll(ui: &mut egui::Ui, pos: Pos2) {
+    let clip = ui.clip_rect();
+    let zone = 70.0;
+    let speed = if pos.y > clip.bottom() - zone {
+        -(pos.y - (clip.bottom() - zone)).min(zone) * 0.25
+    } else if pos.y < clip.top() + zone {
+        (clip.top() + zone - pos.y).min(zone) * 0.25
+    } else {
+        0.0
+    };
+    if speed != 0.0 {
+        ui.scroll_with_delta(Vec2::new(0.0, speed));
+        ui.ctx().request_repaint();
+    }
 }

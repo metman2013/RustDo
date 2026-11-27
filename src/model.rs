@@ -153,6 +153,13 @@ pub struct Settings {
     /// Desktop: start the companion when the user signs in.
     #[serde(default = "yes")]
     pub companion_autostart: bool,
+    /// Windows: keep showing reminders after RustDo is closed (the background helper runs
+    /// for them, with its tray icon).
+    #[serde(default = "yes")]
+    pub background_reminders: bool,
+    /// The "RustDo keeps running in the tray" message was shown when closing the window.
+    #[serde(default)]
+    pub close_hint_seen: bool,
     /// Windows: the version an automatic update last tried to install. If RustDo starts
     /// again still older than that, the update didn't finish, so don't retry it on its own
     /// (that would close RustDo at every start); offer "Update & restart" instead.
@@ -193,6 +200,8 @@ impl Default for Settings {
             update_attempt: None,
             companion: true,
             companion_autostart: true,
+            background_reminders: true,
+            close_hint_seen: false,
             language: crate::i18n::Language::Automatic,
             background: crate::backgrounds::Background::None,
             background_dim: default_dim(),

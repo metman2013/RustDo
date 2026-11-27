@@ -6,6 +6,12 @@ traducidas. Las versiones que falten aquí aparecen en inglés.
 ## 0.4.9 - 2026-11-28
 
 ### Mejoras
+- Teléfonos: ordena las notas adhesivas a tu manera arrastrando el asa ≡ de cada nota. El orden se sincroniza con tus otros teléfonos (en pantallas más anchas las notas se siguen colocando libremente en el tablón).
+- Mientras arrastras una tarea o nota cerca del borde superior o inferior de la pantalla, la lista se desplaza, para llevarla a cualquier punto de una lista larga.
+- Windows y Linux: el icono de RustDo en la bandeja aparece siempre que RustDo funciona en segundo plano, también cuando solo está para los recordatorios. Su menú tiene «Cerrar RustDo por completo», que también cierra la ventana.
+- Windows: Configuración › Segundo plano tiene «Recordarme también con RustDo cerrado». Desactívalo junto con las notas adhesivas en segundo plano y al cerrar RustDo se cierra por completo.
+- La primera vez que cierras la ventana mientras RustDo sigue en la bandeja, te lo indica, con un botón para cerrarlo por completo. Configuración › Segundo plano también tiene «Cerrar RustDo por completo».
+- Versión de Microsoft Store: con la ventana cerrada, RustDo instala solo una actualización pendiente de la Store y vuelve a iniciarse, en lugar de retenerla mientras está en la bandeja.
 - El asa ≡ para arrastrar tareas aparece ahora en teléfonos y tabletas con cualquier orden; al mover una tarea, la lista pasa sola a «Mi orden».
 - Al añadir una tarea, su cuadro «Añadir una subtarea» se abre justo debajo (no arriba de la lista). Si añades otra tarea, el cuadro pasa a esa; ✖ lo cierra.
 

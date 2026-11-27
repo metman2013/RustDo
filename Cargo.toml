@@ -64,6 +64,8 @@ windows = { version = "0.58", features = [
     "Win32_UI_WindowsAndMessaging",
     # Microsoft Store package: detect it, its startup task (store_package.rs).
     "Win32_Storage_Packaging_Appx", "ApplicationModel", "ApplicationModel_Activation",
+    # Store package: step aside for a waiting update, and be restarted after it.
+    "Services_Store", "Win32_System_Recovery",
 ] }
 # Windows: Direct3D (wgpu) as a fallback when OpenGL can't start (virtual machines,
 # Remote Desktop, missing graphics drivers). See diagnostics.rs.

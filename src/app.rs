@@ -278,6 +278,11 @@ pub struct TodoApp {
     whats_new: Option<Vec<changelog::Release>>,
     /// "Get RustDo for your other devices" is open.
     get_apps: bool,
+    /// Desktop: the one-time "RustDo keeps running in the tray" message (shown instead of
+    /// closing the first time).
+    close_hint: bool,
+    /// Closing for real (quit completely, or after the message): don't ask again.
+    closing: bool,
 }
 
 impl TodoApp {
@@ -420,6 +425,8 @@ impl TodoApp {
             account_notes_seen: None,
             whats_new,
             get_apps: false,
+            close_hint: false,
+            closing: false,
         }
     }
 
@@ -999,12 +1006,65 @@ impl TodoApp {
         self.companion_checked = Some(Instant::now());
         self.companion_running = companion::is_running();
         notes_ui::lock(&self.notes).reload_if_changed();
+        if companion::take_quit_app_request() {
+            // The tray's "Quit RustDo completely".
+            self.closing = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         if companion::take_show_app_request() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
         ctx.request_repaint_after(StdDuration::from_secs(1));
+    }
+
+    /// Desktop: the first time the window is closed while the background helper keeps
+    /// running, say where RustDo went (the tray) and offer to quit completely.
+    fn close_hint_check(&mut self, ctx: &egui::Context) {
+        if !companion::SUPPORTED || self.closing {
+            return;
+        }
+        let s = &self.store.settings;
+        if ctx.input(|i| i.viewport().close_requested()) && companion::wanted(s) && !s.close_hint_seen {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.close_hint = true;
+        }
+        if !self.close_hint {
+            return;
+        }
+        let what = if s.companion && companion::reminders_when_closed(s) {
+            tr("Your sticky notes stay on the desktop and reminders keep coming.")
+        } else if s.companion {
+            tr("Your sticky notes stay on the desktop.")
+        } else {
+            tr("Reminders keep coming.")
+        };
+        let mut choice = None;
+        dialog_window(ctx, tr("RustDo keeps running in the tray"), self.insets).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 420.0));
+            ui.add(egui::Label::new(what).wrap());
+            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Background.")).wrap());
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.add(egui::Button::new(RichText::new(tr("OK, close the window")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    choice = Some(false);
+                }
+                if ui.button(tr("Quit RustDo completely")).clicked() {
+                    choice = Some(true);
+                }
+            });
+        });
+        if let Some(quit) = choice {
+            self.close_hint = false;
+            self.closing = true;
+            self.store.settings.close_hint_seen = true;
+            self.persist();
+            if quit {
+                companion::request_quit();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     /// Settings › Background (desktop): the companion and its tray icon.
@@ -1022,6 +1082,12 @@ impl TodoApp {
         changed |= ui
             .add_enabled(s.companion, egui::Checkbox::new(&mut s.companion_autostart, sign_in))
             .changed();
+        if cfg!(windows) {
+            changed |= ui
+                .add_enabled(s.notifications, egui::Checkbox::new(&mut s.background_reminders, tr("Remind me even when RustDo is closed")))
+                .on_hover_text(tr("RustDo keeps running in the tray to show reminders."))
+                .changed();
+        }
         let note = if !s.companion {
             tr("Sticky notes show only while RustDo is open.")
         } else if cfg!(windows) {
@@ -1033,6 +1099,11 @@ impl TodoApp {
         if changed {
             self.dirty = true;
             self.helper_handled = false; // start, wake or stop the companion
+        }
+        if self.companion_running && ui.button(tr("Quit RustDo completely")).on_hover_text(tr("Closes this window and the tray icon. RustDo starts again when you open it.")).clicked() {
+            companion::request_quit();
+            self.closing = true;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         ui.separator();
     }
@@ -3750,6 +3821,7 @@ impl TodoApp {
                                 };
                                 ui.painter().hline(ui.min_rect().x_range(), y, Stroke::new(2.0_f32, ACCENT));
                                 ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
+                                notes_ui::edge_scroll(ui, pos);
                                 if released {
                                     actions.push(Action::MoveTask(ids.clone(), dragged, to));
                                     ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
@@ -4597,6 +4669,7 @@ impl eframe::App for TodoApp {
         }
 
         self.companion_tick(ctx);
+        self.close_hint_check(ctx);
         // While the companion runs, it shows the notes (they stay up after this window closes).
         if !(self.store.settings.companion && self.companion_running) {
             notes_ui::show_windows(ctx, &self.notes);

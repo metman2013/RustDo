@@ -13,6 +13,12 @@ Each release needs its entry in all three (a test checks the current version).
 ## 0.4.9 - 2026-11-28
 
 ### Improved
+- Phones: drag sticky notes into your own order by the ≡ handle on each note. The order syncs to your other phones (wider screens keep placing notes freely on the wall).
+- While you drag a task or note near the top or bottom of the screen, the list scrolls along, so it can go anywhere in a long list.
+- Windows and Linux: RustDo's tray icon now shows whenever RustDo runs in the background, including when it's only there for reminders. Its menu has "Quit RustDo completely", which also closes the window.
+- Windows: Settings › Background has "Remind me even when RustDo is closed". Turn it off, together with background sticky notes, and closing RustDo closes it completely.
+- The first time you close the window while RustDo keeps running in the tray, it tells you so, with a button to quit completely instead. Settings › Background also has "Quit RustDo completely".
+- Microsoft Store version: while its window is closed, RustDo installs a waiting Store update by itself and starts again afterwards, instead of holding the update back by running in the tray.
 - The ≡ handle for dragging tasks now shows on phones and tablets whatever the sort order; moving a task switches to "My order" by itself.
 - After you add a task, its "Add a subtask" box opens right under it (not at the top of the list). Add another task and the box moves to that one; ✖ closes it.
 

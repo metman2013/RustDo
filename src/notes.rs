@@ -89,6 +89,10 @@ pub struct StickyNote {
     /// note's colour so the text stays readable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture: Option<crate::backgrounds::Background>,
+    /// Place in the phone column (smaller first; 0 = not arranged yet, newest first).
+    /// Synced, so your phones agree; the wall on wider screens uses `pos` instead.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub order: i64,
 }
 
 impl StickyNote {
@@ -106,6 +110,7 @@ impl StickyNote {
             created: now,
             updated: now,
             picture: None,
+            order: 0,
         }
     }
 
@@ -464,6 +469,28 @@ mod tests {
     }
 
     #[test]
+    fn phone_column_order() {
+        let mut n = Notes::default();
+        let a = n.add(now(), None);
+        let b = n.add(now(), None);
+        let c = n.add(now(), None);
+        // Newest first until arranged.
+        assert_eq!(n.column_order(), [c, b, a]);
+        // Oldest to the top.
+        assert!(n.move_in_column(a, 0));
+        assert_eq!(n.column_order(), [a, c, b]);
+        // c to the bottom.
+        assert!(n.move_in_column(c, 2));
+        assert_eq!(n.column_order(), [a, b, c]);
+        // A new note shows first; the arranged ones keep their order below it.
+        let d = n.add(now(), None);
+        assert_eq!(n.column_order(), [d, a, b, c]);
+        // The order survives saving and loading (it syncs as part of the note).
+        let back: Notes = serde_json::from_str(&serde_json::to_string(&n).unwrap()).unwrap();
+        assert_eq!(back.column_order(), [d, a, b, c]);
+    }
+
+    #[test]
     fn new_notes_follow_the_last_colour_and_cascade() {
         let mut notes = Notes::default();
         let a = notes.add(now(), None);
@@ -607,5 +634,37 @@ mod tests {
         assert_eq!(warning, None);
         assert_eq!(back, notes);
         let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+impl Notes {
+    /// The notes as the phone column shows them: newest first, except those you arranged.
+    pub fn column_order(&self) -> Vec<uuid::Uuid> {
+        let mut v: Vec<&StickyNote> = self.notes.iter().rev().collect();
+        v.sort_by_key(|n| n.order); // stable: notes not arranged yet keep newest first
+        v.into_iter().map(|n| n.id).collect()
+    }
+
+    /// Moves a note to place `to` in the phone column (numbering the column afresh).
+    pub fn move_in_column(&mut self, id: uuid::Uuid, to: usize) -> bool {
+        let mut order = self.column_order();
+        let Some(from) = order.iter().position(|x| *x == id) else { return false };
+        order.remove(from);
+        let to = to.min(order.len());
+        let unchanged = from == to && self.notes.iter().all(|n| n.order != 0);
+        order.insert(to, id);
+        if unchanged {
+            return false;
+        }
+        for (i, nid) in order.iter().enumerate() {
+            if let Some(n) = self.get_mut(*nid) {
+                n.order = (i as i64 + 1) * 1024;
+            }
+        }
+        true
     }
 }
