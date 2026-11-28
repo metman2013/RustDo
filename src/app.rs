@@ -296,6 +296,8 @@ pub struct TodoApp {
     whats_new: Option<Vec<changelog::Release>>,
     /// "Get RustDo for your other devices" is open.
     get_apps: bool,
+    /// "Import from Google Keep": how to get the export, before picking it.
+    keep_help: bool,
     /// The Settings section showing.
     settings_tab: SettingsTab,
     /// Desktop: the one-time "RustDo keeps running in the tray" message (shown instead of
@@ -446,6 +448,7 @@ impl TodoApp {
             account_notes_seen: None,
             whats_new,
             get_apps: false,
+            keep_help: false,
             settings_tab: SettingsTab::default(),
             close_hint: false,
             closing: false,
@@ -2874,6 +2877,66 @@ impl TodoApp {
     }
 
     /// Where to get RustDo on every kind of device.
+    /// Google Keep import: what to get from Google Takeout and what comes across, then
+    /// "Choose the zip…".
+    fn keep_help_dialog(&mut self, ctx: &egui::Context) {
+        if !self.keep_help {
+            return;
+        }
+        let mut open = true;
+        let mut pick = false;
+        let mut close = false;
+        dialog_window(ctx, tr("Import from Google Keep"), self.insets).open(&mut open).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 460.0));
+            egui::ScrollArea::vertical().max_height(ctx.screen_rect().height() * 0.7).show(ui, |ui| {
+                ui.add(egui::Label::new(tr("RustDo reads the export Google makes of your Keep notes. No sign-in: you download it yourself.")).wrap());
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr("Get your Keep export")).strong());
+                let steps = [
+                    tr("1. Open Google Takeout and sign in:"),
+                    "",
+                    tr("2. Click “Deselect all”, then tick only “Keep”."),
+                    tr("3. Click “Next step”. Keep “Export once” and “.zip”, then click “Create export”."),
+                    tr("4. Google emails you when it's ready (usually a few minutes). Download the zip."),
+                    tr("5. Come back here and choose the zip. There's no need to unzip it."),
+                ];
+                for step in steps {
+                    if step.is_empty() {
+                        if ui.link("takeout.google.com").clicked() {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab("https://takeout.google.com"));
+                        }
+                        continue;
+                    }
+                    ui.add(egui::Label::new(step).wrap());
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr("What comes across")).strong());
+                ui.add(
+                    egui::Label::new(tr(
+                        "Notes and checklists, their colours, pinned notes, labels (as sections) and archived notes. Notes in Keep's trash are skipped. Pictures, drawings, voice notes and reminders aren't brought over.",
+                    ))
+                    .wrap(),
+                );
+                ui.add(egui::Label::new(RichText::new(tr("Importing the same export again only adds notes you don't have yet.")).weak()).wrap());
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new(tr("Choose the zip…")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    pick = true;
+                }
+                if ui.button(tr("Cancel")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if pick {
+            self.keep_help = false;
+            self.pick_keep_file(ctx);
+        } else if close || !open {
+            self.keep_help = false;
+        }
+    }
+
     fn get_apps_dialog(&mut self, ctx: &egui::Context) {
         if !self.get_apps {
             return;
@@ -3859,7 +3922,7 @@ impl TodoApp {
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
-                notes_ui::PageAction::ImportKeep => self.pick_keep_file(ctx),
+                notes_ui::PageAction::ImportKeep => self.keep_help = true,
                 notes_ui::PageAction::ImportMsNotes => self.import_ms_sticky_notes(),
                 notes_ui::PageAction::Archived(id) => {
                     let title = notes_ui::lock(&self.notes).notes.get(id).map(|n| n.title().to_string()).unwrap_or_default();
@@ -5059,6 +5122,7 @@ impl eframe::App for TodoApp {
         self.restore_dialog(ctx);
         self.whats_new_dialog(ctx);
         self.get_apps_dialog(ctx);
+        self.keep_help_dialog(ctx);
         self.hub_guide_dialog(ctx);
         self.account_dialog(ctx);
         self.ms_import_dialog(ctx);
