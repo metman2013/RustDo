@@ -2137,20 +2137,15 @@ impl TodoApp {
 
     fn sharing_menu_items(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new(tr("Family sharing")).strong());
-        if !sync::SUPPORTED {
-            ui.label(
-                RichText::new(tr("Sharing lists through a RustDo Hub works in the Windows, Linux and Android apps."))
-                    .weak()
-                    .small(),
-            );
-            ui.separator();
-            return;
-        }
         let shared = self.store.shares.len();
         let status = if shared == 0 {
             // No arrows here: egui's built-in fonts have no "→" and draw a box instead.
             let how = if is_touch(ui) { tr("long-press it and choose Share list") } else { tr("right-click it and choose Share list") };
-            trf("Share a list with people at home: {how}. Needs a RustDo Hub on your network.", &[("how", &how)])
+            if cfg!(target_arch = "wasm32") {
+                trf("Share a list with people at home: {how}. Needs a RustDo Hub with an https:// address.", &[("how", &how)])
+            } else {
+                trf("Share a list with people at home: {how}. Needs a RustDo Hub on your network.", &[("how", &how)])
+            }
         } else if let Some(err) = &self.sync_error {
             trf("Can't sync right now: {err}", &[("err", &err)])
         } else {
@@ -2181,7 +2176,8 @@ impl TodoApp {
     fn open_share_dialog(&mut self, list: Option<Uuid>) {
         self.share_dialog = Some(ShareDialog {
             list,
-            hub: self.store.settings.hub.clone().unwrap_or_default(),
+            // The hub used last for sharing, or else the one "Sync my devices" uses.
+            hub: self.store.settings.hub.clone().or_else(|| self.store.account.as_ref().map(|a| a.hub.clone())).unwrap_or_default(),
             code: String::new(),
             busy: false,
             error: None,
@@ -2363,7 +2359,11 @@ impl TodoApp {
                 }
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr("Hub address")).small());
-                let r = field_with_paste(ui, &mut dialog.hub, "e.g. 192.168.1.20:7979", "share_hub");
+                let example = if cfg!(target_arch = "wasm32") { "e.g. https://todo.example.com" } else { "e.g. 192.168.1.20:7979" };
+                let r = field_with_paste(ui, &mut dialog.hub, example, "share_hub");
+                if platform::page_is_https() && dialog.hub.trim_start().starts_with("http://") {
+                    ui.label(RichText::new(tr("The web app can only reach a hub on an https:// address.")).color(DANGER).small());
+                }
                 submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && list.is_some();
                 if list.is_none() {
                     ui.label(RichText::new(tr("Share code")).small());
@@ -2855,7 +2855,7 @@ impl TodoApp {
                     tr("If the same task is changed in two places at the same time, the later change wins. Shared lists show a 👥 icon."),
                     tr("Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again."),
                     tr("To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly."),
-                    tr("Sync my devices works everywhere, including the web app. Sharing a list works in the Windows, Linux and Android apps."),
+                    tr("Sync my devices and shared lists work everywhere, including the web app (with the hub on an https:// address)."),
                     tr("Keep your sync key private, like a password: anyone with it who can reach your hub can see and change your tasks."),
                 ] {
                     ui.horizontal_top(|ui| {

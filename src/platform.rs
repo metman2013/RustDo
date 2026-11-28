@@ -436,6 +436,17 @@ pub fn download_text(file_name: &str, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Web: whether this page was loaded over https:// (then the browser blocks calls to
+/// plain http:// addresses). Always false outside the browser.
+pub fn page_is_https() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|w| w.location().protocol().ok()).is_some_and(|p| p == "https:")
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
 /// Web: reloads the page. The browser re-checks the service worker on navigation, so a
 /// newly published version is picked up too.
 #[cfg(target_arch = "wasm32")]

@@ -296,68 +296,84 @@ pub enum Job {
     Join { hub: String, code: String },
 }
 
-/// Whether this build can talk to a hub. The web app can't: a page served over HTTPS
-/// isn't allowed to call a plain-HTTP address on your network.
-pub const SUPPORTED: bool = cfg!(all(not(target_arch = "wasm32"), feature = "updates"));
+/// Whether this build can talk to a hub: all of them. The web app needs the hub on an
+/// https:// address (a page served over HTTPS may not call a plain-HTTP address).
+pub const SUPPORTED: bool = true;
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "updates"))]
+/// Runs the jobs (all at once) and hands back every result together.
 pub fn run(jobs: Vec<Job>, ctx: eframe::egui::Context) -> std::sync::mpsc::Receiver<Vec<Done>> {
     let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(20))
-            .user_agent(concat!("RustDo/", env!("CARGO_PKG_VERSION")))
-            .build();
-        let results = jobs.into_iter().map(|job| run_one(&agent, job)).collect();
-        let _ = tx.send(results);
-        ctx.request_repaint();
-    });
+    let total = jobs.len();
+    if total == 0 {
+        let _ = tx.send(Vec::new());
+        return rx;
+    }
+    let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::with_capacity(total)));
+    for job in jobs {
+        let results = results.clone();
+        let tx = tx.clone();
+        let ctx = ctx.clone();
+        run_one(job, move |done| {
+            let mut r = results.lock().unwrap_or_else(|e| e.into_inner());
+            r.push(done);
+            if r.len() == total {
+                let _ = tx.send(std::mem::take(&mut *r));
+                ctx.request_repaint();
+            }
+        });
+    }
     rx
 }
 
-#[cfg(any(target_arch = "wasm32", not(feature = "updates")))]
-pub fn run(_jobs: Vec<Job>, _ctx: eframe::egui::Context) -> std::sync::mpsc::Receiver<Vec<Done>> {
-    std::sync::mpsc::channel().1
+fn post(hub: &str, path: &str, body: Value, done: impl FnOnce(Result<Value, String>) + Send + 'static) {
+    let mut request = ehttp::Request::post(format!("{hub}{path}"), body.to_string().into_bytes());
+    request.headers.insert("Content-Type", "application/json");
+    let hub = hub.to_string();
+    ehttp::fetch(request, move |result| {
+        let out = match result {
+            Ok(r) => {
+                let value: Option<Value> = serde_json::from_slice(&r.bytes).ok();
+                let message = value.as_ref().and_then(|v| v.get("error")).and_then(Value::as_str).map(str::to_string);
+                match (r.ok, value) {
+                    (true, Some(v)) => Ok(v),
+                    (true, None) => Err(tr("unexpected answer from the hub").to_string()),
+                    (false, _) => Err(message.unwrap_or_else(|| tr("the hub refused the request").into())),
+                }
+            }
+            Err(_) if cfg!(target_arch = "wasm32") && hub.starts_with("http://") => Err(trf(
+                "can't reach the hub at {hub}. In the web app the hub needs an https:// address (see How syncing works).",
+                &[("hub", &hub)],
+            )),
+            Err(_) => Err(trf("can't reach the hub at {hub}. Is it running, and are you on the same network?", &[("hub", &hub)])),
+        };
+        done(out);
+    });
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "updates"))]
-fn post(agent: &ureq::Agent, hub: &str, path: &str, body: Value) -> Result<Value, String> {
-    let read = |r: ureq::Response| -> Result<Value, String> {
-        let text = r.into_string().map_err(|e| e.to_string())?;
-        serde_json::from_str(&text).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)]))
-    };
-    let request = agent.post(&format!("{hub}{path}")).set("Content-Type", "application/json");
-    match request.send_string(&body.to_string()) {
-        Ok(r) => read(r),
-        Err(ureq::Error::Status(_, r)) => {
-            let msg = read(r).ok().and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_string));
-            Err(msg.unwrap_or_else(|| tr("the hub refused the request").into()))
-        }
-        Err(ureq::Error::Transport(_)) => Err(trf("can't reach the hub at {hub}. Is it running, and are you on the same network?", &[("hub", &hub)])),
-    }
+fn parse_sync(v: Result<Value, String>) -> Result<SyncResponse, String> {
+    v.and_then(|v| serde_json::from_value(v).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)])))
 }
 
-#[cfg(all(not(target_arch = "wasm32"), feature = "updates"))]
-fn run_one(agent: &ureq::Agent, job: Job) -> Done {
-    let sync = |hub: &str, req: &SyncRequest| -> Result<SyncResponse, String> {
-        let v = post(agent, hub, "/api/sync", serde_json::to_value(req).map_err(|e| e.to_string())?)?;
-        serde_json::from_value(v).map_err(|e| trf("unexpected answer from the hub: {e}", &[("e", &e)]))
-    };
+fn run_one(job: Job, done: impl FnOnce(Done) + Send + 'static) {
     match job {
         Job::Sync { hub, out } => {
-            let result = sync(&hub, &out.request);
-            Done::Synced(out, result)
+            let body = serde_json::to_value(&out.request).unwrap_or(Value::Null);
+            post(&hub, "/api/sync", body, move |r| done(Done::Synced(out, parse_sync(r))));
         }
         Job::Share { hub, list_id } => {
-            let result = post(agent, &hub, "/api/share", serde_json::json!({ "list_id": list_id })).and_then(|v| {
-                v.get("code").and_then(Value::as_str).map(str::to_string).ok_or_else(|| tr("unexpected answer from the hub").into())
+            let h = hub.clone();
+            post(&h, "/api/share", serde_json::json!({ "list_id": list_id }), move |r| {
+                let result = r.and_then(|v| {
+                    v.get("code").and_then(Value::as_str).map(str::to_string).ok_or_else(|| tr("unexpected answer from the hub").into())
+                });
+                done(Done::Shared { list_id, hub, result });
             });
-            Done::Shared { list_id, hub, result }
         }
         Job::Join { hub, code } => {
-            let result = sync(&hub, &SyncRequest { code: code.clone(), since: 0, changes: Vec::new() });
-            Done::Joined { hub, code, result }
+            let req = SyncRequest { code: code.clone(), since: 0, changes: Vec::new() };
+            let body = serde_json::to_value(&req).unwrap_or(Value::Null);
+            let h = hub.clone();
+            post(&h, "/api/sync", body, move |r| done(Done::Joined { hub, code, result: parse_sync(r) }));
         }
     }
 }

@@ -9,10 +9,10 @@ up on the other devices within about 30 seconds.
 - **Only the lists you share.** Every other list stays on your own device.
 - **My Day stays personal.** Adding a shared task to *your* My Day doesn't put it in
   anyone else's.
-- Sync my devices works in every RustDo app, including the web app at rustdo.app, which
-  needs the hub on an `https://` address ([reverse proxy](#your-own-subdomain-behind-a-reverse-proxy)):
-  a secure web page isn't allowed to talk to a plain `http://` address.
-- Family sharing works in the **Windows, Linux and Android** apps.
+- Sync my devices and family sharing work in every RustDo app, including the web app at
+  rustdo.app (since 0.5), which needs the hub on an `https://` address
+  ([reverse proxy](#your-own-subdomain-behind-a-reverse-proxy)): a secure web page isn't
+  allowed to talk to a plain `http://` address.
 
 ## 1. Start a hub
 
