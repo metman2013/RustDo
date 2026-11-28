@@ -128,7 +128,8 @@ impl Shared {
 
     /// Shows or hides every note (the tray menu).
     pub fn set_all_open(&mut self, open: bool) {
-        let ids: Vec<Uuid> = self.notes.notes.iter().map(|n| n.id).collect();
+        // Archived notes stay put away.
+        let ids: Vec<Uuid> = self.notes.notes.iter().filter(|n| !n.archived).map(|n| n.id).collect();
         for id in ids {
             self.set_open(id, open);
         }
@@ -222,6 +223,20 @@ impl Shared {
                 self.spawn.remove(&id);
                 self.changed();
             }
+        }
+    }
+
+    /// Puts a note away in the Archive (hidden from the desktop and the wall), or back.
+    pub fn archive(&mut self, id: Uuid, archived: bool) {
+        if let Some(n) = self.notes.get_mut(id) {
+            n.archived = archived;
+            if archived {
+                n.open = false;
+                n.pinned = false;
+            } else {
+                n.open = true;
+            }
+            self.changed();
         }
     }
 
@@ -373,6 +388,7 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
     }
 
     let note = s.notes.notes[index].clone();
+    let sections = s.notes.sections();
     let bg = c32(note.color);
     let ink = c32(note.ink());
     let header = c32(notes::header_color(note.color));
@@ -419,7 +435,7 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                 action = NoteAction::Hide;
             }
             ui.menu_button(RichText::new("🎨").color(ink), |ui| {
-                note_menu(ui, &mut edited, &mut action, true);
+                note_menu(ui, &mut edited, &mut action, true, &sections, false);
             })
             .response
             .on_hover_text(tr("Colour, text and more"));
@@ -444,6 +460,10 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
             });
         } else {
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(&mut body_ui, |ui| {
+                if edited.is_checklist() {
+                    checklist_body(ui, &mut edited, ink);
+                    return;
+                }
                 let r = ui.add(
                     egui::TextEdit::multiline(&mut edited.text)
                         .font(FontId::proportional(edited.text_size))
@@ -506,6 +526,13 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
             s.save_if_due(true);
             ctx.request_repaint_of(ViewportId::ROOT);
         }
+        NoteAction::Archive => {
+            s.archive(id, true);
+            s.save_if_due(true);
+            ctx.request_repaint_of(ViewportId::ROOT);
+        }
+        // Only offered in the main window (it makes the task); not in a note window.
+        NoteAction::ToTask => {}
     }
     s.save_if_due(false);
     if s.dirty {
@@ -521,12 +548,16 @@ enum NoteAction {
     AskDelete,
     CancelDelete,
     Delete,
+    /// Put the note away in the Archive.
+    Archive,
+    /// Make a task from the note (the main window only).
+    ToTask,
 }
 
 /// The 🎨 menu: note colour, text colour and size, keep on top, delete.
 /// `desktop`: offer "Keep on top" (a desktop window can float above others; a note on the
 /// web wall can't).
-fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool) {
+fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool, sections: &[String], in_app: bool) {
     ui.set_min_width(220.0);
     // The menu has its own (theme) background: use normal text colours inside it.
     ui.visuals_mut().override_text_color = None;
@@ -602,7 +633,7 @@ fn note_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, 
             if !auto && colour_row(ui, tr("Text colour:"), note.ink()) {
                 page = MenuPage::TextColour;
             }
-            note_menu_rest(ui, note, action, desktop);
+            note_menu_rest(ui, note, action, desktop, sections, in_app);
         }
     }
     ctx.data_mut(|d| d.insert_temp(page_id, page));
@@ -639,7 +670,7 @@ fn colour_row(ui: &mut egui::Ui, label: &str, rgb: [u8; 3]) -> bool {
 }
 
 /// Text size, keep on top and delete (the rest of the options page).
-fn note_menu_rest(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool) {
+fn note_menu_rest(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool, sections: &[String], in_app: bool) {
     ui.horizontal(|ui| {
         ui.label(tr("Size:"));
         if ui.small_button("A−").on_hover_text(tr("Smaller")).clicked() {
@@ -651,13 +682,58 @@ fn note_menu_rest(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAct
         }
     });
     ui.separator();
+    // Checklist, pinned, section.
+    let mut checklist = note.is_checklist();
+    if ui.checkbox(&mut checklist, tr("Checklist")).on_hover_text(tr("Each line becomes an item you can tick off")).changed() {
+        note.set_checklist(checklist);
+    }
+    ui.checkbox(&mut note.pinned, tr("📍  Pin to the top")).on_hover_text(tr("Keeps the note above the others on the wall"));
+    section_picker(ui, note, sections);
+    ui.separator();
     if desktop {
         ui.checkbox(&mut note.on_top, tr("📌 Keep on top of other windows"));
+    }
+    if in_app && ui.button(tr("✔  Turn into a task")).on_hover_text(tr("Makes a task from this note (a checklist becomes its subtasks)")).clicked() {
+        *action = NoteAction::ToTask;
+        ui.close_menu();
+    }
+    if ui.button(tr("🗄  Archive")).on_hover_text(tr("Puts the note away; bring it back from the Archive")).clicked() {
+        *action = NoteAction::Archive;
+        ui.close_menu();
     }
     if ui.button(tr("🗑  Delete note…")).clicked() {
         *action = NoteAction::AskDelete;
         ui.close_menu();
     }
+}
+
+/// "Section: [None ▾]": one of the sections in use, none, or a new one typed in.
+fn section_picker(ui: &mut egui::Ui, note: &mut StickyNote, sections: &[String]) {
+    ui.horizontal(|ui| {
+        ui.label(tr("Section:"));
+        let shown = note.section.clone().unwrap_or_else(|| tr("None").to_string());
+        egui::ComboBox::from_id_salt(("note_section", note.id)).selected_text(shown).show_ui(ui, |ui| {
+            if ui.selectable_label(note.section.is_none(), tr("None")).clicked() {
+                note.section = None;
+            }
+            for sec in sections {
+                if ui.selectable_label(note.section.as_deref() == Some(sec.as_str()), sec).clicked() {
+                    note.section = Some(sec.clone());
+                }
+            }
+        });
+    });
+    // A new section: type its name and press Enter.
+    let new_id = Id::new(("new_section", note.id));
+    let mut name: String = ui.ctx().data_mut(|d| d.get_temp(new_id)).unwrap_or_default();
+    let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(tr("+ New section")).desired_width(180.0));
+    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !name.trim().is_empty() {
+        // Same name in another case: the existing section.
+        let typed = name.trim().to_string();
+        note.section = Some(sections.iter().find(|s| s.eq_ignore_ascii_case(&typed)).cloned().unwrap_or(typed));
+        name.clear();
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(new_id, name));
 }
 
 /// What the Sticky notes page asks the main window to do (file dialogs live there).
@@ -668,6 +744,8 @@ pub enum PageAction {
     Restore,
     /// Phones: the ☰ button (back to the lists).
     ShowLists,
+    /// Make a task from this note (and remove the note).
+    NoteToTask(Uuid),
 }
 
 /// What was pressed in the page's top row.
@@ -760,10 +838,14 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
     let mut delete = None;
     let mut ask_delete = None;
     let mut cancel_delete = false;
+    let mut archive = None;
     let confirming = s.confirm_delete;
+    let archived_count = s.notes.notes.iter().filter(|n| n.archived).count();
     egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-        // Newest first.
-        for note in s.notes.notes.iter().rev() {
+        // Pinned first, then by section, then the rest; newest first within each.
+        let mut rows: Vec<(usize, &StickyNote)> = s.notes.notes.iter().enumerate().filter(|(_, n)| !n.archived).collect();
+        rows.sort_by_key(|(i, n)| (!n.pinned, n.section.is_none(), n.section.as_ref().map(|x| x.to_lowercase()), std::cmp::Reverse(*i)));
+        for (_, note) in rows {
             let bg = c32(note.color);
             let ink = c32(note.ink());
             egui::Frame::new()
@@ -773,7 +855,13 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
+                        if note.pinned {
+                            ui.label(RichText::new("📍").color(ink));
+                        }
                         ui.label(RichText::new(note.title()).color(ink).strong());
+                        if let Some(sec) = &note.section {
+                            ui.label(RichText::new(sec).color(ink.gamma_multiply(0.7)).small());
+                        }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.visuals_mut().override_text_color = Some(ink);
                             ui.visuals_mut().widgets.inactive.weak_bg_fill = ink.gamma_multiply(0.12);
@@ -790,6 +878,12 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                             if ui.button("🗑").on_hover_text(tr("Delete note")).clicked() {
                                 ask_delete = Some(note.id);
                             }
+                            if ui.button("🗄").on_hover_text(tr("Archive")).clicked() {
+                                archive = Some(note.id);
+                            }
+                            if ui.button("✔").on_hover_text(tr("Turn into a task")).clicked() {
+                                page_action = PageAction::NoteToTask(note.id);
+                            }
                             let label = if note.open { tr("Hide") } else { tr("Show") };
                             if ui.button(label).clicked() {
                                 toggle = Some((note.id, !note.open));
@@ -803,9 +897,16 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                 });
             ui.add_space(6.0);
         }
+        if archived_count > 0 {
+            ui.add_space(6.0);
+            archive_section(ui, &mut s);
+        }
     });
     if let Some((id, open)) = toggle {
         s.set_open(id, open);
+    }
+    if let Some(id) = archive {
+        s.archive(id, true);
     }
     if let Some(id) = delete {
         s.delete(id);
@@ -850,15 +951,51 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
     }
     ui.add_space(6.0);
 
-    if s.notes.notes.is_empty() {
+    let sections = s.notes.sections();
+    let archived_count = s.notes.notes.iter().filter(|n| n.archived).count();
+    if s.notes.notes.iter().all(|n| n.archived) {
         ui.add_space(40.0);
         ui.vertical_centered(|ui| {
             ui.label(RichText::new("📝").size(40.0));
             let verb = if crate::app::is_touch(ui) { tr("Tap") } else { tr("Click") };
             ui.add(egui::Label::new(RichText::new(trf("No sticky notes yet. {verb} “+ New note” to add one.", &[("verb", &verb)])).weak()).wrap());
         });
+        if archived_count > 0 {
+            archive_section(ui, &mut s);
+        }
         return page_action;
     }
+
+    // Filter chips (once there are two or more sections): All · Pinned · each section.
+    let filter_id = Id::new("note_filter");
+    let mut filter: NoteFilter = ui.ctx().data(|d| d.get_temp(filter_id)).unwrap_or_default();
+    let any_pinned = s.notes.notes.iter().any(|n| n.pinned && !n.archived);
+    if sections.len() >= 2 {
+        ui.horizontal_wrapped(|ui| {
+            if ui.selectable_label(filter == NoteFilter::All, tr("All")).clicked() {
+                filter = NoteFilter::All;
+            }
+            if any_pinned && ui.selectable_label(filter == NoteFilter::Pinned, tr("📍 Pinned")).clicked() {
+                filter = NoteFilter::Pinned;
+            }
+            for sec in &sections {
+                let on = matches!(&filter, NoteFilter::Section(f) if f.eq_ignore_ascii_case(sec));
+                if ui.selectable_label(on, sec).clicked() {
+                    filter = NoteFilter::Section(sec.clone());
+                }
+            }
+        });
+        ui.add_space(4.0);
+    } else {
+        filter = NoteFilter::All;
+    }
+    // A filter whose section is gone shows everything again.
+    if let NoteFilter::Section(f) = &filter {
+        if !sections.iter().any(|s| s.eq_ignore_ascii_case(f)) {
+            filter = NoteFilter::All;
+        }
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(filter_id, filter.clone()));
 
     let wall_width = ui.available_width();
     if tidy {
@@ -872,29 +1009,48 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
     let mut actions: Vec<(Uuid, WallAction)> = Vec::new();
     if narrow {
         egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-            let ids: Vec<Uuid> = s.notes.column_order();
+            let groups = s.notes.column_groups();
+            // Headings only when there's something to tell apart.
+            let headings = groups.len() > 1 || groups.iter().any(|(g, _)| *g != notes::Group::Other);
+            let mut shown: Vec<Uuid> = Vec::new();
             let mut rects: Vec<(Uuid, egui::Rect)> = Vec::new();
-            for id in ids {
-                let Shared { notes, confirm_delete, focus, .. } = &mut *s;
-                let Some(note) = notes.get_mut(id) else { continue };
-                let height = note.size[1].clamp(140.0, 420.0);
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-                let focus_this = *focus == Some(id);
-                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, false) {
-                    actions.push((id, a));
+            for (group, ids) in groups {
+                let ids: Vec<Uuid> = ids.into_iter().filter(|id| s.notes.get(*id).is_some_and(|n| filter.matches(n))).collect();
+                if ids.is_empty() {
+                    continue;
                 }
-                if focus_this {
-                    *focus = None;
+                if headings && filter == NoteFilter::All {
+                    let title = match &group {
+                        notes::Group::Pinned => tr("📍 Pinned").to_string(),
+                        notes::Group::Section(name) => name.clone(),
+                        notes::Group::Other => tr("Other notes").to_string(),
+                    };
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(title).strong().weak());
                 }
-                rects.push((id, rect));
-                ui.add_space(10.0);
+                for id in ids {
+                    let Shared { notes, confirm_delete, focus, .. } = &mut *s;
+                    let Some(note) = notes.get_mut(id) else { continue };
+                    let height = note.size[1].clamp(140.0, 420.0);
+                    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+                    let focus_this = *focus == Some(id);
+                    if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, false, &sections) {
+                        actions.push((id, a));
+                    }
+                    if focus_this {
+                        *focus = None;
+                    }
+                    rects.push((id, rect));
+                    shown.push(id);
+                    ui.add_space(10.0);
+                }
             }
             // A note being dragged by its handle: show where it will go, move it on release.
             let drag_id = Id::new("note_drag");
             if let Some(dragged) = ui.ctx().data(|d| d.get_temp::<Uuid>(drag_id)) {
                 let (pointer, released) = ui.input(|i| (i.pointer.interact_pos(), !i.pointer.primary_down()));
                 match pointer {
-                    Some(pos) => {
+                    Some(pos) if shown.contains(&dragged) => {
                         let others: Vec<&(Uuid, egui::Rect)> = rects.iter().filter(|(id, _)| *id != dragged).collect();
                         let to = others.iter().filter(|(_, r)| r.center().y < pos.y).count();
                         let y = match others.get(to) {
@@ -905,15 +1061,21 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
                         ui.ctx().set_cursor_icon(CursorIcon::Grabbing);
                         edge_scroll(ui, pos);
                         if released {
-                            if s.notes.move_in_column(dragged, to) {
-                                s.changed();
-                            }
+                            // The new order of what's shown (a note stays in its group).
+                            let mut seq: Vec<Uuid> = shown.iter().copied().filter(|id| *id != dragged).collect();
+                            seq.insert(to.min(seq.len()), dragged);
+                            s.notes.arrange(&seq);
+                            s.changed();
                             ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id));
                         }
                     }
-                    None if released => ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id)),
-                    None => {}
+                    _ if released => ui.ctx().data_mut(|d| d.remove::<Uuid>(drag_id)),
+                    _ => {}
                 }
+            }
+            if archived_count > 0 {
+                ui.add_space(8.0);
+                archive_section(ui, &mut s);
             }
         });
     } else {
@@ -921,7 +1083,7 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
         // scrollbars only (drag-to-scroll would move the wall under the note being dragged).
         egui::ScrollArea::both().auto_shrink([false; 2]).drag_to_scroll(false).show(ui, |ui| {
             // The wall grows to hold every note, and is at least as big as the page.
-            let extent = s.notes.notes.iter().fold(ui.available_size(), |acc, n| {
+            let extent = s.notes.notes.iter().filter(|n| !n.archived).fold(ui.available_size(), |acc, n| {
                 let [x, y] = n.pos.unwrap_or([0.0, 0.0]);
                 acc.max(Vec2::new(x + n.size[0] + notes::WALL_GAP, y + n.size[1] + notes::WALL_GAP))
             });
@@ -937,20 +1099,26 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
                 }
                 y += 24.0;
             }
-            // Bottom note first, so the top note is drawn (and takes clicks) last.
-            let ids: Vec<Uuid> = s.notes.notes.iter().map(|n| n.id).collect();
+            // Bottom note first, so the top note is drawn (and takes clicks) last. Pinned
+            // notes stay on top of the others.
+            let mut ids: Vec<Uuid> = s.notes.notes.iter().filter(|n| !n.archived && filter.matches(n)).map(|n| n.id).collect();
+            ids.sort_by_key(|id| s.notes.get(*id).is_some_and(|n| n.pinned));
             for id in ids {
                 let Shared { notes, confirm_delete, focus, .. } = &mut *s;
                 let Some(note) = notes.get_mut(id) else { continue };
                 let [x, y] = note.pos.unwrap_or([0.0, 0.0]);
                 let rect = egui::Rect::from_min_size(wall.min + Vec2::new(x, y), Vec2::from(note.size));
                 let focus_this = *focus == Some(id);
-                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, true) {
+                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, true, &sections) {
                     actions.push((id, a));
                 }
                 if focus_this {
                     *focus = None;
                 }
+            }
+            if archived_count > 0 {
+                ui.add_space(8.0);
+                archive_section(ui, &mut s);
             }
         });
     }
@@ -975,6 +1143,8 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
             WallAction::AskDelete => s.confirm_delete = Some(id),
             WallAction::CancelDelete => s.confirm_delete = None,
             WallAction::Delete => s.delete(id),
+            WallAction::Archive => s.archive(id, true),
+            WallAction::ToTask => page_action = PageAction::NoteToTask(id),
         }
     }
     s.save_if_due(false);
@@ -992,6 +1162,8 @@ enum WallAction {
     AskDelete,
     CancelDelete,
     Delete,
+    Archive,
+    ToTask,
 }
 
 /// One note on the wall (or, on a phone, in the column). `movable`: drag the top bar to
@@ -1003,6 +1175,7 @@ fn wall_card(
     confirming: bool,
     focus_text: bool,
     movable: bool,
+    sections: &[String],
 ) -> Option<WallAction> {
     let id = note.id;
     let bg = c32(note.color);
@@ -1063,7 +1236,7 @@ fn wall_card(
         if touch {
             ui.spacing_mut().button_padding = Vec2::new(10.0, 6.0);
         }
-        ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false))
+        ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false, sections, true))
             .response
             .on_hover_text(tr("Colour and text"));
         // The phone column: a ≡ handle drags the note up or down (the rest scrolls).
@@ -1079,8 +1252,11 @@ fn wall_card(
                 ui.ctx().data_mut(|d| d.insert_temp(Id::new("note_drag"), id));
             }
         }
-        if matches!(menu_action, NoteAction::AskDelete) {
-            action = Some(WallAction::AskDelete);
+        match menu_action {
+            NoteAction::AskDelete => action = Some(WallAction::AskDelete),
+            NoteAction::Archive => action = Some(WallAction::Archive),
+            NoteAction::ToTask => action = Some(WallAction::ToTask),
+            _ => {}
         }
     });
 
@@ -1103,6 +1279,10 @@ fn wall_card(
             .auto_shrink([false; 2])
             .drag_to_scroll(false)
             .show(&mut body_ui, |ui| {
+            if note.is_checklist() {
+                checklist_body(ui, note, ink);
+                return;
+            }
             let r = ui.add(
                 egui::TextEdit::multiline(&mut note.text)
                     .id(Id::new(("wall_edit", id)))
@@ -1323,5 +1503,133 @@ pub fn edge_scroll(ui: &mut egui::Ui, pos: Pos2) {
     if speed != 0.0 {
         ui.scroll_with_delta(Vec2::new(0.0, speed));
         ui.ctx().request_repaint();
+    }
+}
+
+/// A checklist note: its heading, then each item with a tick box. Enter adds an item
+/// below; an emptied item goes away when you leave it; "+ Add item" at the end.
+/// Returns whether anything changed.
+fn checklist_body(ui: &mut egui::Ui, note: &mut StickyNote, ink: Color32) -> bool {
+    let id = note.id;
+    let size = note.text_size;
+    let mut items = note.items();
+    let mut changed = false;
+    let focus_id = Id::new(("check_focus", id));
+    let want_focus: Option<usize> = ui.ctx().data_mut(|d| d.remove_temp(focus_id));
+    if let Some(h) = note.heading() {
+        ui.label(RichText::new(h).size(size).strong().color(ink));
+    }
+    let mut insert_after: Option<usize> = None;
+    let mut remove: Option<usize> = None;
+    for (i, item) in items.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            if ui.add(egui::Checkbox::without_text(&mut item.done)).changed() {
+                changed = true;
+            }
+            let color = if item.done { ink.gamma_multiply(0.5) } else { ink };
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut item.text)
+                    .id(Id::new(("check_item", id, i)))
+                    .font(FontId::proportional(size))
+                    .text_color(color)
+                    .frame(false)
+                    .desired_width(f32::INFINITY),
+            );
+            if want_focus == Some(i) {
+                r.request_focus();
+            }
+            if r.changed() {
+                changed = true;
+            }
+            if r.lost_focus() {
+                if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    insert_after = Some(i);
+                } else if item.text.trim().is_empty() {
+                    remove = Some(i);
+                }
+            }
+        });
+    }
+    if let Some(i) = insert_after {
+        items.insert(i + 1, notes::CheckItem { text: String::new(), done: false });
+        ui.ctx().data_mut(|d| d.insert_temp(focus_id, i + 1));
+        changed = true;
+    } else if let Some(i) = remove {
+        if items.len() > 1 {
+            items.remove(i);
+            changed = true;
+        }
+    }
+    // "+ Add item": type and press Enter.
+    let add_id = Id::new(("check_add", id));
+    let mut new_item: String = ui.ctx().data_mut(|d| d.get_temp(add_id)).unwrap_or_default();
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut new_item)
+            .hint_text(RichText::new(tr("+ Add item")).color(ink.gamma_multiply(0.5)))
+            .font(FontId::proportional(size))
+            .text_color(ink)
+            .frame(false)
+            .desired_width(f32::INFINITY),
+    );
+    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !new_item.trim().is_empty() {
+        items.push(notes::CheckItem { text: new_item.trim().to_string(), done: false });
+        new_item.clear();
+        r.request_focus();
+        changed = true;
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(add_id, new_item));
+    if changed {
+        note.set_items(&items);
+    }
+    changed
+}
+
+/// Which notes the wall shows.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+enum NoteFilter {
+    #[default]
+    All,
+    Pinned,
+    Section(String),
+}
+
+impl NoteFilter {
+    fn matches(&self, n: &StickyNote) -> bool {
+        match self {
+            Self::All => true,
+            Self::Pinned => n.pinned,
+            Self::Section(s) => n.section.as_deref().is_some_and(|x| x.eq_ignore_ascii_case(s)),
+        }
+    }
+}
+
+/// "🗄 Archive (3)": the notes put away, folded up; restore or delete each.
+fn archive_section(ui: &mut egui::Ui, s: &mut Shared) {
+    let archived: Vec<(Uuid, String)> = s.notes.notes.iter().filter(|n| n.archived).map(|n| (n.id, n.title().to_string())).collect();
+    let mut restore = None;
+    let mut delete = None;
+    egui::CollapsingHeader::new(RichText::new(trf("🗄 Archive ({n})", &[("n", &archived.len())])).strong())
+        .id_salt("note_archive")
+        .default_open(false)
+        .show(ui, |ui| {
+            for (id, title) in &archived {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Label::new(title.as_str()).truncate());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("🗑").on_hover_text(tr("Delete note")).clicked() {
+                            delete = Some(*id);
+                        }
+                        if ui.button(tr("Restore")).on_hover_text(tr("Put it back on the wall")).clicked() {
+                            restore = Some(*id);
+                        }
+                    });
+                });
+            }
+        });
+    if let Some(id) = restore {
+        s.archive(id, false);
+    }
+    if let Some(id) = delete {
+        s.delete(id);
     }
 }

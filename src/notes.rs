@@ -93,6 +93,36 @@ pub struct StickyNote {
     /// Synced, so your phones agree; the wall on wider screens uses `pos` instead.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub order: i64,
+    /// Kept at the top of the wall.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// The one section it's grouped under ("Shopping", "Tech", …), if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+    /// Put away in the Archive (restore it from there).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
+}
+
+/// Checklist lines are ordinary text starting with these, so older versions (and other
+/// apps the text is copied to) still show them, just without tick boxes.
+pub const UNCHECKED: &str = "☐ ";
+pub const CHECKED: &str = "☑ ";
+
+/// A heading in the phone column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Group {
+    Pinned,
+    Section(String),
+    /// Notes without a section.
+    Other,
+}
+
+/// One line of a checklist note.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckItem {
+    pub text: String,
+    pub done: bool,
 }
 
 impl StickyNote {
@@ -111,6 +141,71 @@ impl StickyNote {
             updated: now,
             picture: None,
             order: 0,
+            pinned: false,
+            section: None,
+            archived: false,
+        }
+    }
+
+    /// Whether it's a checklist: every non-empty line is a ☐ / ☑ item, except perhaps a
+    /// first line as its heading ("Groceries").
+    pub fn is_checklist(&self) -> bool {
+        let lines: Vec<&str> = self.text.lines().filter(|l| !l.trim().is_empty()).collect();
+        let is_item = |l: &&str| l.starts_with(UNCHECKED) || l.starts_with(CHECKED);
+        let rest = match lines.first() {
+            Some(first) if !is_item(first) => &lines[1..],
+            _ => &lines[..],
+        };
+        !rest.is_empty() && rest.iter().all(is_item)
+    }
+
+    /// A checklist's heading (its first line, when that isn't an item).
+    pub fn heading(&self) -> Option<&str> {
+        let first = self.text.lines().find(|l| !l.trim().is_empty())?;
+        (!first.starts_with(UNCHECKED) && !first.starts_with(CHECKED)).then_some(first.trim())
+    }
+
+    /// The checklist's items (for a checklist note).
+    pub fn items(&self) -> Vec<CheckItem> {
+        self.text
+            .lines()
+            .filter(|l| l.starts_with(UNCHECKED) || l.starts_with(CHECKED))
+            .map(|l| match l.strip_prefix(CHECKED) {
+                Some(rest) => CheckItem { text: rest.to_string(), done: true },
+                None => CheckItem { text: l.strip_prefix(UNCHECKED).unwrap_or(l).to_string(), done: false },
+            })
+            .collect()
+    }
+
+    /// Writes `items` back as the note's text (after its heading, if it has one).
+    pub fn set_items(&mut self, items: &[CheckItem]) {
+        let lines = items.iter().map(|i| format!("{}{}", if i.done { CHECKED } else { UNCHECKED }, i.text.trim_end()));
+        self.text = self.heading().map(str::to_string).into_iter().chain(lines).collect::<Vec<_>>().join("\n");
+    }
+
+    /// Turns the note into a checklist (each line an item) or back into plain text.
+    pub fn set_checklist(&mut self, on: bool) {
+        if on == self.is_checklist() {
+            return;
+        }
+        if on {
+            let items: Vec<CheckItem> = self
+                .text
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(|l| CheckItem { text: l.to_string(), done: false })
+                .collect();
+            // Every line becomes an item (no heading: the old text has no item lines).
+            self.text.clear();
+            if items.is_empty() {
+                self.text = UNCHECKED.to_string();
+            } else {
+                self.set_items(&items);
+            }
+        } else {
+            let heading = self.heading().map(str::to_string);
+            self.text = heading.into_iter().chain(self.items().into_iter().map(|i| i.text)).collect::<Vec<_>>().join("\n");
         }
     }
 
@@ -119,9 +214,13 @@ impl StickyNote {
         self.text_color.unwrap_or_else(|| auto_text_color(self.color))
     }
 
-    /// First non-empty line, for lists and window titles.
+    /// First non-empty line, for lists and window titles (without a checklist box).
     pub fn title(&self) -> &str {
-        self.text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or(tr("Empty note"))
+        self.text
+            .lines()
+            .map(|l| l.strip_prefix(UNCHECKED).or_else(|| l.strip_prefix(CHECKED)).unwrap_or(l).trim())
+            .find(|l| !l.is_empty())
+            .unwrap_or(tr("Empty note"))
     }
 }
 
@@ -133,6 +232,18 @@ pub struct Notes {
 }
 
 impl Notes {
+    /// The sections in use (not archived), sorted, for the menus and filter chips.
+    pub fn sections(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.notes.iter().filter(|n| !n.archived).filter_map(|n| n.section.clone()).collect();
+        v.sort_by_key(|s| s.to_lowercase());
+        v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        v
+    }
+
+    pub fn get(&self, id: Uuid) -> Option<&StickyNote> {
+        self.notes.iter().find(|n| n.id == id)
+    }
+
     pub fn get_mut(&mut self, id: Uuid) -> Option<&mut StickyNote> {
         self.notes.iter_mut().find(|n| n.id == id)
     }
@@ -187,6 +298,9 @@ impl Notes {
         let limit = (wall_width * 3.0).max(4000.0);
         let mut moved = false;
         for i in 0..self.notes.len() {
+            if self.notes[i].archived {
+                continue;
+            }
             let ok = self.notes[i].pos.is_some_and(|[x, y]| x >= 0.0 && y >= 0.0 && x < limit && y < limit);
             if !ok {
                 self.notes[i].pos = Some(self.free_spot(i, wall_width));
@@ -207,6 +321,7 @@ impl Notes {
             let y = WALL_GAP + row as f32 * (h + WALL_GAP);
             let taken = self.notes.iter().enumerate().any(|(j, n)| {
                 j != skip
+                    && !n.archived
                     && n.pos.is_some_and(|[nx, ny]| {
                         x < nx + n.size[0] && nx < x + w && y < ny + n.size[1] && ny < y + h
                     })
@@ -220,8 +335,13 @@ impl Notes {
 
     /// Web wall: lines every note up in rows that fit `wall_width`, oldest first.
     pub fn tidy(&mut self, wall_width: f32) {
-        let mut order: Vec<usize> = (0..self.notes.len()).collect();
-        order.sort_by_key(|&i| self.notes[i].created);
+        // Pinned notes first, then each section together (notes without one last), then
+        // oldest first. Archived notes aren't on the wall.
+        let mut order: Vec<usize> = (0..self.notes.len()).filter(|&i| !self.notes[i].archived).collect();
+        order.sort_by_key(|&i| {
+            let n = &self.notes[i];
+            (!n.pinned, n.section.is_none(), n.section.as_ref().map(|s| s.to_lowercase()), n.created)
+        });
         let (mut x, mut y, mut row_h) = (WALL_GAP, WALL_GAP, 0.0_f32);
         for i in order {
             let [w, h] = self.notes[i].size;
@@ -469,6 +589,85 @@ mod tests {
     }
 
     #[test]
+    fn checklists_are_plain_text_lines() {
+        let mut n = StickyNote::new(now(), [0xFF, 0xF1, 0x76]);
+        n.text = "Milk\nBread\n\nEggs".into();
+        assert!(!n.is_checklist());
+        n.set_checklist(true);
+        assert_eq!(n.text, "☐ Milk\n☐ Bread\n☐ Eggs");
+        assert!(n.is_checklist());
+        let mut items = n.items();
+        items[1].done = true;
+        n.set_items(&items);
+        assert_eq!(n.text, "☐ Milk\n☑ Bread\n☐ Eggs", "older versions see the same text");
+        assert_eq!(n.title(), "Milk");
+        n.set_checklist(false);
+        assert_eq!(n.text, "Milk\nBread\nEggs");
+        // A heading line stays a heading.
+        let mut g = StickyNote::new(now(), [0xFF, 0xF1, 0x76]);
+        g.text = "Groceries\n☐ Milk\n☑ Bread".into();
+        assert!(g.is_checklist());
+        assert_eq!(g.heading(), Some("Groceries"));
+        assert_eq!(g.items().len(), 2);
+        let mut it = g.items();
+        it[0].done = true;
+        g.set_items(&it);
+        assert_eq!(g.text, "Groceries\n☑ Milk\n☑ Bread");
+        assert_eq!(g.title(), "Groceries");
+        g.set_checklist(false);
+        assert_eq!(g.text, "Groceries\nMilk\nBread");
+        assert!(!StickyNote { text: "Just a heading".into(), ..g.clone() }.is_checklist());
+        // An empty note becomes a checklist with one empty item to type into.
+        let mut e = StickyNote::new(now(), [0xFF, 0xF1, 0x76]);
+        e.set_checklist(true);
+        assert_eq!(e.text, UNCHECKED);
+    }
+
+    #[test]
+    fn sections_pinning_and_archive_are_optional_fields() {
+        let mut n = Notes::default();
+        let a = n.add(now(), None);
+        let b = n.add(now(), None);
+        n.get_mut(a).unwrap().section = Some("Shopping".into());
+        n.get_mut(b).unwrap().section = Some("shopping".into());
+        let c = n.add(now(), None);
+        n.get_mut(c).unwrap().section = Some("Tech".into());
+        assert_eq!(n.sections(), ["Shopping", "Tech"], "case doesn't make a second section");
+        n.get_mut(c).unwrap().archived = true;
+        assert_eq!(n.sections(), ["Shopping"], "archived notes don't count");
+        // Not written when unused, so older versions see nothing new.
+        let plain = serde_json::to_value(StickyNote::new(now(), [1, 2, 3])).unwrap();
+        assert!(plain.get("pinned").is_none() && plain.get("section").is_none() && plain.get("archived").is_none());
+    }
+
+    #[test]
+    fn column_groups_pinned_then_sections_then_the_rest() {
+        let mut n = Notes::default();
+        let a = n.add(now(), None);
+        let b = n.add(now(), None);
+        let c = n.add(now(), None);
+        let d = n.add(now(), None);
+        n.get_mut(a).unwrap().section = Some("Tech".into());
+        n.get_mut(b).unwrap().pinned = true;
+        n.get_mut(c).unwrap().section = Some("Shopping".into());
+        n.get_mut(d).unwrap().archived = true;
+        let groups = n.column_groups();
+        assert_eq!(
+            groups,
+            vec![
+                (Group::Pinned, vec![b]),
+                (Group::Section("Shopping".into()), vec![c]),
+                (Group::Section("Tech".into()), vec![a]),
+            ]
+        );
+        // Tidy up puts the pinned note first and leaves the archived one off the wall.
+        n.get_mut(d).unwrap().pos = None;
+        n.tidy(2000.0);
+        assert_eq!(n.get(b).unwrap().pos, Some([WALL_GAP, WALL_GAP]));
+        assert_eq!(n.get(d).unwrap().pos, None);
+    }
+
+    #[test]
     fn phone_column_order() {
         let mut n = Notes::default();
         let a = n.add(now(), None);
@@ -642,6 +841,43 @@ fn is_zero(n: &i64) -> bool {
 }
 
 impl Notes {
+    /// The phone column as groups: pinned notes, then each section, then the rest (each
+    /// in the column's order). The heading is None for the pinned group's and the rest's
+    /// own label; archived notes aren't included.
+    pub fn column_groups(&self) -> Vec<(Group, Vec<uuid::Uuid>)> {
+        let order = self.column_order();
+        let get = |id: &uuid::Uuid| self.notes.iter().find(|n| n.id == *id);
+        let mut groups = Vec::new();
+        let pinned: Vec<_> = order.iter().copied().filter(|id| get(id).is_some_and(|n| !n.archived && n.pinned)).collect();
+        if !pinned.is_empty() {
+            groups.push((Group::Pinned, pinned));
+        }
+        for sec in self.sections() {
+            let ids: Vec<_> = order
+                .iter()
+                .copied()
+                .filter(|id| get(id).is_some_and(|n| !n.archived && !n.pinned && n.section.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(&sec))))
+                .collect();
+            if !ids.is_empty() {
+                groups.push((Group::Section(sec), ids));
+            }
+        }
+        let rest: Vec<_> = order.iter().copied().filter(|id| get(id).is_some_and(|n| !n.archived && !n.pinned && n.section.is_none())).collect();
+        if !rest.is_empty() {
+            groups.push((Group::Other, rest));
+        }
+        groups
+    }
+
+    /// Sets the phone column's order to `ids` (the others keep theirs after them).
+    pub fn arrange(&mut self, ids: &[uuid::Uuid]) {
+        for (i, id) in ids.iter().enumerate() {
+            if let Some(n) = self.get_mut(*id) {
+                n.order = (i as i64 + 1) * 1024;
+            }
+        }
+    }
+
     /// The notes as the phone column shows them: newest first, except those you arranged.
     pub fn column_order(&self) -> Vec<uuid::Uuid> {
         let mut v: Vec<&StickyNote> = self.notes.iter().rev().collect();

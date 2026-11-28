@@ -79,6 +79,8 @@ enum Action {
     Delete(Uuid),
     /// Move a task in "My order": (the open tasks as shown, the task, its new place).
     MoveTask(Vec<Uuid>, Uuid, usize),
+    /// Make a sticky note from a task (and remove the task).
+    ToNote(Uuid),
 }
 
 enum AlertAction {
@@ -3156,6 +3158,7 @@ impl TodoApp {
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
+            Action::ToNote(id) => self.task_to_note(id),
             Action::MoveTask(shown, id, to) => {
                 self.dirty |= self.store.move_task(&shown, id, to);
             }
@@ -3609,6 +3612,65 @@ impl TodoApp {
         }
     }
 
+    /// A sticky note becomes a task in the default list: its first line the title, a
+    /// checklist's items the subtasks (ticks kept), other text the task's note. The note
+    /// goes away.
+    fn note_to_task(&mut self, id: Uuid) {
+        let Some(note) = notes_ui::lock(&self.notes).notes.get(id).cloned() else { return };
+        let now = Local::now().naive_local();
+        let title = note.title().to_string();
+        let list = self.store.default_list;
+        let Some(task_id) = self.store.add_task(&title, View::List(list), now) else { return };
+        if let Some(t) = self.store.task_mut(task_id) {
+            if note.is_checklist() {
+                t.steps = note
+                    .items()
+                    .into_iter()
+                    .filter(|i| !i.text.trim().is_empty())
+                    .map(|i| {
+                        let mut step = Step::new(i.text.trim());
+                        step.done = i.done;
+                        step
+                    })
+                    .collect();
+            } else {
+                // Everything after the first line (which is the title).
+                let mut lines = note.text.lines().skip_while(|l| l.trim().is_empty());
+                lines.next();
+                t.notes = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+            }
+        }
+        notes_ui::lock(&self.notes).delete(id);
+        self.dirty = true;
+        self.notify(trf("“{title}” is now a task in “{list}”.", &[("title", &title), ("list", &self.store.list_name(list))]));
+    }
+
+    /// A task becomes a sticky note: its title the first line, subtasks a checklist below
+    /// it (ticks kept), the task's note after. The task goes away.
+    fn task_to_note(&mut self, id: Uuid) {
+        let Some(task) = self.store.task(id).cloned() else { return };
+        let mut lines = vec![task.title.clone()];
+        for st in &task.steps {
+            lines.push(format!("{}{}", if st.done { notes::CHECKED } else { notes::UNCHECKED }, st.title));
+        }
+        if !task.notes.trim().is_empty() {
+            if !task.steps.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(task.notes.trim().to_string());
+        }
+        {
+            let mut s = notes_ui::lock(&self.notes);
+            let note = s.new_note(None);
+            if let Some(n) = s.notes.get_mut(note) {
+                n.text = lines.join("\n");
+            }
+            s.changed();
+        }
+        self.delete_task(id);
+        self.notify(trf("“{title}” is now a sticky note.", &[("title", &task.title)]));
+    }
+
     /// The Sticky notes page (desktop), with a Back button on narrow windows.
     fn notes_panel(&mut self, ctx: &egui::Context) {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
@@ -3619,6 +3681,7 @@ impl TodoApp {
                 notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
+                notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
                 notes_ui::PageAction::None => {}
             }
         });
@@ -5399,6 +5462,10 @@ fn task_row(
                     }
                 }
             }
+        }
+        if notes::AVAILABLE && ui.button(tr("📝  Turn into a sticky note")).on_hover_text(tr("Subtasks become a checklist")).clicked() {
+            actions.push(Action::ToNote(t.id));
+            ui.close_menu();
         }
         ui.separator();
         if ui.button(RichText::new(tr("🗑  Delete task")).color(DANGER)).clicked() {
