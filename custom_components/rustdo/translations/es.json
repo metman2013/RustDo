@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar con tu RustDo Hub",
+        "description": "Las listas de RustDo se convierten aquí en listas de tareas. En RustDo, abre Configuración › Sincronizar y compartir, activa Sincronizar mis dispositivos si aún no lo está y copia la clave de sincronización.",
+        "data": {
+          "hub": "Dirección del hub",
+          "key": "Clave de sincronización"
+        },
+        "data_description": {
+          "hub": "La dirección que usa RustDo, p. ej. 192.168.1.20:7979 o https://todo.example.com",
+          "key": "p. ej. ABCDE-FGHJK-MNPQR-STUVW"
+        }
+      },
+      "reauth_confirm": {
+        "title": "La clave de sincronización ya no funciona",
+        "description": "El hub ya no reconoce esta clave. Copia la actual desde Configuración › Sincronizar y compartir en RustDo.",
+        "data": {
+          "hub": "Dirección del hub",
+          "key": "Clave de sincronización"
+        }
+      }
+    },
+    "error": {
+      "bad_hub": "Eso no parece la dirección de un hub.",
+      "bad_key": "Una clave de sincronización tiene 20 letras y números, como ABCDE-FGHJK-MNPQR-STUVW.",
+      "unknown_key": "El hub no reconoce esta clave. Revísala en Configuración › Sincronizar y compartir en RustDo.",
+      "cannot_connect": "No se puede conectar con el hub. ¿Está en marcha y puede Home Assistant llegar a esta dirección?"
+    },
+    "abort": {
+      "already_configured": "Estas listas de RustDo ya están configuradas.",
+      "reauth_successful": "Actualizado."
+    }
+  }
+}

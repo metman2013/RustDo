@@ -8,3 +8,6 @@
 *.pem
 *.json.tmp
 hub/target/
+
+# Python (Home Assistant integration tests)
+__pycache__/

@@ -101,6 +101,8 @@ app** (add this repository in Home Assistant's app store). No cloud.
   Sync my devices; the first device gets a sync key for the others.
 - **Family sharing:** share a list (groceries, chores, packing) with people at home. A
   shared list has its own code, separate from your sync key.
+- **Home Assistant to-do lists:** the RustDo integration (HACS) shows your lists on
+  dashboards, for voice and in automations. See [RustDo in Home Assistant](docs/home-assistant.md).
 
 ```bash
 docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v rustdo-hub-data:/data ghcr.io/metman2013/rustdo-hub:latest
@@ -109,7 +111,7 @@ docker run -d --name rustdo-hub --init --restart unless-stopped -p 7979:7979 -v 
 Then in RustDo: right-click a list (long-press on a phone) → **👥 Share list…** → enter
 the hub's address → you get a code like `K7QM-2XPD`. Others choose **⚙ → Family sharing →
 Join a shared list…** and enter the code. Shared lists sync every 30 seconds, and My Day
-stays personal. Works in the Windows, Linux and Android apps.
+stays personal. Works in every RustDo app, including the web app (with the hub on `https://`).
 
 Full guide, including the Windows exe and using it away from home: [docs/hub.md](docs/hub.md).
 
