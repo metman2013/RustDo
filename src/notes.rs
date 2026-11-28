@@ -102,6 +102,10 @@ pub struct StickyNote {
     /// Put away in the Archive (restore it from there).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub archived: bool,
+    /// Where an imported note came from ("keep:…", "msnotes:…"), so importing again
+    /// doesn't add it twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
 }
 
 /// Checklist lines are ordinary text starting with these, so older versions (and other
@@ -144,6 +148,7 @@ impl StickyNote {
             pinned: false,
             section: None,
             archived: false,
+            source_id: None,
         }
     }
 
@@ -290,6 +295,24 @@ impl Notes {
         }
         self.repair();
         (added, updated)
+    }
+
+    /// Adds imported notes (Google Keep, Microsoft Sticky Notes), skipping ones already
+    /// here from an earlier import (same `source_id`).
+    /// Returns how many were added.
+    pub fn import(&mut self, notes: Vec<StickyNote>) -> usize {
+        let mut added = 0;
+        for n in notes {
+            let dup = n.source_id.is_some() && self.notes.iter().any(|o| o.source_id == n.source_id);
+            if !dup {
+                self.notes.push(n);
+                added += 1;
+            }
+        }
+        if added > 0 {
+            self.repair();
+        }
+        added
     }
 
     /// Web wall: gives notes without a place (new, or from a desktop backup whose positions

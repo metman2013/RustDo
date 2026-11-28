@@ -10,6 +10,7 @@ use crate::model::{
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
+use crate::keep;
 use crate::changelog;
 use crate::companion;
 use crate::store_package;
@@ -525,7 +526,65 @@ impl TodoApp {
     #[cfg(target_os = "android")]
     fn pick_import_file(&mut self, _ctx: &egui::Context) {}
 
+    /// Google Keep: a Takeout zip (or one note's .json).
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn pick_keep_file(&mut self, _ctx: &egui::Context) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr("Import from Google Keep"))
+            .add_filter(tr("Google Takeout export"), &["zip", "json"])
+            .add_filter(tr("All files"), &["*"])
+            .pick_file();
+        if let Some(path) = picked {
+            self.read_picked_file(&path);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn pick_keep_file(&mut self, ctx: &egui::Context) {
+        let slot = self.web_import.clone();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let file = rfd::AsyncFileDialog::new().add_filter(tr("Google Takeout export"), &["zip", "json"]).pick_file().await;
+            if let Some(file) = file {
+                let bytes = file.read().await;
+                *slot.borrow_mut() = Some((file.file_name(), bytes));
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    fn pick_keep_file(&mut self, _ctx: &egui::Context) {}
+
+    /// Adds the notes from a Google Keep export to the sticky notes.
+    fn import_keep(&mut self, bytes: &[u8]) {
+        match keep::parse(bytes, Local::now().naive_local()) {
+            Ok(found) => {
+                let total = found.notes.len();
+                let added = notes_ui::lock(&self.notes).import(found.notes);
+                self.notes_page = true;
+                self.notify(if total == 0 {
+                    tr("Nothing to import: these Keep notes are all in Keep's trash.").to_string()
+                } else if added == 0 {
+                    tr("Nothing new to import: you already have these Keep notes.").to_string()
+                } else {
+                    let mut msg = plural(added, "Imported {n} note from Google Keep.", "Imported {n} notes from Google Keep.");
+                    if notes::SUPPORTED {
+                        msg = format!("{msg} {}", tr("Show them from this page."));
+                    }
+                    msg
+                });
+            }
+            Err(e) => self.notify(e),
+        }
+    }
+
     fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
+        // A Google Takeout zip, or one Keep note: into the sticky notes.
+        if notes::AVAILABLE && (bytes.starts_with(b"PK") || keep::looks_like_note(bytes)) {
+            self.import_keep(bytes);
+            return;
+        }
         // A RustDo backup is restored (after confirmation) rather than merged.
         if let Ok(store) = storage::parse_backup(bytes) {
             let carried = notes::parse_backup(bytes).ok().filter(|_| notes::AVAILABLE);
@@ -3576,7 +3635,7 @@ impl TodoApp {
                     };
                     ui.label(RichText::new(heading).small().weak());
                     // Desktop: notes showing; web: all of them (they're all on the wall).
-                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open || notes::WALL).count();
+                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| !n.archived && (n.open || notes::WALL)).count();
                     if nav_row(ui, self.notes_page, "📝", tr("Sticky notes"), shown)
                         .on_hover_text(tip)
                         .clicked()
@@ -3708,6 +3767,7 @@ impl TodoApp {
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
+                notes_ui::PageAction::ImportKeep => self.pick_keep_file(ctx),
                 notes_ui::PageAction::Archived(id) => {
                     let title = notes_ui::lock(&self.notes).notes.get(id).map(|n| n.title().to_string()).unwrap_or_default();
                     self.toast = Some(Toast {

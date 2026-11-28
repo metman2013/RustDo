@@ -172,6 +172,16 @@ impl Shared {
     }
 
     /// A notes-only restore: adds the backup's notes without losing any here.
+    /// Adds imported notes (skipping ones already here); returns how many were added.
+    pub fn import(&mut self, notes: Vec<StickyNote>) -> usize {
+        let added = self.notes.import(notes);
+        if added > 0 {
+            self.changed();
+            self.save_if_due(true);
+        }
+        added
+    }
+
     pub fn merge_in(&mut self, notes: &Notes) -> (usize, usize) {
         let counts = self.notes.merge(notes);
         self.changed();
@@ -748,6 +758,8 @@ pub enum PageAction {
     NoteToTask(Uuid),
     /// A note was archived (the main window offers Undo).
     Archived(Uuid),
+    /// "Import from Google Keep…" (pick a Takeout zip).
+    ImportKeep,
 }
 
 /// What was pressed in the page's top row.
@@ -784,6 +796,16 @@ fn page_header(ui: &mut egui::Ui, phone: bool, can_tidy: bool, page_action: &mut
                 }
                 if ui.button(tr("Restore notes…")).on_hover_text(tr("Bring notes back from a backup file (your current notes are kept)")).clicked() {
                     *page_action = PageAction::Restore;
+                    ui.close_menu();
+                }
+                // Android can't pick files yet.
+                if !cfg!(target_os = "android")
+                    && ui
+                        .button(tr("Import from Google Keep…"))
+                        .on_hover_text(tr("Your Keep notes from a Google Takeout zip (takeout.google.com)"))
+                        .clicked()
+                {
+                    *page_action = PageAction::ImportKeep;
                     ui.close_menu();
                 }
             });

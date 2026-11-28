@@ -8,6 +8,7 @@ pub mod companion;
 pub mod diagnostics;
 pub mod i18n;
 pub mod import;
+pub mod keep;
 pub mod model;
 pub mod mstodo;
 pub mod notes;
