@@ -1,0 +1,38 @@
+# Turns new posts in the RustDo Discord's bug and request channels into GitHub issues
+# (tools/discord-intake.sh). Every hour, and on demand from the Actions tab.
+#
+# Setup: a Discord bot invited to the server with "View Channel", "Read Message History"
+# and "Send Messages" in the two channels; its token as the repository secret
+# DISCORD_BOT_TOKEN; the channel ids as the repository variables DISCORD_BUGS_CHANNEL
+# and DISCORD_REQUESTS_CHANNEL. Without the token this does nothing.
+name: Discord to issues
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: discord-intake
+  cancel-in-progress: false
+
+jobs:
+  intake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: New Discord posts to issues
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_BUGS_CHANNEL: ${{ vars.DISCORD_BUGS_CHANNEL }}
+          DISCORD_REQUESTS_CHANNEL: ${{ vars.DISCORD_REQUESTS_CHANNEL }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$DISCORD_BOT_TOKEN" ]; then
+            echo "::notice::DISCORD_BOT_TOKEN isn't set; nothing to do."
+            exit 0
+          fi
+          bash tools/discord-intake.sh

@@ -14,6 +14,8 @@ permissions: {}
 
 jobs:
   post:
+    # Issues made from Discord posts (discord-intake.yml) came from there already.
+    if: ${{ !contains(github.event.issue.labels.*.name, 'from-discord') }}
     runs-on: ubuntu-latest
     steps:
       - name: Post to Discord
