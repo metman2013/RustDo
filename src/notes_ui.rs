@@ -760,6 +760,8 @@ pub enum PageAction {
     Archived(Uuid),
     /// "Import from Google Keep…" (pick a Takeout zip).
     ImportKeep,
+    /// Windows: "Import from Microsoft Sticky Notes".
+    ImportMsNotes,
 }
 
 /// What was pressed in the page's top row.
@@ -806,6 +808,15 @@ fn page_header(ui: &mut egui::Ui, phone: bool, can_tidy: bool, page_action: &mut
                         .clicked()
                 {
                     *page_action = PageAction::ImportKeep;
+                    ui.close_menu();
+                }
+                if cfg!(windows)
+                    && ui
+                        .button(tr("Import from Microsoft Sticky Notes"))
+                        .on_hover_text(tr("Copy the notes from the Sticky Notes app on this PC"))
+                        .clicked()
+                {
+                    *page_action = PageAction::ImportMsNotes;
                     ui.close_menu();
                 }
             });

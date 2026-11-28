@@ -556,6 +556,48 @@ impl TodoApp {
     #[cfg(target_os = "android")]
     fn pick_keep_file(&mut self, _ctx: &egui::Context) {}
 
+    /// Windows: copies the notes from Microsoft Sticky Notes on this PC (or a `plum.sqlite`
+    /// picked by hand, e.g. from another PC's backup).
+    #[cfg(windows)]
+    fn import_ms_sticky_notes(&mut self) {
+        let path = match crate::msnotes::default_path() {
+            Some(p) => p,
+            None => {
+                self.notify(tr("Sticky Notes wasn't found on this PC (Sticky Notes in OneNote keeps its notes in OneNote). You can also pick a plum.sqlite file."));
+                let Some(p) = rfd::FileDialog::new()
+                    .set_title(tr("Import from Microsoft Sticky Notes"))
+                    .add_filter(tr("Sticky Notes database"), &["sqlite"])
+                    .pick_file()
+                else {
+                    return;
+                };
+                p
+            }
+        };
+        match crate::msnotes::read(&path, Local::now().naive_local()) {
+            Ok(found) => {
+                let total = found.len();
+                let added = notes_ui::lock(&self.notes).import(found);
+                self.notes_page = true;
+                self.notify(if total == 0 {
+                    tr("Sticky Notes has no notes to import.").to_string()
+                } else if added == 0 {
+                    tr("Nothing new to import: you already have these Sticky Notes.").to_string()
+                } else {
+                    format!(
+                        "{} {}",
+                        plural(added, "Imported {n} note from Microsoft Sticky Notes.", "Imported {n} notes from Microsoft Sticky Notes."),
+                        tr("Show them from this page.")
+                    )
+                });
+            }
+            Err(e) => self.notify(trf("Couldn't read Sticky Notes: {e}", &[("e", &e)])),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn import_ms_sticky_notes(&mut self) {}
+
     /// Adds the notes from a Google Keep export to the sticky notes.
     fn import_keep(&mut self, bytes: &[u8]) {
         match keep::parse(bytes, Local::now().naive_local()) {
@@ -3768,6 +3810,7 @@ impl TodoApp {
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
                 notes_ui::PageAction::ImportKeep => self.pick_keep_file(ctx),
+                notes_ui::PageAction::ImportMsNotes => self.import_ms_sticky_notes(),
                 notes_ui::PageAction::Archived(id) => {
                     let title = notes_ui::lock(&self.notes).notes.get(id).map(|n| n.title().to_string()).unwrap_or_default();
                     self.toast = Some(Toast {

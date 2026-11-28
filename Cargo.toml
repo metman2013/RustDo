@@ -74,6 +74,7 @@ windows = { version = "0.58", features = [
 # Windows: Direct3D (wgpu) as a fallback when OpenGL can't start (virtual machines,
 # Remote Desktop, missing graphics drivers). See diagnostics.rs.
 eframe = { version = "0.31", features = ["wgpu"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 
 # Linux: desktop notifications over D-Bus.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -149,3 +150,6 @@ egui-winit = { path = "vendor/egui-winit" }
 # egui_glow with high-precision shaders (crisp letters on mobile GPUs; see
 # vendor/egui_glow/src/shader/vertex.glsl).
 egui_glow = { path = "vendor/egui_glow" }
+
+[dev-dependencies]
+rusqlite = { version = "0.43.0", features = ["bundled"] }

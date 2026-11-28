@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod import;
 pub mod keep;
 pub mod model;
+pub mod msnotes;
 pub mod mstodo;
 pub mod notes;
 pub mod notes_ui;
