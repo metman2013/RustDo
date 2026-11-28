@@ -281,6 +281,8 @@ pub struct TodoApp {
     whats_new: Option<Vec<changelog::Release>>,
     /// "Get RustDo for your other devices" is open.
     get_apps: bool,
+    /// The Settings section showing.
+    settings_tab: SettingsTab,
     /// Desktop: the one-time "RustDo keeps running in the tray" message (shown instead of
     /// closing the first time).
     close_hint: bool,
@@ -429,6 +431,7 @@ impl TodoApp {
             account_notes_seen: None,
             whats_new,
             get_apps: false,
+            settings_tab: SettingsTab::default(),
             close_hint: false,
             closing: false,
         }
@@ -759,23 +762,41 @@ impl TodoApp {
         }
     }
 
-    /// The ⚙ button: a pop-up menu on wide screens, a full-screen page on phones.
-    fn settings_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        if narrow {
-            if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
-                self.show_settings = true;
-            }
-            return;
+    /// The ⚙ button: Settings as a pane on the right on wide screens, a full page on
+    /// phones. Pressing it again (or ✖, or Escape) closes it.
+    fn settings_button(&mut self, ui: &mut egui::Ui, _narrow: bool) {
+        if ui.add(egui::Button::new("⚙").selected(self.show_settings)).on_hover_text(tr("Settings")).clicked() {
+            self.show_settings = !self.show_settings;
         }
-        ui.menu_button("⚙", |ui| {
-            // A fixed width: wrapping text in an auto-sized menu never settles on a size.
-            ui.set_width(300.0);
-            // Never taller than the window: scroll instead of running off the bottom.
-            let max_h = ui.ctx().screen_rect().bottom() - ui.next_widget_position().y - 16.0;
-            egui::ScrollArea::vertical().max_height(max_h.max(120.0)).show(ui, |ui| {
-                self.settings_contents(ui);
+    }
+
+    /// Wide screens: Settings as a full-height pane on the right (where a task's details
+    /// go), with room for each section.
+    fn settings_pane(&mut self, ctx: &egui::Context) {
+        let side = self.side_frame(ctx);
+        let mut close = false;
+        egui::SidePanel::right("settings_pane")
+            .frame(side)
+            .resizable(true)
+            .default_width(420.0)
+            .width_range(340.0..=600.0)
+            .show(ctx, |ui| {
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tr("Settings")).size(20.0).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        close = small_btn(ui, "✖").on_hover_text(tr("Close")).clicked();
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                    self.settings_contents(ui);
+                    ui.add_space(24.0);
+                });
             });
-        });
+        if close || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.show_settings = false;
+        }
     }
 
     /// Phones: settings as their own scrolling page with a Back button.
@@ -806,6 +827,95 @@ impl TodoApp {
     }
 
     fn settings_contents(&mut self, ui: &mut egui::Ui) {
+        // Sections as tabs: one at a time, so it's short and easy to scan.
+        ui.horizontal_wrapped(|ui| {
+            for tab in SettingsTab::ALL {
+                if ui.selectable_label(self.settings_tab == tab, tab.label()).clicked() {
+                    self.settings_tab = tab;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        match self.settings_tab {
+            SettingsTab::Appearance => card(ui, |ui| self.settings_appearance(ui)),
+            SettingsTab::Reminders => {
+                card(ui, |ui| self.notification_menu_items(ui));
+                if companion::SUPPORTED {
+                    card(ui, |ui| self.companion_menu_items(ui));
+                }
+            }
+            SettingsTab::Sync => {
+                card(ui, |ui| self.account_menu_items(ui));
+                card(ui, |ui| self.sharing_menu_items(ui));
+            }
+            SettingsTab::Backups => card(ui, |ui| self.backup_menu_items(ui)),
+            SettingsTab::About => card(ui, |ui| self.settings_about(ui)),
+        }
+    }
+
+    /// Settings › Appearance: language, background, clock, sharp text.
+    fn settings_appearance(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new(tr("Language")).strong());
+        let mut language = self.store.settings.language;
+        egui::ComboBox::from_id_salt("language")
+            .selected_text(language.label())
+            .show_ui(ui, |ui| {
+                for l in i18n::Language::ALL {
+                    ui.selectable_value(&mut language, l, l.label());
+                }
+            });
+        if language != self.store.settings.language {
+            self.store.settings.language = language;
+            i18n::set(language);
+            // The default list follows the language while it still has its default name.
+            let default = self.store.default_list;
+            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
+                if i18n::default_list_names().contains(&list.name.as_str()) {
+                    list.name = tr("Tasks").to_string();
+                }
+            }
+            self.dirty = true;
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("Background")).strong());
+        self.background_picker(ui, None);
+        let any = self.store.settings.background != Background::None || !self.store.settings.list_backgrounds.is_empty();
+        if any {
+            ui.horizontal(|ui| {
+                ui.label(tr("Dim background"));
+                let mut dim = self.store.settings.background_dim;
+                if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).show_value(false)).changed() {
+                    self.store.settings.background_dim = (dim * 20.0).round() / 20.0;
+                    self.dirty = true;
+                }
+            });
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("Time")).strong());
+        let s = &mut self.store.settings;
+        if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
+            | ui.radio_value(&mut s.clock_24h, true, tr("24-hour clock (21:30)")).changed()
+        {
+            self.dirty = true;
+        }
+        if cfg!(target_os = "android") || platform::web_touch_screen() {
+            if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
+                self.dirty = true;
+            }
+            let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
+            ui.label(
+                RichText::new(trf(
+                    "Rounds the screen scale to whole pixels so letters render evenly (screen {native}x, drawn at {drawn}x). Turn off if things look too big.",
+                    &[("native", &format!("{native:.3}")), ("drawn", &format!("{:.3}", ui.ctx().pixels_per_point()))],
+                ))
+                .weak()
+                .small(),
+            );
+        }
+    }
+
+    /// Settings › About: version and updates, help, other devices and links.
+    fn settings_about(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
             if ui.button(tr("What's new")).clicked() {
@@ -850,56 +960,6 @@ impl TodoApp {
                 self.close_settings(ui);
             }
         }
-        ui.separator();
-        ui.label(RichText::new(tr("Language")).strong());
-        let mut language = self.store.settings.language;
-        egui::ComboBox::from_id_salt("language")
-            .selected_text(language.label())
-            .show_ui(ui, |ui| {
-                for l in i18n::Language::ALL {
-                    ui.selectable_value(&mut language, l, l.label());
-                }
-            });
-        if language != self.store.settings.language {
-            self.store.settings.language = language;
-            i18n::set(language);
-            // The default list follows the language while it still has its default name.
-            let default = self.store.default_list;
-            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
-                if i18n::default_list_names().contains(&list.name.as_str()) {
-                    list.name = tr("Tasks").to_string();
-                }
-            }
-            self.dirty = true;
-        }
-        ui.separator();
-        ui.label(RichText::new(tr("Background")).strong());
-        self.background_picker(ui, None);
-        let any = self.store.settings.background != Background::None || !self.store.settings.list_backgrounds.is_empty();
-        if any {
-            ui.horizontal(|ui| {
-                ui.label(tr("Dim background"));
-                let mut dim = self.store.settings.background_dim;
-                if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).show_value(false)).changed() {
-                    self.store.settings.background_dim = (dim * 20.0).round() / 20.0;
-                    self.dirty = true;
-                }
-            });
-        }
-        ui.separator();
-        ui.label(RichText::new(tr("Time")).strong());
-        let s = &mut self.store.settings;
-        if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
-            | ui.radio_value(&mut s.clock_24h, true, tr("24-hour clock (21:30)")).changed()
-        {
-            self.dirty = true;
-        }
-        ui.separator();
-        self.notification_menu_items(ui);
-        self.companion_menu_items(ui);
-        self.account_menu_items(ui);
-        self.sharing_menu_items(ui);
-        self.backup_menu_items(ui);
         self.help_menu_items(ui);
         #[cfg(target_os = "android")]
         {
@@ -912,23 +972,6 @@ impl TodoApp {
                 RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
                     .weak()
                     .small(),
-            );
-        }
-        if cfg!(target_os = "android") || platform::web_touch_screen() {
-            if !cfg!(target_os = "android") {
-                ui.separator();
-            }
-            if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
-                self.dirty = true;
-            }
-            let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
-            ui.label(
-                RichText::new(trf(
-                    "Rounds the screen scale to whole pixels so letters render evenly (screen {native}x, drawn at {drawn}x). Turn off if things look too big.",
-                    &[("native", &format!("{native:.3}")), ("drawn", &format!("{:.3}", ui.ctx().pixels_per_point()))],
-                ))
-                .weak()
-                .small(),
             );
         }
         ui.separator();
@@ -1048,7 +1091,7 @@ impl TodoApp {
         dialog_window(ctx, tr("RustDo keeps running in the tray"), self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 420.0));
             ui.add(egui::Label::new(what).wrap());
-            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Background.")).wrap());
+            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Reminders.")).wrap());
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.add(egui::Button::new(RichText::new(tr("OK, close the window")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
@@ -1071,12 +1114,12 @@ impl TodoApp {
         }
     }
 
-    /// Settings › Background (desktop): the companion and its tray icon.
+    /// Settings › Reminders › When RustDo is closed (desktop): the companion and its tray icon.
     fn companion_menu_items(&mut self, ui: &mut egui::Ui) {
         if !companion::SUPPORTED {
             return;
         }
-        ui.label(RichText::new(tr("Background")).strong());
+        ui.label(RichText::new(tr("When RustDo is closed")).strong());
         let s = &mut self.store.settings;
         let mut changed = ui
             .checkbox(&mut s.companion, tr("Keep sticky notes running in the background"))
@@ -1109,7 +1152,6 @@ impl TodoApp {
             self.closing = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ui.separator();
     }
 
     // ------------------------------------------------------------------ backgrounds
@@ -1682,7 +1724,6 @@ impl TodoApp {
             self.hub_guide = true;
             self.close_settings(ui);
         }
-        ui.separator();
     }
 
     /// Collects a finished sync round and starts the next: every 30 seconds, or a couple
@@ -1974,7 +2015,6 @@ impl TodoApp {
             self.hub_guide = true;
             self.close_settings(ui);
         }
-        ui.separator();
     }
 
     fn open_share_dialog(&mut self, list: Option<Uuid>) {
@@ -2265,7 +2305,6 @@ impl TodoApp {
                 _ => {}
             }
         }
-        ui.separator();
     }
 
     fn backup_menu_items(&mut self, ui: &mut egui::Ui) {
@@ -3110,7 +3149,10 @@ impl TodoApp {
                 }
             }
             Action::Select(id) => {
-                self.selected = if self.selected == Some(id) { None } else { Some(id) };
+                // Settings give the right-hand pane back to the task.
+                let reopen = self.show_settings && self.selected == Some(id);
+                self.selected = if self.selected == Some(id) && !reopen { None } else { Some(id) };
+                self.show_settings = false;
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
@@ -3619,7 +3661,7 @@ impl TodoApp {
                 let buttons = match (narrow, touch) {
                     (true, true) => 170.0,
                     (true, false) => 140.0,
-                    (false, _) => 320.0,
+                    (false, _) => 280.0,
                 };
                 let title_w = (ui.available_width() - buttons).max(60.0);
                 let label = egui::Label::new(RichText::new(format!("{icon}  {title}")).size(size).strong()).truncate();
@@ -4689,12 +4731,15 @@ impl eframe::App for TodoApp {
             }
         } else {
             self.show_nav = false;
-            self.show_settings = false;
             self.sidebar(ctx, today, false);
+            // Settings take the right-hand pane while open (instead of a task's details).
+            if self.show_settings {
+                self.settings_pane(ctx);
+            }
             if self.notes_page {
                 self.notes_panel(ctx);
             } else {
-                if let Some(id) = self.selected {
+                if let (Some(id), false) = (self.selected, self.show_settings) {
                     self.detail_panel(ctx, id, now, false);
                 }
                 self.main_panel(ctx, now, false);
@@ -4803,6 +4848,31 @@ fn capped_texture_side(side: Option<usize>) -> Option<usize> {
 /// cropped to the area's shape, centred, like CSS `background-size: cover`.
 /// Web: a picture picked in the browser, waiting to be stored.
 type WebPick = std::rc::Rc<std::cell::RefCell<Option<(PicFor, Vec<u8>)>>>;
+
+/// The sections of Settings, shown one at a time as tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+enum SettingsTab {
+    #[default]
+    Appearance,
+    Reminders,
+    Sync,
+    Backups,
+    About,
+}
+
+impl SettingsTab {
+    const ALL: [SettingsTab; 5] = [Self::Appearance, Self::Reminders, Self::Sync, Self::Backups, Self::About];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => tr("Appearance"),
+            Self::Reminders => tr("Reminders"),
+            Self::Sync => tr("Sync & sharing"),
+            Self::Backups => tr("Backups"),
+            Self::About => tr("About"),
+        }
+    }
+}
 
 /// What a picked picture is for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -53,7 +53,7 @@ pub fn launched_at_sign_in() -> bool {
     false
 }
 
-/// Turns the packaged app's start-at-sign-in on or off (Settings › Background). Returns
+/// Turns the packaged app's start-at-sign-in on or off (Settings › Reminders). Returns
 /// false if Windows refused (e.g. the user turned it off in Task Manager › Startup apps,
 /// which only they can undo there).
 pub fn set_startup_task(on: bool) -> bool {
