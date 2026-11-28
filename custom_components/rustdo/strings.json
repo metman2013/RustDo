@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your RustDo Hub",
+        "description": "RustDo's lists become to-do lists here. In RustDo, open Settings › Sync & sharing, turn on Sync my devices if it isn't on yet, and copy the sync key.",
+        "data": {
+          "hub": "Hub address",
+          "key": "Sync key"
+        },
+        "data_description": {
+          "hub": "The address RustDo uses, e.g. 192.168.1.20:7979 or https://todo.example.com",
+          "key": "e.g. ABCDE-FGHJK-MNPQR-STUVW"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sync key no longer works",
+        "description": "The hub doesn't know this sync key any more. Copy the current one from RustDo's Settings › Sync & sharing.",
+        "data": {
+          "hub": "Hub address",
+          "key": "Sync key"
+        }
+      }
+    },
+    "error": {
+      "bad_hub": "That doesn't look like a hub address.",
+      "bad_key": "A sync key has 20 letters and digits, like ABCDE-FGHJK-MNPQR-STUVW.",
+      "unknown_key": "The hub doesn't know this sync key. Check it in RustDo's Settings › Sync & sharing.",
+      "cannot_connect": "Can't reach the hub. Is it running, and can Home Assistant reach this address?"
+    },
+    "abort": {
+      "already_configured": "These RustDo lists are already set up.",
+      "reauth_successful": "Updated."
+    }
+  }
+}

@@ -16,6 +16,13 @@ Nothing goes through anyone's cloud: your data stays on this Home Assistant mach
 To share a list with your family, right-click (long-press on a phone) a list in RustDo,
 choose **Share list**, and enter the same address.
 
+## Your lists in Home Assistant
+
+The **RustDo** integration shows your RustDo lists as Home Assistant to-do lists
+(dashboards, voice, automations). Install it with HACS and connect it to
+`localhost:7979` with your sync key: see
+[RustDo in Home Assistant](https://github.com/metman2013/RustDo/blob/main/docs/home-assistant.md).
+
 The **Open web UI** button shows the hub's status page (version and counts only, never
 your lists).
 

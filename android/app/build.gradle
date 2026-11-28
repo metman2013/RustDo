@@ -1,0 +1,54 @@
+plugins {
+    id "com.android.application"
+}
+
+// The version comes from Cargo.toml, like the other apps. The version code follows the
+// formula cargo-apk used for the APKs before 0.5, so new builds install as updates.
+def cargoVersion = file("../Cargo.toml").readLines().find { it.startsWith("version = ") }.split('"')[1]
+def (major, minor, patch) = cargoVersion.tokenize(".").collect { it.replaceAll(/[^0-9].*/, "") as int }
+
+android {
+    namespace "io.github.metman2013.rustdo"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "io.github.metman2013.rustdo"
+        minSdk 24
+        targetSdk 36
+        versionName cargoVersion
+        versionCode((1 << 24) | (major << 16) | (minor << 8) | patch)
+        ndk { abiFilters "arm64-v8a" }
+    }
+
+    signingConfigs {
+        release {
+            // CI passes the keystore through the environment (see .github/workflows/build.yml).
+            storeFile System.getenv("RUSTDO_KEYSTORE") ? file(System.getenv("RUSTDO_KEYSTORE")) : null
+            storePassword System.getenv("RUSTDO_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("RUSTDO_KEY_ALIAS") ?: "rustdo"
+            keyPassword System.getenv("RUSTDO_KEY_PASSWORD") ?: System.getenv("RUSTDO_KEYSTORE_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv("RUSTDO_KEYSTORE") ? signingConfigs.release : null
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        // NativeActivity loads the library from the APK; keep it uncompressed and 16 KB
+        // aligned (required by Google Play for Android 15+ devices).
+        jniLibs { useLegacyPackaging false }
+    }
+
+    lint {
+        abortOnError false
+    }
+}

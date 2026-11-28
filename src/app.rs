@@ -10,6 +10,7 @@ use crate::model::{
     ThemeChoice, View,
 };
 use crate::import::{self, Import};
+use crate::keep;
 use crate::changelog;
 use crate::companion;
 use crate::store_package;
@@ -79,6 +80,10 @@ enum Action {
     Delete(Uuid),
     /// Move a task in "My order": (the open tasks as shown, the task, its new place).
     MoveTask(Vec<Uuid>, Uuid, usize),
+    /// Make a sticky note from a task (and remove the task).
+    ToNote(Uuid),
+    /// Swiped right: tick it off (with Undo).
+    SwipeDone(Uuid),
 }
 
 enum AlertAction {
@@ -138,8 +143,18 @@ struct ShareDialog {
 
 struct Toast {
     text: String,
-    undo: Option<(usize, Task)>,
+    undo: Option<UndoOp>,
     at: Instant,
+}
+
+/// What a toast's Undo puts back.
+enum UndoOp {
+    /// A deleted task, at its old place.
+    Deleted(usize, Task),
+    /// A task ticked off (by a swipe), and the next repeat that made, if any.
+    Completed { id: Uuid, next: Option<Uuid> },
+    /// A sticky note put in the Archive.
+    Archived(Uuid),
 }
 
 pub struct TodoApp {
@@ -281,6 +296,10 @@ pub struct TodoApp {
     whats_new: Option<Vec<changelog::Release>>,
     /// "Get RustDo for your other devices" is open.
     get_apps: bool,
+    /// "Import from Google Keep": how to get the export, before picking it.
+    keep_help: bool,
+    /// The Settings section showing.
+    settings_tab: SettingsTab,
     /// Desktop: the one-time "RustDo keeps running in the tray" message (shown instead of
     /// closing the first time).
     close_hint: bool,
@@ -429,6 +448,8 @@ impl TodoApp {
             account_notes_seen: None,
             whats_new,
             get_apps: false,
+            keep_help: false,
+            settings_tab: SettingsTab::default(),
             close_hint: false,
             closing: false,
         }
@@ -508,7 +529,150 @@ impl TodoApp {
     #[cfg(target_os = "android")]
     fn pick_import_file(&mut self, _ctx: &egui::Context) {}
 
+    /// Google Keep: a Takeout zip (or one note's .json).
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
+    fn pick_keep_file(&mut self, _ctx: &egui::Context) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr("Import from Google Keep"))
+            .add_filter(tr("Google Takeout export"), &["zip", "json"])
+            .add_filter(tr("All files"), &["*"])
+            .pick_file();
+        if let Some(path) = picked {
+            self.read_picked_file(&path);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn pick_keep_file(&mut self, ctx: &egui::Context) {
+        let slot = self.web_import.clone();
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let file = rfd::AsyncFileDialog::new().add_filter(tr("Google Takeout export"), &["zip", "json"]).pick_file().await;
+            if let Some(file) = file {
+                let bytes = file.read().await;
+                *slot.borrow_mut() = Some((file.file_name(), bytes));
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    #[cfg(target_os = "android")]
+    fn pick_keep_file(&mut self, _ctx: &egui::Context) {}
+
+    /// Whether a list has a card showing (on the desktop, or on the wall).
+    fn list_card_showing(&self, list: Uuid) -> bool {
+        notes_ui::lock(&self.notes).notes.card_for(list).is_some_and(|n| !n.archived && (n.open || notes::WALL))
+    }
+
+    /// 📌: pins a list (or shows its hidden card), or unpins it.
+    fn toggle_pin(&mut self, list: Uuid) {
+        let name = self.store.list_name(list).to_string();
+        if self.list_card_showing(list) {
+            notes_ui::unpin_list(&self.notes, list);
+            self.notify(trf("Unpinned “{list}”.", &[("list", &name)]));
+        } else {
+            notes_ui::pin_list(&self.notes, list, &name);
+            self.notify(if notes::WALL {
+                trf("Pinned “{list}” to your sticky notes.", &[("list", &name)])
+            } else {
+                trf("Pinned “{list}” to your desktop.", &[("list", &name)])
+            });
+        }
+    }
+
+    /// Pinned lists: carries out what was done on their cards (here, or in the background
+    /// companion's windows), and gives the cards the lists' current tasks.
+    fn pinned_tick(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
+        let (lists, actions) = {
+            let mut s = notes_ui::lock(&self.notes);
+            (s.notes.pinned_lists(), std::mem::take(&mut s.card_actions))
+        };
+        // Desktop: also what was done on the background companion's cards. Android: ticks
+        // on the home-screen widget and reminders shown while RustDo was in the background.
+        #[cfg(not(target_arch = "wasm32"))]
+        let actions = [actions, crate::pinned::handoff::take()].concat();
+        if !actions.is_empty() && crate::pinned::apply(&mut self.store, &actions, now) {
+            self.dirty = true;
+            // This frame's lists were drawn already: show the change now.
+            ctx.request_repaint();
+        }
+        if notes::AVAILABLE {
+            let cards = crate::pinned::cards_from_store(&self.store, lists, now.date());
+            notes_ui::set_cards(ctx, &self.notes, cards);
+        }
+    }
+
+    /// Windows: copies the notes from Microsoft Sticky Notes on this PC (or a `plum.sqlite`
+    /// picked by hand, e.g. from another PC's backup).
+    #[cfg(windows)]
+    fn import_ms_sticky_notes(&mut self) {
+        let path = match crate::msnotes::default_path() {
+            Some(p) => p,
+            None => {
+                self.notify(tr("Sticky Notes wasn't found on this PC (Sticky Notes in OneNote keeps its notes in OneNote). You can also pick a plum.sqlite file."));
+                let Some(p) = rfd::FileDialog::new()
+                    .set_title(tr("Import from Microsoft Sticky Notes"))
+                    .add_filter(tr("Sticky Notes database"), &["sqlite"])
+                    .pick_file()
+                else {
+                    return;
+                };
+                p
+            }
+        };
+        match crate::msnotes::read(&path, Local::now().naive_local()) {
+            Ok(found) => {
+                let total = found.len();
+                let added = notes_ui::lock(&self.notes).import(found);
+                self.notes_page = true;
+                self.notify(if total == 0 {
+                    tr("Sticky Notes has no notes to import.").to_string()
+                } else if added == 0 {
+                    tr("Nothing new to import: you already have these Sticky Notes.").to_string()
+                } else {
+                    format!(
+                        "{} {}",
+                        plural(added, "Imported {n} note from Microsoft Sticky Notes.", "Imported {n} notes from Microsoft Sticky Notes."),
+                        tr("Show them from this page.")
+                    )
+                });
+            }
+            Err(e) => self.notify(trf("Couldn't read Sticky Notes: {e}", &[("e", &e)])),
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn import_ms_sticky_notes(&mut self) {}
+
+    /// Adds the notes from a Google Keep export to the sticky notes.
+    fn import_keep(&mut self, bytes: &[u8]) {
+        match keep::parse(bytes, Local::now().naive_local()) {
+            Ok(found) => {
+                let total = found.notes.len();
+                let added = notes_ui::lock(&self.notes).import(found.notes);
+                self.notes_page = true;
+                self.notify(if total == 0 {
+                    tr("Nothing to import: these Keep notes are all in Keep's trash.").to_string()
+                } else if added == 0 {
+                    tr("Nothing new to import: you already have these Keep notes.").to_string()
+                } else {
+                    let mut msg = plural(added, "Imported {n} note from Google Keep.", "Imported {n} notes from Google Keep.");
+                    if notes::SUPPORTED {
+                        msg = format!("{msg} {}", tr("Show them from this page."));
+                    }
+                    msg
+                });
+            }
+            Err(e) => self.notify(e),
+        }
+    }
+
     fn load_import(&mut self, file_name: &str, bytes: &[u8]) {
+        // A Google Takeout zip, or one Keep note: into the sticky notes.
+        if notes::AVAILABLE && (bytes.starts_with(b"PK") || keep::looks_like_note(bytes)) {
+            self.import_keep(bytes);
+            return;
+        }
         // A RustDo backup is restored (after confirmation) rather than merged.
         if let Ok(store) = storage::parse_backup(bytes) {
             let carried = notes::parse_backup(bytes).ok().filter(|_| notes::AVAILABLE);
@@ -759,23 +923,41 @@ impl TodoApp {
         }
     }
 
-    /// The ⚙ button: a pop-up menu on wide screens, a full-screen page on phones.
-    fn settings_button(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        if narrow {
-            if ui.button("⚙").on_hover_text(tr("Settings")).clicked() {
-                self.show_settings = true;
-            }
-            return;
+    /// The ⚙ button: Settings as a pane on the right on wide screens, a full page on
+    /// phones. Pressing it again (or ✖, or Escape) closes it.
+    fn settings_button(&mut self, ui: &mut egui::Ui, _narrow: bool) {
+        if ui.add(egui::Button::new("⚙").selected(self.show_settings)).on_hover_text(tr("Settings")).clicked() {
+            self.show_settings = !self.show_settings;
         }
-        ui.menu_button("⚙", |ui| {
-            // A fixed width: wrapping text in an auto-sized menu never settles on a size.
-            ui.set_width(300.0);
-            // Never taller than the window: scroll instead of running off the bottom.
-            let max_h = ui.ctx().screen_rect().bottom() - ui.next_widget_position().y - 16.0;
-            egui::ScrollArea::vertical().max_height(max_h.max(120.0)).show(ui, |ui| {
-                self.settings_contents(ui);
+    }
+
+    /// Wide screens: Settings as a full-height pane on the right (where a task's details
+    /// go), with room for each section.
+    fn settings_pane(&mut self, ctx: &egui::Context) {
+        let side = self.side_frame(ctx);
+        let mut close = false;
+        egui::SidePanel::right("settings_pane")
+            .frame(side)
+            .resizable(true)
+            .default_width(420.0)
+            .width_range(340.0..=600.0)
+            .show(ctx, |ui| {
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tr("Settings")).size(20.0).strong());
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        close = small_btn(ui, "✖").on_hover_text(tr("Close")).clicked();
+                    });
+                });
+                ui.separator();
+                egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                    self.settings_contents(ui);
+                    ui.add_space(24.0);
+                });
             });
-        });
+        if close || ctx.input(|i| i.key_pressed(Key::Escape)) {
+            self.show_settings = false;
+        }
     }
 
     /// Phones: settings as their own scrolling page with a Back button.
@@ -806,6 +988,95 @@ impl TodoApp {
     }
 
     fn settings_contents(&mut self, ui: &mut egui::Ui) {
+        // Sections as tabs: one at a time, so it's short and easy to scan.
+        ui.horizontal_wrapped(|ui| {
+            for tab in SettingsTab::ALL {
+                if ui.selectable_label(self.settings_tab == tab, tab.label()).clicked() {
+                    self.settings_tab = tab;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        match self.settings_tab {
+            SettingsTab::Appearance => card(ui, |ui| self.settings_appearance(ui)),
+            SettingsTab::Reminders => {
+                card(ui, |ui| self.notification_menu_items(ui));
+                if companion::SUPPORTED {
+                    card(ui, |ui| self.companion_menu_items(ui));
+                }
+            }
+            SettingsTab::Sync => {
+                card(ui, |ui| self.account_menu_items(ui));
+                card(ui, |ui| self.sharing_menu_items(ui));
+            }
+            SettingsTab::Backups => card(ui, |ui| self.backup_menu_items(ui)),
+            SettingsTab::About => card(ui, |ui| self.settings_about(ui)),
+        }
+    }
+
+    /// Settings › Appearance: language, background, clock, sharp text.
+    fn settings_appearance(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new(tr("Language")).strong());
+        let mut language = self.store.settings.language;
+        egui::ComboBox::from_id_salt("language")
+            .selected_text(language.label())
+            .show_ui(ui, |ui| {
+                for l in i18n::Language::ALL {
+                    ui.selectable_value(&mut language, l, l.label());
+                }
+            });
+        if language != self.store.settings.language {
+            self.store.settings.language = language;
+            i18n::set(language);
+            // The default list follows the language while it still has its default name.
+            let default = self.store.default_list;
+            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
+                if i18n::default_list_names().contains(&list.name.as_str()) {
+                    list.name = tr("Tasks").to_string();
+                }
+            }
+            self.dirty = true;
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("Background")).strong());
+        self.background_picker(ui, None);
+        let any = self.store.settings.background != Background::None || !self.store.settings.list_backgrounds.is_empty();
+        if any {
+            ui.horizontal(|ui| {
+                ui.label(tr("Dim background"));
+                let mut dim = self.store.settings.background_dim;
+                if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).show_value(false)).changed() {
+                    self.store.settings.background_dim = (dim * 20.0).round() / 20.0;
+                    self.dirty = true;
+                }
+            });
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("Time")).strong());
+        let s = &mut self.store.settings;
+        if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
+            | ui.radio_value(&mut s.clock_24h, true, tr("24-hour clock (21:30)")).changed()
+        {
+            self.dirty = true;
+        }
+        if cfg!(target_os = "android") || platform::web_touch_screen() {
+            if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
+                self.dirty = true;
+            }
+            let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
+            ui.label(
+                RichText::new(trf(
+                    "Rounds the screen scale to whole pixels so letters render evenly (screen {native}x, drawn at {drawn}x). Turn off if things look too big.",
+                    &[("native", &format!("{native:.3}")), ("drawn", &format!("{:.3}", ui.ctx().pixels_per_point()))],
+                ))
+                .weak()
+                .small(),
+            );
+        }
+    }
+
+    /// Settings › About: version and updates, help, other devices and links.
+    fn settings_about(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(format!("RustDo {}", update::CURRENT_VERSION)).strong());
             if ui.button(tr("What's new")).clicked() {
@@ -850,56 +1121,6 @@ impl TodoApp {
                 self.close_settings(ui);
             }
         }
-        ui.separator();
-        ui.label(RichText::new(tr("Language")).strong());
-        let mut language = self.store.settings.language;
-        egui::ComboBox::from_id_salt("language")
-            .selected_text(language.label())
-            .show_ui(ui, |ui| {
-                for l in i18n::Language::ALL {
-                    ui.selectable_value(&mut language, l, l.label());
-                }
-            });
-        if language != self.store.settings.language {
-            self.store.settings.language = language;
-            i18n::set(language);
-            // The default list follows the language while it still has its default name.
-            let default = self.store.default_list;
-            if let Some(list) = self.store.lists.iter_mut().find(|l| l.id == default) {
-                if i18n::default_list_names().contains(&list.name.as_str()) {
-                    list.name = tr("Tasks").to_string();
-                }
-            }
-            self.dirty = true;
-        }
-        ui.separator();
-        ui.label(RichText::new(tr("Background")).strong());
-        self.background_picker(ui, None);
-        let any = self.store.settings.background != Background::None || !self.store.settings.list_backgrounds.is_empty();
-        if any {
-            ui.horizontal(|ui| {
-                ui.label(tr("Dim background"));
-                let mut dim = self.store.settings.background_dim;
-                if ui.add(egui::Slider::new(&mut dim, 0.0..=0.9).show_value(false)).changed() {
-                    self.store.settings.background_dim = (dim * 20.0).round() / 20.0;
-                    self.dirty = true;
-                }
-            });
-        }
-        ui.separator();
-        ui.label(RichText::new(tr("Time")).strong());
-        let s = &mut self.store.settings;
-        if ui.radio_value(&mut s.clock_24h, false, tr("12-hour clock (9:30 PM)")).changed()
-            | ui.radio_value(&mut s.clock_24h, true, tr("24-hour clock (21:30)")).changed()
-        {
-            self.dirty = true;
-        }
-        ui.separator();
-        self.notification_menu_items(ui);
-        self.companion_menu_items(ui);
-        self.account_menu_items(ui);
-        self.sharing_menu_items(ui);
-        self.backup_menu_items(ui);
         self.help_menu_items(ui);
         #[cfg(target_os = "android")]
         {
@@ -912,23 +1133,6 @@ impl TodoApp {
                 RichText::new(format!("Screen edges (px): system {} · window {}", fmt(jni), fmt(content)))
                     .weak()
                     .small(),
-            );
-        }
-        if cfg!(target_os = "android") || platform::web_touch_screen() {
-            if !cfg!(target_os = "android") {
-                ui.separator();
-            }
-            if ui.checkbox(&mut self.store.settings.crisp_text, tr("Sharp text")).changed() {
-                self.dirty = true;
-            }
-            let native = ui.ctx().native_pixels_per_point().unwrap_or(1.0);
-            ui.label(
-                RichText::new(trf(
-                    "Rounds the screen scale to whole pixels so letters render evenly (screen {native}x, drawn at {drawn}x). Turn off if things look too big.",
-                    &[("native", &format!("{native:.3}")), ("drawn", &format!("{:.3}", ui.ctx().pixels_per_point()))],
-                ))
-                .weak()
-                .small(),
             );
         }
         ui.separator();
@@ -1048,7 +1252,7 @@ impl TodoApp {
         dialog_window(ctx, tr("RustDo keeps running in the tray"), self.insets).show(ctx, |ui| {
             ui.set_max_width(dialog_width(ui, 420.0));
             ui.add(egui::Label::new(what).wrap());
-            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Background.")).wrap());
+            ui.add(egui::Label::new(tr("Find it by the RustDo icon near the clock: it opens RustDo again or quits it completely. You can change this in Settings › Reminders.")).wrap());
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 if ui.add(egui::Button::new(RichText::new(tr("OK, close the window")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
@@ -1071,12 +1275,12 @@ impl TodoApp {
         }
     }
 
-    /// Settings › Background (desktop): the companion and its tray icon.
+    /// Settings › Reminders › When RustDo is closed (desktop): the companion and its tray icon.
     fn companion_menu_items(&mut self, ui: &mut egui::Ui) {
         if !companion::SUPPORTED {
             return;
         }
-        ui.label(RichText::new(tr("Background")).strong());
+        ui.label(RichText::new(tr("When RustDo is closed")).strong());
         let s = &mut self.store.settings;
         let mut changed = ui
             .checkbox(&mut s.companion, tr("Keep sticky notes running in the background"))
@@ -1109,7 +1313,6 @@ impl TodoApp {
             self.closing = true;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        ui.separator();
     }
 
     // ------------------------------------------------------------------ backgrounds
@@ -1682,7 +1885,6 @@ impl TodoApp {
             self.hub_guide = true;
             self.close_settings(ui);
         }
-        ui.separator();
     }
 
     /// Collects a finished sync round and starts the next: every 30 seconds, or a couple
@@ -1935,20 +2137,15 @@ impl TodoApp {
 
     fn sharing_menu_items(&mut self, ui: &mut egui::Ui) {
         ui.label(RichText::new(tr("Family sharing")).strong());
-        if !sync::SUPPORTED {
-            ui.label(
-                RichText::new(tr("Sharing lists through a RustDo Hub works in the Windows, Linux and Android apps."))
-                    .weak()
-                    .small(),
-            );
-            ui.separator();
-            return;
-        }
         let shared = self.store.shares.len();
         let status = if shared == 0 {
             // No arrows here: egui's built-in fonts have no "→" and draw a box instead.
             let how = if is_touch(ui) { tr("long-press it and choose Share list") } else { tr("right-click it and choose Share list") };
-            trf("Share a list with people at home: {how}. Needs a RustDo Hub on your network.", &[("how", &how)])
+            if cfg!(target_arch = "wasm32") {
+                trf("Share a list with people at home: {how}. Needs a RustDo Hub with an https:// address.", &[("how", &how)])
+            } else {
+                trf("Share a list with people at home: {how}. Needs a RustDo Hub on your network.", &[("how", &how)])
+            }
         } else if let Some(err) = &self.sync_error {
             trf("Can't sync right now: {err}", &[("err", &err)])
         } else {
@@ -1974,13 +2171,13 @@ impl TodoApp {
             self.hub_guide = true;
             self.close_settings(ui);
         }
-        ui.separator();
     }
 
     fn open_share_dialog(&mut self, list: Option<Uuid>) {
         self.share_dialog = Some(ShareDialog {
             list,
-            hub: self.store.settings.hub.clone().unwrap_or_default(),
+            // The hub used last for sharing, or else the one "Sync my devices" uses.
+            hub: self.store.settings.hub.clone().or_else(|| self.store.account.as_ref().map(|a| a.hub.clone())).unwrap_or_default(),
             code: String::new(),
             busy: false,
             error: None,
@@ -2162,7 +2359,11 @@ impl TodoApp {
                 }
                 ui.add_space(6.0);
                 ui.label(RichText::new(tr("Hub address")).small());
-                let r = field_with_paste(ui, &mut dialog.hub, "e.g. 192.168.1.20:7979", "share_hub");
+                let example = if cfg!(target_arch = "wasm32") { "e.g. https://todo.example.com" } else { "e.g. 192.168.1.20:7979" };
+                let r = field_with_paste(ui, &mut dialog.hub, example, "share_hub");
+                if platform::page_is_https() && dialog.hub.trim_start().starts_with("http://") {
+                    ui.label(RichText::new(tr("The web app can only reach a hub on an https:// address.")).color(DANGER).small());
+                }
                 submit |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && list.is_some();
                 if list.is_none() {
                     ui.label(RichText::new(tr("Share code")).small());
@@ -2265,7 +2466,6 @@ impl TodoApp {
                 _ => {}
             }
         }
-        ui.separator();
     }
 
     fn backup_menu_items(&mut self, ui: &mut egui::Ui) {
@@ -2464,6 +2664,19 @@ impl TodoApp {
         }
     }
 
+    /// A swipe ticked a task off: done, with Undo in the toast.
+    fn complete_with_undo(&mut self, id: Uuid) {
+        let Some(title) = self.store.task(id).filter(|t| !t.done).map(|t| t.title.clone()) else { return };
+        let next = self.store.set_done(id, true, Local::now().naive_local());
+        self.dirty = true;
+        let text = if next.is_some() {
+            trf("Completed “{title}”. The next one is scheduled.", &[("title", &title)])
+        } else {
+            trf("Completed “{title}”", &[("title", &title)])
+        };
+        self.toast = Some(Toast { text, undo: Some(UndoOp::Completed { id, next }), at: Instant::now() });
+    }
+
     fn notify(&mut self, text: impl Into<String>) {
         self.toast = Some(Toast { text: text.into(), undo: None, at: Instant::now() });
     }
@@ -2476,7 +2689,11 @@ impl TodoApp {
         self.sync_soon = true;
         self.account_soon = true;
         match self.storage.save(&self.store) {
-            Ok(()) => self.backup_pending = true,
+            Ok(()) => {
+                self.backup_pending = true;
+                #[cfg(target_os = "android")]
+                platform::android_data_changed();
+            }
             Err(e) => {
                 log::error!(target: "rustdo", "saving tasks failed: {e}");
                 self.notify(trf("Couldn't save: {e}", &[("e", &e)]));
@@ -2642,7 +2859,7 @@ impl TodoApp {
                     tr("If the same task is changed in two places at the same time, the later change wins. Shared lists show a 👥 icon."),
                     tr("Away from home or the hub is off? RustDo keeps working and catches up when it can reach the hub again."),
                     tr("To sync away from home, use a VPN such as Tailscale, or put the hub behind an HTTPS reverse proxy on your own subdomain (e.g. https://todo.example.com) and enter that address instead. Don't open port 7979 on your router directly."),
-                    tr("Sync my devices works everywhere, including the web app. Sharing a list works in the Windows, Linux and Android apps."),
+                    tr("Sync my devices and shared lists work everywhere, including the web app (with the hub on an https:// address)."),
                     tr("Keep your sync key private, like a password: anyone with it who can reach your hub can see and change your tasks."),
                 ] {
                     ui.horizontal_top(|ui| {
@@ -2664,6 +2881,66 @@ impl TodoApp {
     }
 
     /// Where to get RustDo on every kind of device.
+    /// Google Keep import: what to get from Google Takeout and what comes across, then
+    /// "Choose the zip…".
+    fn keep_help_dialog(&mut self, ctx: &egui::Context) {
+        if !self.keep_help {
+            return;
+        }
+        let mut open = true;
+        let mut pick = false;
+        let mut close = false;
+        dialog_window(ctx, tr("Import from Google Keep"), self.insets).open(&mut open).show(ctx, |ui| {
+            ui.set_max_width(dialog_width(ui, 460.0));
+            egui::ScrollArea::vertical().max_height(ctx.screen_rect().height() * 0.7).show(ui, |ui| {
+                ui.add(egui::Label::new(tr("RustDo reads the export Google makes of your Keep notes. No sign-in: you download it yourself.")).wrap());
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr("Get your Keep export")).strong());
+                let steps = [
+                    tr("1. Open Google Takeout and sign in:"),
+                    "",
+                    tr("2. Click “Deselect all”, then tick only “Keep”."),
+                    tr("3. Click “Next step”. Keep “Export once” and “.zip”, then click “Create export”."),
+                    tr("4. Google emails you when it's ready (usually a few minutes). Download the zip."),
+                    tr("5. Come back here and choose the zip. There's no need to unzip it."),
+                ];
+                for step in steps {
+                    if step.is_empty() {
+                        if ui.link("takeout.google.com").clicked() {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab("https://takeout.google.com"));
+                        }
+                        continue;
+                    }
+                    ui.add(egui::Label::new(step).wrap());
+                }
+                ui.add_space(8.0);
+                ui.label(RichText::new(tr("What comes across")).strong());
+                ui.add(
+                    egui::Label::new(tr(
+                        "Notes and checklists, their colours, pinned notes, labels (as sections) and archived notes. Notes in Keep's trash are skipped. Pictures, drawings, voice notes and reminders aren't brought over.",
+                    ))
+                    .wrap(),
+                );
+                ui.add(egui::Label::new(RichText::new(tr("Importing the same export again only adds notes you don't have yet.")).weak()).wrap());
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new(tr("Choose the zip…")).color(Color32::WHITE)).fill(ACCENT)).clicked() {
+                    pick = true;
+                }
+                if ui.button(tr("Cancel")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if pick {
+            self.keep_help = false;
+            self.pick_keep_file(ctx);
+        } else if close || !open {
+            self.keep_help = false;
+        }
+    }
+
     fn get_apps_dialog(&mut self, ctx: &egui::Context) {
         if !self.get_apps {
             return;
@@ -3079,7 +3356,7 @@ impl TodoApp {
             self.alerts.retain(|a| *a != id);
             self.toast = Some(Toast {
                 text: trf("Deleted “{title}”", &[("title", &task.title)]),
-                undo: Some((idx, task)),
+                undo: Some(UndoOp::Deleted(idx, task)),
                 at: Instant::now(),
             });
             self.dirty = true;
@@ -3110,10 +3387,15 @@ impl TodoApp {
                 }
             }
             Action::Select(id) => {
-                self.selected = if self.selected == Some(id) { None } else { Some(id) };
+                // Settings give the right-hand pane back to the task.
+                let reopen = self.show_settings && self.selected == Some(id);
+                self.selected = if self.selected == Some(id) && !reopen { None } else { Some(id) };
+                self.show_settings = false;
                 self.new_step.clear();
             }
             Action::Delete(id) => self.delete_task(id),
+            Action::ToNote(id) => self.task_to_note(id),
+            Action::SwipeDone(id) => self.complete_with_undo(id),
             Action::MoveTask(shown, id, to) => {
                 self.dirty |= self.store.move_task(&shown, id, to);
             }
@@ -3423,6 +3705,13 @@ impl TodoApp {
                                     self.show_nav = false;
                                     ui.close_menu();
                                 }
+                                if notes::AVAILABLE {
+                                    let label = if self.list_card_showing(id) { tr("📌  Unpin list") } else { tr("📌  Pin list") };
+                                    if ui.button(label).clicked() {
+                                        self.toggle_pin(id);
+                                        ui.close_menu();
+                                    }
+                                }
                                 if index > 0 && ui.button(tr("⬆  Move up")).clicked() {
                                     self.dirty |= self.store.move_list(id, index - 1);
                                     ui.close_menu();
@@ -3505,7 +3794,7 @@ impl TodoApp {
                     };
                     ui.label(RichText::new(heading).small().weak());
                     // Desktop: notes showing; web: all of them (they're all on the wall).
-                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| n.open || notes::WALL).count();
+                    let shown = notes_ui::lock(&self.notes).notes.notes.iter().filter(|n| !n.archived && (n.open || notes::WALL)).count();
                     if nav_row(ui, self.notes_page, "📝", tr("Sticky notes"), shown)
                         .on_hover_text(tip)
                         .clicked()
@@ -3567,6 +3856,65 @@ impl TodoApp {
         }
     }
 
+    /// A sticky note becomes a task in the default list: its first line the title, a
+    /// checklist's items the subtasks (ticks kept), other text the task's note. The note
+    /// goes away.
+    fn note_to_task(&mut self, id: Uuid) {
+        let Some(note) = notes_ui::lock(&self.notes).notes.get(id).cloned() else { return };
+        let now = Local::now().naive_local();
+        let title = note.title().to_string();
+        let list = self.store.default_list;
+        let Some(task_id) = self.store.add_task(&title, View::List(list), now) else { return };
+        if let Some(t) = self.store.task_mut(task_id) {
+            if note.is_checklist() {
+                t.steps = note
+                    .items()
+                    .into_iter()
+                    .filter(|i| !i.text.trim().is_empty())
+                    .map(|i| {
+                        let mut step = Step::new(i.text.trim());
+                        step.done = i.done;
+                        step
+                    })
+                    .collect();
+            } else {
+                // Everything after the first line (which is the title).
+                let mut lines = note.text.lines().skip_while(|l| l.trim().is_empty());
+                lines.next();
+                t.notes = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+            }
+        }
+        notes_ui::lock(&self.notes).delete(id);
+        self.dirty = true;
+        self.notify(trf("“{title}” is now a task in “{list}”.", &[("title", &title), ("list", &self.store.list_name(list))]));
+    }
+
+    /// A task becomes a sticky note: its title the first line, subtasks a checklist below
+    /// it (ticks kept), the task's note after. The task goes away.
+    fn task_to_note(&mut self, id: Uuid) {
+        let Some(task) = self.store.task(id).cloned() else { return };
+        let mut lines = vec![task.title.clone()];
+        for st in &task.steps {
+            lines.push(format!("{}{}", if st.done { notes::CHECKED } else { notes::UNCHECKED }, st.title));
+        }
+        if !task.notes.trim().is_empty() {
+            if !task.steps.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(task.notes.trim().to_string());
+        }
+        {
+            let mut s = notes_ui::lock(&self.notes);
+            let note = s.new_note(None);
+            if let Some(n) = s.notes.get_mut(note) {
+                n.text = lines.join("\n");
+            }
+            s.changed();
+        }
+        self.delete_task(id);
+        self.notify(trf("“{title}” is now a sticky note.", &[("title", &task.title)]));
+    }
+
     /// The Sticky notes page (desktop), with a Back button on narrow windows.
     fn notes_panel(&mut self, ctx: &egui::Context) {
         let narrow = ctx.screen_rect().width() < NARROW_WIDTH;
@@ -3577,6 +3925,17 @@ impl TodoApp {
                 notes_ui::PageAction::Backup => self.backup_notes(ctx, Local::now().date_naive()),
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
+                notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
+                notes_ui::PageAction::ImportKeep => self.keep_help = true,
+                notes_ui::PageAction::ImportMsNotes => self.import_ms_sticky_notes(),
+                notes_ui::PageAction::Archived(id) => {
+                    let title = notes_ui::lock(&self.notes).notes.get(id).map(|n| n.title().to_string()).unwrap_or_default();
+                    self.toast = Some(Toast {
+                        text: trf("“{title}” moved to the Archive", &[("title", &title)]),
+                        undo: Some(UndoOp::Archived(id)),
+                        at: Instant::now(),
+                    });
+                }
                 notes_ui::PageAction::None => {}
             }
         });
@@ -3619,7 +3978,7 @@ impl TodoApp {
                 let buttons = match (narrow, touch) {
                     (true, true) => 170.0,
                     (true, false) => 140.0,
-                    (false, _) => 320.0,
+                    (false, _) => 280.0,
                 };
                 let title_w = (ui.available_width() - buttons).max(60.0);
                 let label = egui::Label::new(RichText::new(format!("{icon}  {title}")).size(size).strong()).truncate();
@@ -3641,6 +4000,21 @@ impl TodoApp {
                     };
                     if ui.add(show).on_hover_text(tr("Show list: to read, print or share")).clicked() {
                         self.show_list = Some(self.view);
+                    }
+                }
+                // 📌 Pin: the list as a card on the desktop (or the sticky notes wall).
+                if let (View::List(list), false, true) = (self.view, searching, notes::AVAILABLE) {
+                    let pinned = self.list_card_showing(list);
+                    let pin = egui::Button::new(RichText::new("📌").size(if narrow { 20.0 } else { 16.0 }))
+                        .selected(pinned)
+                        .min_size(Vec2::splat(if touch { 44.0 } else if narrow { 32.0 } else { 0.0 }));
+                    let tip = match (pinned, notes::WALL) {
+                        (true, _) => tr("Unpin this list"),
+                        (false, true) => tr("Pin this list to your sticky notes"),
+                        (false, false) => tr("Pin this list to your desktop"),
+                    };
+                    if ui.add(pin).on_hover_text(tip).clicked() {
+                        self.toggle_pin(list);
                     }
                 }
                 // Planned is always grouped by date, so sorting doesn't apply there.
@@ -4566,11 +4940,28 @@ impl TodoApp {
                 });
             });
         if undo {
-            if let Some((idx, task)) = self.toast.take().and_then(|t| t.undo) {
-                let id = task.id;
-                self.store.restore_task(idx, task);
-                self.selected = Some(id);
-                self.dirty = true;
+            match self.toast.take().and_then(|t| t.undo) {
+                Some(UndoOp::Deleted(idx, task)) => {
+                    let id = task.id;
+                    self.store.restore_task(idx, task);
+                    if !is_touch_ctx(ctx) {
+                        self.selected = Some(id);
+                    }
+                    self.dirty = true;
+                }
+                Some(UndoOp::Completed { id, next }) => {
+                    // The next repeat goes again, and the task repeats as before.
+                    if let Some((_, next_task)) = next.and_then(|n| self.store.remove_task(n)) {
+                        if let Some(t) = self.store.task_mut(id) {
+                            t.recurrence = next_task.recurrence;
+                            t.repeat_every = next_task.repeat_every;
+                        }
+                    }
+                    self.store.set_done(id, false, Local::now().naive_local());
+                    self.dirty = true;
+                }
+                Some(UndoOp::Archived(id)) => notes_ui::lock(&self.notes).archive(id, false),
+                None => {}
             }
         } else if close {
             self.toast = None;
@@ -4596,6 +4987,9 @@ impl eframe::App for TodoApp {
         let now = Local::now().naive_local();
         let today = now.date();
 
+        // First what was done elsewhere (pinned list cards, the Android widget, reminders
+        // already shown as notifications), so it isn't shown or done twice.
+        self.pinned_tick(ctx, now);
         let fired = self.store.fire_due_reminders(now);
         if !fired.is_empty() {
             for id in fired {
@@ -4689,12 +5083,15 @@ impl eframe::App for TodoApp {
             }
         } else {
             self.show_nav = false;
-            self.show_settings = false;
             self.sidebar(ctx, today, false);
+            // Settings take the right-hand pane while open (instead of a task's details).
+            if self.show_settings {
+                self.settings_pane(ctx);
+            }
             if self.notes_page {
                 self.notes_panel(ctx);
             } else {
-                if let Some(id) = self.selected {
+                if let (Some(id), false) = (self.selected, self.show_settings) {
                     self.detail_panel(ctx, id, now, false);
                 }
                 self.main_panel(ctx, now, false);
@@ -4731,6 +5128,7 @@ impl eframe::App for TodoApp {
         self.restore_dialog(ctx);
         self.whats_new_dialog(ctx);
         self.get_apps_dialog(ctx);
+        self.keep_help_dialog(ctx);
         self.hub_guide_dialog(ctx);
         self.account_dialog(ctx);
         self.ms_import_dialog(ctx);
@@ -4752,6 +5150,10 @@ impl eframe::App for TodoApp {
 const TOUCH_ID: &str = "rustdo_touch_mode";
 
 /// Whether the finger-friendly layout is on (readable from any drawing function).
+fn is_touch_ctx(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
+}
+
 pub(crate) fn is_touch(ui: &egui::Ui) -> bool {
     ui.ctx().data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
 }
@@ -4803,6 +5205,31 @@ fn capped_texture_side(side: Option<usize>) -> Option<usize> {
 /// cropped to the area's shape, centred, like CSS `background-size: cover`.
 /// Web: a picture picked in the browser, waiting to be stored.
 type WebPick = std::rc::Rc<std::cell::RefCell<Option<(PicFor, Vec<u8>)>>>;
+
+/// The sections of Settings, shown one at a time as tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
+enum SettingsTab {
+    #[default]
+    Appearance,
+    Reminders,
+    Sync,
+    Backups,
+    About,
+}
+
+impl SettingsTab {
+    const ALL: [SettingsTab; 5] = [Self::Appearance, Self::Reminders, Self::Sync, Self::Backups, Self::About];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => tr("Appearance"),
+            Self::Reminders => tr("Reminders"),
+            Self::Sync => tr("Sync & sharing"),
+            Self::Backups => tr("Backups"),
+            Self::About => tr("About"),
+        }
+    }
+}
 
 /// What a picked picture is for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -5281,6 +5708,52 @@ fn task_row(
         ui.painter().galley(Pos2::new(text_left, top + title_h + 3.0), meta_galley, weak);
     }
 
+    // Touch: swipe the row right to tick it off, left to delete (both with Undo). Only a
+    // clearly sideways move counts, and not one starting on the circle, star or handle.
+    if touch {
+        let swipe_id = Id::new(("task_swipe", t.id));
+        let (down, origin, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
+        let on_controls = |p: Pos2| {
+            check_rect.contains(p) || star_rect.contains(p) || handle.as_ref().is_some_and(|h| h.rect.contains(p)) || expand.as_ref().is_some_and(|e| e.rect.contains(p))
+        };
+        let started_here = origin.is_some_and(|o| rect.contains(o) && !on_controls(o));
+        let threshold = (rect.width() * 0.35).max(90.0);
+        if down && started_here {
+            if let (Some(o), Some(p)) = (origin, pos) {
+                let d = p - o;
+                if d.x.abs() > 24.0 && d.x.abs() > d.y.abs() * 1.5 {
+                    ui.ctx().data_mut(|m| m.insert_temp(swipe_id, d.x));
+                }
+            }
+        }
+        let dx: Option<f32> = ui.ctx().data(|m| m.get_temp(swipe_id));
+        if let Some(dx) = dx {
+            if down {
+                // What the swipe will do, growing from the side it moves away from.
+                let w = dx.abs().min(rect.width());
+                let ready = dx.abs() >= threshold;
+                let (strip, color, icon) = if dx > 0.0 {
+                    (Rect::from_min_size(rect.min, Vec2::new(w, rect.height())), Color32::from_rgb(0x2E, 0x9E, 0x5B), "✔")
+                } else {
+                    (Rect::from_min_max(Pos2::new(rect.right() - w, rect.top()), rect.max), DANGER, "🗑")
+                };
+                let color = if ready { color } else { color.gamma_multiply(0.6) };
+                ui.painter().rect_filled(strip, 6.0, color);
+                if w > 40.0 {
+                    ui.painter().text(strip.center(), Align2::CENTER_CENTER, icon, FontId::proportional(22.0), Color32::WHITE);
+                }
+                ui.ctx().request_repaint();
+            } else {
+                ui.ctx().data_mut(|m| m.remove::<f32>(swipe_id));
+                if dx >= threshold && !t.done {
+                    actions.push(Action::SwipeDone(t.id));
+                } else if dx <= -threshold {
+                    actions.push(Action::Delete(t.id));
+                }
+            }
+        }
+    }
+
     let expand_clicked = expand.is_some_and(|e| {
         e.on_hover_text(if expanded { tr("Hide subtasks") } else { tr("Show subtasks") }).on_hover_cursor(CursorIcon::PointingHand).clicked()
     });
@@ -5329,6 +5802,10 @@ fn task_row(
                     }
                 }
             }
+        }
+        if notes::AVAILABLE && ui.button(tr("📝  Turn into a sticky note")).on_hover_text(tr("Subtasks become a checklist")).clicked() {
+            actions.push(Action::ToNote(t.id));
+            ui.close_menu();
         }
         ui.separator();
         if ui.button(RichText::new(tr("🗑  Delete task")).color(DANGER)).clicked() {

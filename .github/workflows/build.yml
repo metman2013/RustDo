@@ -365,54 +365,82 @@ jobs:
           if [ "$A" != "$B" ]; then
             echo "::error::Cargo.toml ($A) and android/Cargo.toml ($B) versions differ. Run tools/set-version.ps1."; exit 1
           fi
-      - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: "8.14.3"
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
-          echo "ANDROID_NDK_ROOT=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
           KS="$RUNNER_TEMP/release.jks"
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$KS"
-            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+            PW="$KEYSTORE_PASSWORD"
           else
             echo "::warning::No ANDROID_KEYSTORE_BASE64 secret: signing with a throwaway key. This APK can't be installed over another build; see README > Android signing."
             keytool -genkeypair -keystore "$KS" -storepass throwaway -keypass throwaway \
               -alias rustdo -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=RustDo" -noprompt
-            echo "CARGO_APK_RELEASE_KEYSTORE_PASSWORD=throwaway" >> "$GITHUB_ENV"
+            PW=throwaway
           fi
-          echo "CARGO_APK_RELEASE_KEYSTORE=$KS" >> "$GITHUB_ENV"
-      - name: Build APK
+          echo "::add-mask::$PW"
+          echo "RUSTDO_KEYSTORE=$KS" >> "$GITHUB_ENV"
+          echo "RUSTDO_KEYSTORE_PASSWORD=$PW" >> "$GITHUB_ENV"
+          # cargo-apk signed with the keystore's only key: use that key's alias here too.
+          ALIAS=$(keytool -list -keystore "$KS" -storepass "$PW" 2>/dev/null | grep -m1 -i "PrivateKeyEntry" | cut -d, -f1)
+          echo "RUSTDO_KEY_ALIAS=${ALIAS:-rustdo}" >> "$GITHUB_ENV"
+      - name: Build the Rust library
+        working-directory: android
+        env:
+          # 16 KB pages: required by Google Play for apps targeting Android 15 and later.
+          RUSTFLAGS: "-C link-arg=-Wl,-z,max-page-size=16384"
+        run: |
+          set -o pipefail
+          cargo ndk -t arm64-v8a --platform 24 -o app/src/main/jniLibs build --release 2>&1 | tee "$RUNNER_TEMP/apk.log"
+          ls -la app/src/main/jniLibs/arm64-v8a
+      - name: Build APK and App Bundle
         working-directory: android
         run: |
           set -o pipefail
-          cargo apk build --release 2>&1 | tee "$RUNNER_TEMP/apk.log"
-      - name: Report APK build errors
+          gradle --no-daemon assembleRelease bundleRelease 2>&1 | tee -a "$RUNNER_TEMP/apk.log"
+      - name: Report Android build errors
         # Job logs need a GitHub sign-in to read; annotations are visible to everyone.
         if: failure()
         run: |
           msg=$(tail -n 60 "$RUNNER_TEMP/apk.log" | sed 's/%/%25/g; s/\r//g' | awk '{printf "%s%%0A", $0}')
-          echo "::error title=APK build failed::$msg"
-      - name: Collect and verify APK
+          echo "::error title=Android build failed::$msg"
+      - name: Collect and verify APK and App Bundle
         # Never ship an unsigned APK: Android refuses to install it.
         run: |
           V=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
-          echo "::notice title=APK files built::$(find android/target -name '*.apk' | tr '\n' ' ')"
-          APK=android/target/release/apk/RustDo.apk
-          if [ ! -f "$APK" ]; then echo "::error::$APK was not produced"; exit 1; fi
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          for f in "$APK" "$AAB"; do
+            if [ ! -f "$f" ]; then echo "::error::$f was not produced"; find android/app/build/outputs -type f; exit 1; fi
+          done
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           if ! "$BT/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/sig.txt" 2>&1; then
             echo "::error title=APK is not signed::$(tr '\n' ' ' < "$RUNNER_TEMP/sig.txt")"; exit 1
           fi
           echo "::notice title=APK signed by::$(grep -m1 'SHA-256' "$RUNNER_TEMP/sig.txt")"
+          # Google Play: native code aligned for 16 KB pages.
+          "$BT/zipalign" -c -P 16 4 "$APK" || { echo "::error::the APK isn't 16 KB aligned"; exit 1; }
           mkdir -p out
           cp "$APK" "out/RustDo-$V.apk"
+          cp "$AAB" "out/RustDo-$V.aab"
       - uses: actions/upload-artifact@v6
         with:
           name: android
-          path: out/*.apk
+          path: |
+            out/*.apk
+            out/*.aab
 
   release:
     if: needs.version.outputs.release == 'true'

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_name">Tareas de RustDo</string>
+    <string name="widget_description">Mi día, Importante o una de tus listas, para marcar desde la pantalla de inicio.</string>
+    <string name="widget_choose">¿Qué debe mostrar el widget?</string>
+    <string name="widget_empty">Nada que hacer aquí.</string>
+    <string name="my_day">Mi día</string>
+    <string name="important">Importante</string>
+    <string name="add_task">Agregar una tarea</string>
+    <string name="mark_done">Marcar como hecha</string>
+    <string name="today">Hoy</string>
+    <string name="tomorrow">Mañana</string>
+    <string name="reminder">Recordatorio</string>
+    <string name="reminders">Recordatorios</string>
+</resources>

@@ -1,0 +1,12 @@
+{
+  "domain": "rustdo",
+  "name": "RustDo",
+  "codeowners": ["@metman2013"],
+  "config_flow": true,
+  "documentation": "https://github.com/metman2013/RustDo/blob/main/docs/home-assistant.md",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/metman2013/RustDo/issues",
+  "requirements": [],
+  "version": "0.5.0"
+}
