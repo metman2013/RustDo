@@ -4262,23 +4262,47 @@ impl TodoApp {
 
                         ui.horizontal(|ui| {
                             ui.label(RichText::new(tr("🔁   Repeat")).strong());
-                            let mut rec = task.recurrence;
+                            let mut choice = (task.recurrence, task.repeat_every.max(1));
+                            // The usual choices, plus "every 2 weeks"; any other interval is
+                            // set with "Every [N]" below.
+                            let mut options: Vec<(Recurrence, u32)> = Recurrence::ALL.iter().map(|r| (*r, 1)).collect();
+                            options.insert(4, (Recurrence::Weekly, 2));
                             egui::ComboBox::from_id_salt("repeat")
-                                .selected_text(rec.label())
+                                .selected_text(choice.0.label_every(choice.1))
                                 .show_ui(ui, |ui| {
-                                    for r in Recurrence::ALL {
-                                        ui.selectable_value(&mut rec, r, r.label());
+                                    for (r, every) in options {
+                                        ui.selectable_value(&mut choice, (r, every), r.label_every(every));
                                     }
                                 });
-                            if rec != task.recurrence {
-                                task.recurrence = rec;
+                            if choice != (task.recurrence, task.repeat_every.max(1)) {
+                                task.recurrence = choice.0;
+                                task.repeat_every = if choice.0.has_interval() { choice.1 } else { 1 };
                                 // A repeating task needs a date to repeat from.
-                                if rec != Recurrence::Never && task.planned_date().is_none() {
+                                if choice.0 != Recurrence::Never && task.planned_date().is_none() {
                                     task.due = Some(today);
                                 }
                                 changed = true;
                             }
                         });
+                        // Any interval: every 14 days, every 3 months, …
+                        if task.recurrence.has_interval() {
+                            ui.horizontal(|ui| {
+                                ui.add_space(28.0);
+                                ui.label(tr("Every"));
+                                let mut n = task.repeat_every.max(1);
+                                if ui.add(egui::DragValue::new(&mut n).range(1..=365).speed(0.1)).changed() {
+                                    task.repeat_every = n;
+                                    changed = true;
+                                }
+                                let one = n == 1;
+                                ui.label(match task.recurrence {
+                                    Recurrence::Daily => if one { tr("day") } else { tr("days") },
+                                    Recurrence::Weekly => if one { tr("week") } else { tr("weeks") },
+                                    Recurrence::Monthly => if one { tr("month") } else { tr("months") },
+                                    _ => if one { tr("year") } else { tr("years") },
+                                });
+                            });
+                        }
                     });
 
                     // List
@@ -5154,7 +5178,8 @@ fn task_row(
         }
     }
     if t.recurrence != Recurrence::Never {
-        meta.push(("🔁".into(), weak));
+        let label = if t.repeat_every > 1 && t.recurrence.has_interval() { format!("🔁 {}", t.recurrence.label_every(t.repeat_every)) } else { "🔁".into() };
+        meta.push((label, weak));
     }
     if !t.notes.trim().is_empty() {
         meta.push((tr("📝 Note").into(), weak));

@@ -3,6 +3,13 @@
 Traduction de CHANGELOG.md pour la fenêtre « Nouveautés ». Même format, sections
 traduites. Les versions absentes ici s'affichent en anglais.
 
+## 0.4.15 - 2026-11-28
+
+### Nouveautés
+- Répéter toutes les 2 semaines, ou à tout autre intervalle : tous les 14 jours, tous les 3 mois, tous les 2 ans. Choisissez « Toutes les 2 semaines » sous Répéter, ou Tous les jours, Toutes les semaines, Tous les mois ou Tous les ans et réglez le nombre dans « Tous les [N] » en dessous. La tâche affiche « 🔁 Toutes les 2 semaines ».
+- L'import de Microsoft To Do conserve ces intervalles (avant, une tâche toutes les 2 semaines devenait hebdomadaire).
+- Sur un appareil encore sur une ancienne version de RustDo, ces tâches se répètent à l'intervalle simple (hebdomadaire, mensuel, …) jusqu'à sa mise à jour.
+
 ## 0.4.14 - 2026-11-28
 
 ### Corrections

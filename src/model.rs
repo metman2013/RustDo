@@ -1,6 +1,6 @@
 //! Core data model and business rules. No UI code lives here so it can be unit-tested.
 
-use crate::i18n::tr;
+use crate::i18n::{plural, tr};
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveDateTime, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -35,6 +35,39 @@ impl Recurrence {
             Self::Weekly => tr("Weekly"),
             Self::Monthly => tr("Monthly"),
             Self::Yearly => tr("Yearly"),
+        }
+    }
+
+    /// The next occurrence strictly after `from`, every `every` days, weeks, months or
+    /// years (1 = each one). Weekdays ignores `every`.
+    pub fn next_after_every(self, from: NaiveDate, every: u32) -> Option<NaiveDate> {
+        let n = every.max(1);
+        match self {
+            Self::Daily => from.checked_add_signed(Duration::days(n as i64)),
+            Self::Weekly => from.checked_add_signed(Duration::weeks(n as i64)),
+            Self::Monthly => from.checked_add_months(Months::new(n)),
+            Self::Yearly => from.checked_add_months(Months::new(n.saturating_mul(12))),
+            Self::Never | Self::Weekdays => self.next_after(from),
+        }
+    }
+
+    /// Whether "every N" applies (not to Doesn't repeat or Weekdays).
+    pub fn has_interval(self) -> bool {
+        matches!(self, Self::Daily | Self::Weekly | Self::Monthly | Self::Yearly)
+    }
+
+    /// "Every 2 weeks", or the plain label when it's every one.
+    pub fn label_every(self, every: u32) -> String {
+        if every <= 1 || !self.has_interval() {
+            return self.label().to_string();
+        }
+        let n = every as usize;
+        match self {
+            Self::Daily => plural(n, "Every day", "Every {n} days"),
+            Self::Weekly => plural(n, "Every week", "Every {n} weeks"),
+            Self::Monthly => plural(n, "Every month", "Every {n} months"),
+            Self::Yearly => plural(n, "Every year", "Every {n} years"),
+            _ => self.label().to_string(),
         }
     }
 
@@ -266,6 +299,11 @@ pub struct Task {
     /// the same export doesn't create duplicates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// Repeats every this many days / weeks / months / years (with `recurrence`); 1 is
+    /// each one. A separate number, so older RustDo versions still read the task (as
+    /// plain weekly, monthly, …) instead of failing on a new kind of repeat.
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub repeat_every: u32,
     /// Place in "My order" (smaller first; 0 = not placed yet, shown first, newest first).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub position: i64,
@@ -273,6 +311,14 @@ pub struct Task {
 
 fn is_zero(n: &i64) -> bool {
     *n == 0
+}
+
+fn one() -> u32 {
+    1
+}
+
+fn is_one(n: &u32) -> bool {
+    *n <= 1
 }
 
 impl Task {
@@ -293,6 +339,7 @@ impl Task {
             created: now,
             completed_at: None,
             source_id: None,
+            repeat_every: 1,
             position: 0,
         }
     }
@@ -593,7 +640,7 @@ impl Store {
         }
 
         let base = task.planned_date().unwrap_or(now.date());
-        let next_date = task.recurrence.next_after(base)?;
+        let next_date = task.recurrence.next_after_every(base, task.repeat_every)?;
         let shift = next_date - base;
 
         let mut next = task.clone();
@@ -764,6 +811,40 @@ mod tests {
         assert_eq!(Recurrence::Monthly.next_after(d(2026, 1, 31)), Some(d(2026, 2, 28)));
         assert_eq!(Recurrence::Yearly.next_after(d(2028, 2, 29)), Some(d(2029, 2, 28)));
         assert_eq!(Recurrence::Never.next_after(d(2026, 1, 1)), None);
+        // Every N.
+        assert_eq!(Recurrence::Weekly.next_after_every(d(2026, 11, 19), 2), Some(d(2026, 12, 3)));
+        assert_eq!(Recurrence::Daily.next_after_every(d(2026, 11, 19), 14), Some(d(2026, 12, 3)));
+        assert_eq!(Recurrence::Monthly.next_after_every(d(2026, 1, 31), 3), Some(d(2026, 4, 30)));
+        assert_eq!(Recurrence::Yearly.next_after_every(d(2028, 2, 29), 2), Some(d(2030, 2, 28)));
+        assert_eq!(Recurrence::Weekly.next_after_every(d(2026, 11, 19), 1), Recurrence::Weekly.next_after(d(2026, 11, 19)));
+        assert_eq!(Recurrence::Weekdays.next_after_every(d(2026, 11, 20), 3), Some(d(2026, 11, 23)), "weekdays ignore the interval");
+    }
+
+    #[test]
+    fn every_two_weeks_repeats_and_stays_readable_by_older_versions() {
+        let now = NaiveDate::from_ymd_opt(2026, 11, 19).unwrap().and_hms_opt(9, 0, 0).unwrap();
+        let mut s = Store::new();
+        let id = s.add_task("Bins", View::List(s.default_list), now).unwrap();
+        {
+            let t = s.task_mut(id).unwrap();
+            t.recurrence = Recurrence::Weekly;
+            t.repeat_every = 2;
+            t.due = Some(now.date());
+        }
+        let next = s.set_done(id, true, now).unwrap();
+        let n = s.task(next).unwrap();
+        assert_eq!(n.due, NaiveDate::from_ymd_opt(2026, 12, 3));
+        assert_eq!((n.recurrence, n.repeat_every), (Recurrence::Weekly, 2), "the next one repeats the same way");
+        // Saved as a plain weekly task plus a number: an older version reads it as weekly.
+        let json = serde_json::to_value(n).unwrap();
+        assert_eq!(json["recurrence"], "Weekly");
+        assert_eq!(json["repeat_every"], 2);
+        // And tasks without the number (older versions, every one) read as every one.
+        let mut old = json.clone();
+        old.as_object_mut().unwrap().remove("repeat_every");
+        let back: Task = serde_json::from_value(old).unwrap();
+        assert_eq!(back.repeat_every, 1);
+        assert!(serde_json::to_value(&back).unwrap().get("repeat_every").is_none(), "1 isn't written");
     }
 
     #[test]

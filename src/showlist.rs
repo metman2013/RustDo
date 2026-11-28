@@ -39,7 +39,7 @@ pub fn build(store: &Store, view: View, title: &str, today: NaiveDate) -> Printa
                 details.push(trf("Due {date}", &[("date", &relative_date(due, today))]));
             }
             if t.recurrence != Recurrence::Never {
-                details.push(t.recurrence.label().to_string());
+                details.push(t.recurrence.label_every(t.repeat_every));
             }
             if let Some(r) = t.reminder {
                 details.push(trf("Reminder {time}", &[("time", &format_time(r, clock_24h))]));
