@@ -23,6 +23,8 @@ pub struct ImportedTask {
     pub due: Option<NaiveDate>,
     pub reminder: Option<NaiveDateTime>,
     pub recurrence: Recurrence,
+    /// Every this many days / weeks / months / years (1 = each one).
+    pub repeat_every: u32,
     pub steps: Vec<(String, bool)>,
     pub created: Option<NaiveDateTime>,
     pub completed_at: Option<NaiveDateTime>,
@@ -239,11 +241,11 @@ fn graph_task(t: &Value, to_local: fn(NaiveDateTime) -> NaiveDateTime, warnings:
                 .collect()
         })
         .unwrap_or_default();
-    let recurrence = t
+    let (recurrence, repeat_every) = t
         .get("recurrence")
         .filter(|r| !r.is_null())
         .map(|r| graph_recurrence(r, &title, warnings))
-        .unwrap_or_default();
+        .unwrap_or((Recurrence::Never, 1));
     ImportedTask {
         source_id: match s(t, "id") {
             Some(id) => format!("mstodo:{id}"),
@@ -255,6 +257,7 @@ fn graph_task(t: &Value, to_local: fn(NaiveDateTime) -> NaiveDateTime, warnings:
         due: graph_due_date(t.get("dueDateTime"), to_local),
         reminder: if reminder_on { graph_dt(t.get("reminderDateTime"), to_local) } else { None },
         recurrence,
+        repeat_every,
         steps,
         created,
         completed_at: graph_dt(t.get("completedDateTime"), to_local),
@@ -262,8 +265,9 @@ fn graph_task(t: &Value, to_local: fn(NaiveDateTime) -> NaiveDateTime, warnings:
     }
 }
 
-fn graph_recurrence(r: &Value, title: &str, warnings: &mut Vec<String>) -> Recurrence {
-    let Some(p) = r.get("pattern") else { return Recurrence::Never };
+/// Microsoft To Do's repeat: the kind and every how many (2 = every other week, …).
+fn graph_recurrence(r: &Value, title: &str, warnings: &mut Vec<String>) -> (Recurrence, u32) {
+    let Some(p) = r.get("pattern") else { return (Recurrence::Never, 1) };
     let interval = p.get("interval").and_then(Value::as_u64).unwrap_or(1);
     let days: Vec<String> = p
         .get("daysOfWeek")
@@ -287,16 +291,11 @@ fn graph_recurrence(r: &Value, title: &str, warnings: &mut Vec<String>) -> Recur
         "absoluteYearly" | "relativeYearly" => Recurrence::Yearly,
         other => {
             warnings.push(trf("“{title}” has an unsupported repeat pattern ({other}); it won't repeat.", &[("title", &title), ("other", &other)]));
-            return Recurrence::Never;
+            return (Recurrence::Never, 1);
         }
     };
-    if interval > 1 && rec != Recurrence::Weekdays {
-        warnings.push(trf(
-            "“{title}” repeats every {interval} periods; RustDo will repeat it {repeat}.",
-            &[("title", &title), ("interval", &interval), ("repeat", &rec.label().to_lowercase())],
-        ));
-    }
-    rec
+    let every = if rec.has_interval() { interval.clamp(1, 365) as u32 } else { 1 };
+    (rec, every)
 }
 
 fn body_text(body: &Value) -> String {
@@ -489,6 +488,7 @@ pub fn apply(store: &mut Store, import: &Import, include_completed: bool, now: N
             // Don't pop up reminders that are already in the past.
             task.reminder_fired = t.done || t.reminder.is_some_and(|r| r <= now);
             task.recurrence = if t.done { Recurrence::Never } else { t.recurrence };
+            task.repeat_every = if t.done { 1 } else { t.repeat_every.max(1) };
             if task.recurrence != Recurrence::Never && task.planned_date().is_none() {
                 task.due = Some(now.date());
             }
@@ -563,6 +563,11 @@ mod tests {
         assert_eq!(rent.created, Some(d(2026, 11, 1).and_hms_opt(10, 20, 30).unwrap() + chrono::Duration::nanoseconds(123_456_700)));
         assert!(imp.lists[0].tasks[1].done);
         assert_eq!(imp.lists[1].tasks[0].recurrence, Recurrence::Weekdays);
+        // Every 2 weeks keeps its interval.
+        let mut warnings = Vec::new();
+        let every2 = serde_json::json!({ "pattern": { "type": "weekly", "interval": 2, "daysOfWeek": ["thursday"] } });
+        assert_eq!(graph_recurrence(&every2, "Bins", &mut warnings), (Recurrence::Weekly, 2));
+        assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(imp.lists[1].tasks[0].reminder, None);
         assert_eq!(imp.task_count(), 3);
         assert_eq!(imp.completed_count(), 1);

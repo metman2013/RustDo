@@ -10,6 +10,13 @@ Translations live in `changelog/de.md`, `changelog/es.md` and `changelog/fr.md`,
 format with translated section names; the app shows "What's new" in the user's language.
 Each release needs its entry in all three (a test checks the current version).
 
+## 0.4.15 - 2026-11-28
+
+### New
+- Repeat every 2 weeks, or any other interval: every 14 days, every 3 months, every 2 years. Choose "Every 2 weeks" under Repeat, or pick Daily, Weekly, Monthly or Yearly and set the number in "Every [N]" below it. The task shows "🔁 Every 2 weeks".
+- The Microsoft To Do import keeps these intervals (before, an every-2-weeks task came over as weekly).
+- On a device still on an older RustDo, these tasks repeat at the plain interval (weekly, monthly, …) until it's updated.
+
 ## 0.4.14 - 2026-11-28
 
 ### Fixed

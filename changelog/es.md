@@ -3,6 +3,13 @@
 Traducción de CHANGELOG.md para la ventana «Novedades». Mismo formato, secciones
 traducidas. Las versiones que falten aquí aparecen en inglés.
 
+## 0.4.15 - 2026-11-28
+
+### Novedades
+- Repetir cada 2 semanas, o con cualquier otro intervalo: cada 14 días, cada 3 meses, cada 2 años. Elige «Cada 2 semanas» en Repetir, o Diariamente, Semanalmente, Mensualmente o Anualmente y ajusta el número en «Cada [N]» debajo. La tarea muestra «🔁 Cada 2 semanas».
+- La importación de Microsoft To Do conserva estos intervalos (antes, una tarea de cada 2 semanas llegaba como semanal).
+- En un dispositivo con una versión anterior de RustDo, estas tareas se repiten con el intervalo simple (semanal, mensual, …) hasta que se actualice.
+
 ## 0.4.14 - 2026-11-28
 
 ### Correcciones

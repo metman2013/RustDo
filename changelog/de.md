@@ -3,6 +3,13 @@
 Übersetzung von CHANGELOG.md für das Fenster „Neuigkeiten“. Gleiches Format, Abschnitte
 übersetzt. Versionen, die hier fehlen, erscheinen auf Englisch.
 
+## 0.4.15 - 2026-11-28
+
+### Neu
+- Alle 2 Wochen wiederholen, oder in jedem anderen Abstand: alle 14 Tage, alle 3 Monate, alle 2 Jahre. Wähle unter Wiederholen „Alle 2 Wochen“, oder Täglich, Wöchentlich, Monatlich bzw. Jährlich und stelle die Zahl darunter bei „Alle [N]“ ein. Die Aufgabe zeigt „🔁 Alle 2 Wochen“.
+- Der Import aus Microsoft To Do übernimmt diese Abstände (bisher wurde eine Aufgabe „alle 2 Wochen“ zu „wöchentlich“).
+- Auf einem Gerät mit einer älteren RustDo-Version wiederholen sich diese Aufgaben im einfachen Abstand (wöchentlich, monatlich, …), bis es aktualisiert ist.
+
 ## 0.4.14 - 2026-11-28
 
 ### Behoben
