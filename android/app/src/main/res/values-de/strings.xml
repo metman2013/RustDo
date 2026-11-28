@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_name">RustDo-Aufgaben</string>
+    <string name="widget_description">Mein Tag, Wichtig oder eine deiner Listen, zum Abhaken auf dem Startbildschirm.</string>
+    <string name="widget_choose">Was soll das Widget zeigen?</string>
+    <string name="widget_empty">Hier gibt es nichts zu tun.</string>
+    <string name="my_day">Mein Tag</string>
+    <string name="important">Wichtig</string>
+    <string name="add_task">Aufgabe hinzufügen</string>
+    <string name="mark_done">Als erledigt markieren</string>
+    <string name="today">Heute</string>
+    <string name="tomorrow">Morgen</string>
+    <string name="reminder">Erinnerung</string>
+    <string name="reminders">Erinnerungen</string>
+</resources>

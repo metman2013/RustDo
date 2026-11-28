@@ -1,12 +1,11 @@
-# Android wrapper: packages the RustDo library as the native library of an APK.
-# Build with cargo-apk from this folder:  cargo apk build --release
+# Android: the RustDo library for the app (see app/ and settings.gradle for the rest).
+# cargo-ndk builds it into app/src/main/jniLibs, then Gradle makes the APK and App Bundle.
 #
-# This is a separate workspace (see the empty [workspace] below) because cargo-apk
-# can't build a crate inside a workspace whose root is also a package.
+# A separate workspace (the empty [workspace] below), so this builds on its own.
 [package]
 name = "rustdo-android"
 # Must match [workspace.package] version in ../Cargo.toml (CI checks this).
-# cargo-apk derives Android's versionCode from it, so every release installs as an update.
+# app/build.gradle derives Android's versionCode from it, so every release installs as an update.
 version = "0.4.15"
 edition = "2021"
 license = "MIT"
@@ -27,44 +26,8 @@ opt-level = 3
 lto = "thin"
 strip = true
 
-[package.metadata.android]
-package = "io.github.metman2013.rustdo"
-apk_name = "RustDo"
-build_targets = ["aarch64-linux-android"]
-resources = "res"
-
-[package.metadata.android.sdk]
-min_sdk_version = 24
-target_sdk_version = 34
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.INTERNET"
-
-# Your photos, for background and sticky-note pictures (RustDo's own photo picker;
-# Android 13+ asks for photos only, older versions for storage).
-[[package.metadata.android.uses_permission]]
-name = "android.permission.READ_MEDIA_IMAGES"
-
-[[package.metadata.android.uses_permission]]
-name = "android.permission.READ_EXTERNAL_STORAGE"
-max_sdk_version = 32
-
-[[package.metadata.android.uses_feature]]
-name = "android.hardware.touchscreen"
-required = false
-
-[[package.metadata.android.uses_feature]]
-opengles_version = [3, 0]
-required = true
-
-[package.metadata.android.application]
-label = "RustDo"
-icon = "@mipmap/ic_launcher"
-
-[package.metadata.android.application.activity]
-config_changes = "orientation|screenSize|screenLayout|keyboard|keyboardHidden|uiMode|density"
-launch_mode = "singleTop"
-orientation = "unspecified"
+# The APK and App Bundle are built with Gradle (see app/ and settings.gradle): cargo-ndk
+# builds this library into app/src/main/jniLibs, Gradle adds the Java parts.
 
 # The same patched egui-winit as the app (Android's back button; see ../Cargo.toml).
 [patch.crates-io]

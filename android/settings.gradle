@@ -1,0 +1,19 @@
+// RustDo for Android: a NativeActivity (the Rust app, built by cargo-ndk into
+// app/src/main/jniLibs) plus a little Java for what NativeActivity can't do on its own:
+// Android's photo picker, the home-screen widget and reminders while RustDo is closed.
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = "RustDo"
+include ":app"

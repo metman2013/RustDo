@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RustDo</string>
+    <string name="widget_name">RustDo tasks</string>
+    <string name="widget_description">My Day, Important or one of your lists, to tick off from the home screen.</string>
+    <string name="widget_choose">What should the widget show?</string>
+    <string name="widget_empty">Nothing to do here.</string>
+    <string name="my_day">My Day</string>
+    <string name="important">Important</string>
+    <string name="add_task">Add a task</string>
+    <string name="mark_done">Mark as done</string>
+    <string name="today">Today</string>
+    <string name="tomorrow">Tomorrow</string>
+    <string name="reminder">Reminder</string>
+    <string name="reminders">Reminders</string>
+</resources>

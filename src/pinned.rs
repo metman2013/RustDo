@@ -52,6 +52,7 @@ impl CardList {
                     t.important = *on;
                 }
             }
+            CardAction::ReminderFired(_) => {}
             CardAction::Add(_, title) => self.tasks.insert(
                 0,
                 CardTask { id: Uuid::new_v4(), title: title.clone(), done: false, important: false, due: None, overdue: false },
@@ -67,6 +68,8 @@ pub enum CardAction {
     SetDone(Uuid, bool),
     SetImportant(Uuid, bool),
     Add(Uuid, String),
+    /// Android: the reminder was shown as a notification while RustDo was in the background.
+    ReminderFired(Uuid),
 }
 
 /// The note fallback text: older RustDo versions show a pinned list as this plain note.
@@ -143,6 +146,12 @@ pub fn apply(store: &mut Store, actions: &[CardAction], now: NaiveDateTime) -> b
                     changed = true;
                 }
             }
+            CardAction::ReminderFired(id) => {
+                if let Some(t) = store.task_mut(*id).filter(|t| !t.reminder_fired) {
+                    t.reminder_fired = true;
+                    changed = true;
+                }
+            }
             CardAction::Add(list, title) => {
                 if store.lists.iter().any(|l| l.id == *list) && store.add_task(title, View::List(*list), now).is_some() {
                     changed = true;
@@ -154,16 +163,22 @@ pub fn apply(store: &mut Store, actions: &[CardAction], now: NaiveDateTime) -> b
 }
 
 /// Desktop: the companion hands card actions to the open main window through this file.
-#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+/// Android: the home-screen widget and reminder notifications do the same while RustDo's
+/// process is running (MainActivity.java writes the same lines).
+#[cfg(not(target_arch = "wasm32"))]
 pub mod handoff {
     use super::CardAction;
     use std::io::Write;
 
     fn path() -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "android")]
+        return crate::platform::android_data_dir().map(|d| d.join("card-actions.jsonl"));
+        #[cfg(not(target_os = "android"))]
         crate::companion::runtime_path("card-actions.jsonl")
     }
 
     /// Companion: queue actions for the main window.
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn send(actions: &[CardAction]) {
         let Some(path) = path() else { return };
         let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) else { return };

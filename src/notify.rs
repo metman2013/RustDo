@@ -9,7 +9,8 @@
 //! * **Linux**: a desktop notification when a reminder fires while RustDo is running.
 //! * **Web**: a browser notification when a reminder fires while the app is open
 //!   (after the user allows notifications).
-//! * **Android**: in-app reminders only, for now.
+//! * **Android**: RustDo shows its own pop-up while it's open; otherwise an alarm set by
+//!   the Java side (android/app/.../Reminders.java) shows a notification.
 
 use crate::i18n::{tr, trf};
 use crate::model::{relative_date, Store};

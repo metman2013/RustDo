@@ -583,23 +583,23 @@ impl TodoApp {
     /// Pinned lists: carries out what was done on their cards (here, or in the background
     /// companion's windows), and gives the cards the lists' current tasks.
     fn pinned_tick(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
-        if !notes::AVAILABLE {
-            return;
-        }
         let (lists, actions) = {
             let mut s = notes_ui::lock(&self.notes);
             (s.notes.pinned_lists(), std::mem::take(&mut s.card_actions))
         };
-        // Desktop: also what was done on the background companion's cards.
-        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        // Desktop: also what was done on the background companion's cards. Android: ticks
+        // on the home-screen widget and reminders shown while RustDo was in the background.
+        #[cfg(not(target_arch = "wasm32"))]
         let actions = [actions, crate::pinned::handoff::take()].concat();
         if !actions.is_empty() && crate::pinned::apply(&mut self.store, &actions, now) {
             self.dirty = true;
             // This frame's lists were drawn already: show the change now.
             ctx.request_repaint();
         }
-        let cards = crate::pinned::cards_from_store(&self.store, lists, now.date());
-        notes_ui::set_cards(ctx, &self.notes, cards);
+        if notes::AVAILABLE {
+            let cards = crate::pinned::cards_from_store(&self.store, lists, now.date());
+            notes_ui::set_cards(ctx, &self.notes, cards);
+        }
     }
 
     /// Windows: copies the notes from Microsoft Sticky Notes on this PC (or a `plum.sqlite`
@@ -2689,7 +2689,11 @@ impl TodoApp {
         self.sync_soon = true;
         self.account_soon = true;
         match self.storage.save(&self.store) {
-            Ok(()) => self.backup_pending = true,
+            Ok(()) => {
+                self.backup_pending = true;
+                #[cfg(target_os = "android")]
+                platform::android_data_changed();
+            }
             Err(e) => {
                 log::error!(target: "rustdo", "saving tasks failed: {e}");
                 self.notify(trf("Couldn't save: {e}", &[("e", &e)]));
@@ -4983,6 +4987,9 @@ impl eframe::App for TodoApp {
         let now = Local::now().naive_local();
         let today = now.date();
 
+        // First what was done elsewhere (pinned list cards, the Android widget, reminders
+        // already shown as notifications), so it isn't shown or done twice.
+        self.pinned_tick(ctx, now);
         let fired = self.store.fire_due_reminders(now);
         if !fired.is_empty() {
             for id in fired {
@@ -5107,7 +5114,6 @@ impl eframe::App for TodoApp {
 
         self.companion_tick(ctx);
         self.close_hint_check(ctx);
-        self.pinned_tick(ctx, now);
         // While the companion runs, it shows the notes (they stay up after this window closes).
         if !(self.store.settings.companion && self.companion_running) {
             notes_ui::show_windows(ctx, &self.notes);

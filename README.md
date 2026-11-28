@@ -293,7 +293,7 @@ You need Rust (<https://rustup.rs>). On Windows, either toolchain works:
 | Windows installer | `iscc /DAppVersion=0.1.0 installer\rustdo.iss`, with [Inno Setup 6](https://jrsoftware.org/isinfo.php) |
 | Web app into `dist/` | `tools\build-web.ps1`, which needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in Cargo.lock |
 | Serve the web app locally | `tools\serve-web.ps1`, then open http://localhost:8765 |
-| Android APK | `cargo apk build -p rustdo-android --release`, which needs the Android SDK and NDK plus `cargo install cargo-apk` (CI does this for you) |
+| Android APK and App Bundle | In `android/`: `cargo ndk -t arm64-v8a --platform 24 -o app/src/main/jniLibs build --release`, then `gradle assembleRelease bundleRelease`. Needs the Android SDK and NDK, JDK 17 and `cargo install cargo-ndk` (CI does this for you) |
 | Regenerate icons | `tools\make-icons.ps1` |
 
 By default Rust embeds source paths that include your Windows user folder in binaries.
