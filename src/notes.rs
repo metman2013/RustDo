@@ -106,6 +106,12 @@ pub struct StickyNote {
     /// doesn't add it twice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_id: Option<String>,
+    /// A pinned list: this card shows that list's tasks instead of text (see pinned.rs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<Uuid>,
+    /// A pinned list's card also shows its completed tasks.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub show_done: bool,
 }
 
 /// Checklist lines are ordinary text starting with these, so older versions (and other
@@ -149,6 +155,8 @@ impl StickyNote {
             section: None,
             archived: false,
             source_id: None,
+            list: None,
+            show_done: false,
         }
     }
 
@@ -243,6 +251,16 @@ impl Notes {
         v.sort_by_key(|s| s.to_lowercase());
         v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         v
+    }
+
+    /// The card of a pinned list, if it's pinned.
+    pub fn card_for(&self, list: Uuid) -> Option<&StickyNote> {
+        self.notes.iter().find(|n| n.list == Some(list))
+    }
+
+    /// The lists that have a card.
+    pub fn pinned_lists(&self) -> Vec<Uuid> {
+        self.notes.iter().filter_map(|n| n.list).collect()
     }
 
     pub fn get(&self, id: Uuid) -> Option<&StickyNote> {

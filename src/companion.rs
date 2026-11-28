@@ -66,6 +66,11 @@ fn runtime_dir() -> Option<PathBuf> {
     None
 }
 
+/// A file in the runtime folder (desktop).
+pub fn runtime_path(name: &str) -> Option<PathBuf> {
+    runtime_dir().map(|d| d.join(name))
+}
+
 /// An exclusive lock on `name` in the runtime folder, or `None` if another process holds it.
 fn try_lock(name: &str) -> Option<File> {
     let path = runtime_dir()?.join(name);
@@ -295,12 +300,18 @@ mod process {
         }
     }
 
-    /// The settings saved by RustDo (read-only: the companion never writes the task file).
+    /// The settings saved by RustDo.
     fn read_settings() -> Option<Settings> {
+        read_store().map(|s| s.settings)
+    }
+
+    /// The tasks and settings RustDo saved. The companion writes them back only for pinned
+    /// lists' cards, and only while the main window is closed (see pinned.rs).
+    fn read_store() -> Option<crate::model::Store> {
         let bytes = std::fs::read(crate::storage::data_path()).ok();
         match bytes {
-            Some(b) => crate::storage::parse_backup(&b).ok().map(|s| s.settings),
-            None => Some(Settings::default()), // no tasks yet: defaults
+            Some(b) => crate::storage::parse_backup(&b).ok(),
+            None => Some(crate::model::Store::default()), // no tasks yet: defaults
         }
     }
 
@@ -318,6 +329,8 @@ mod process {
         command_tx: std::sync::mpsc::Sender<TrayCommand>,
         last_poll: Instant,
         settings_stamp: Option<std::time::SystemTime>,
+        /// The tasks, for pinned lists' cards (reloaded when RustDo saves them).
+        store: Option<crate::model::Store>,
         #[cfg(windows)]
         reminders: Option<std::thread::JoinHandle<()>>,
         _lock: File,
@@ -372,6 +385,7 @@ mod process {
                 command_tx: tx,
                 last_poll: Instant::now(),
                 settings_stamp: None,
+                store: None,
                 #[cfg(windows)]
                 reminders: None,
                 _lock: lock,
@@ -404,8 +418,9 @@ mod process {
             let stamp = std::fs::metadata(crate::storage::data_path()).and_then(|m| m.modified()).ok();
             if stamp != self.settings_stamp {
                 self.settings_stamp = stamp;
-                if let Some(s) = read_settings() {
-                    self.settings = s;
+                if let Some(s) = read_store() {
+                    self.settings = s.settings.clone();
+                    self.store = Some(s);
                 }
             }
             // RustDo opened and asked a quiet companion to show itself.
@@ -443,6 +458,37 @@ mod process {
                 Ok(found) => log::info!(target: "rustdo", "Store update check: {}", if found { "update found" } else { "up to date" }),
                 Err(e) => log::warn!(target: "rustdo", "Store update check failed: {e}"),
             });
+        }
+
+        /// Pinned lists: what was done on the cards goes to the main window if it's open
+        /// (it owns the tasks then), else into the task file. Either way the cards show it
+        /// at once.
+        fn pinned_tick(&mut self, ctx: &egui::Context) {
+            let (lists, actions) = {
+                let mut s = notes_ui::lock(&self.notes);
+                (s.notes.pinned_lists(), std::mem::take(&mut s.card_actions))
+            };
+            if lists.is_empty() && actions.is_empty() {
+                return;
+            }
+            if self.store.is_none() {
+                self.store = read_store();
+            }
+            let Some(store) = &mut self.store else { return };
+            let now = chrono::Local::now().naive_local();
+            if !actions.is_empty() && crate::pinned::apply(store, &actions, now) {
+                if app_is_open() {
+                    crate::pinned::handoff::send(&actions);
+                } else {
+                    let path = crate::storage::data_path();
+                    match crate::storage::save(&path, store) {
+                        Ok(()) => self.settings_stamp = std::fs::metadata(&path).and_then(|m| m.modified()).ok(),
+                        Err(e) => log::warn!(target: "rustdo", "pinned list: couldn't save the tasks: {e}"),
+                    }
+                }
+            }
+            let cards = crate::pinned::cards_from_store(store, lists, now.date());
+            notes_ui::set_cards(ctx, &self.notes, cards);
         }
 
         fn handle(&mut self, ctx: &egui::Context, cmd: TrayCommand) {
@@ -485,6 +531,7 @@ mod process {
                 self.poll(ctx);
             }
             if self.full() {
+                self.pinned_tick(ctx);
                 notes_ui::show_windows(ctx, &self.notes);
             }
             let _ = &self.command_tx;

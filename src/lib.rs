@@ -17,6 +17,7 @@ pub mod notes_ui;
 pub mod notify;
 #[cfg(target_os = "android")]
 pub mod photos;
+pub mod pinned;
 pub mod showlist;
 pub mod platform;
 pub mod storage;

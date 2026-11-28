@@ -8,6 +8,7 @@
 use crate::backgrounds::{self, Background};
 use crate::i18n::{tr, trf};
 use crate::notes::{self, Notes, StickyNote, MAX_TEXT_SIZE, MIN_TEXT_SIZE, PRESETS};
+use crate::pinned::{CardAction, CardList};
 use eframe::egui::{
     self, Align, Color32, CornerRadius, CursorIcon, FontId, Id, Layout, Pos2, RichText, Sense, Stroke, UiBuilder, Vec2,
     ViewportBuilder, ViewportCommand, ViewportId,
@@ -44,6 +45,10 @@ pub struct Shared {
     /// When `notes.json` was last written or read by this process: another RustDo process
     /// (the main window or the companion) saving it changes the file's time.
     file_stamp: Option<std::time::SystemTime>,
+    /// Pinned lists' tasks, filled in by whoever shows the cards (see pinned.rs).
+    pub cards: HashMap<Uuid, CardList>,
+    /// What was done on the cards, for the owner to carry out.
+    pub card_actions: Vec<CardAction>,
 }
 
 pub type SharedNotes = Arc<Mutex<Shared>>;
@@ -93,6 +98,8 @@ impl Shared {
             focus: None,
             backup_pending: false,
             file_stamp: None,
+            cards: HashMap::new(),
+            card_actions: Vec::new(),
         }))
         .with_stamp()
     }
@@ -258,6 +265,188 @@ impl Shared {
     }
 }
 
+/// The owner of the cards (main window or companion) hands over the pinned lists' tasks;
+/// card windows that show something new are redrawn.
+pub fn set_cards(ctx: &egui::Context, shared: &SharedNotes, cards: HashMap<Uuid, CardList>) {
+    let mut s = lock(shared);
+    if s.cards == cards {
+        return;
+    }
+    s.cards = cards;
+    for n in s.notes.notes.iter().filter(|n| n.list.is_some()) {
+        ctx.request_repaint_of(viewport_id(n.id));
+    }
+}
+
+/// Pins a list: a new card (on the desktop as its own window, on the wall elsewhere), or
+/// shows the card it already has. Returns whether it was newly pinned.
+pub fn pin_list(shared: &SharedNotes, list: Uuid, name: &str) -> bool {
+    let mut s = lock(shared);
+    let existing = s.notes.card_for(list).map(|n| n.id);
+    let added = match existing {
+        Some(id) => {
+            if let Some(n) = s.notes.get_mut(id) {
+                n.archived = false;
+            }
+            s.set_open(id, true);
+            false
+        }
+        None => {
+            let near = s.notes.notes.iter().rev().find(|n| n.open).and_then(|n| n.pos);
+            let mut card = crate::pinned::new_card(list, name, now());
+            card.pos = near.map(|[x, y]| [x + 32.0, y + 32.0]);
+            s.notes.notes.push(card);
+            true
+        }
+    };
+    s.changed();
+    s.save_if_due(true);
+    added
+}
+
+/// Unpins a list (removes its card).
+pub fn unpin_list(shared: &SharedNotes, list: Uuid) {
+    let mut s = lock(shared);
+    if let Some(id) = s.notes.card_for(list).map(|n| n.id) {
+        s.delete(id);
+        s.save_if_due(true);
+    }
+}
+
+/// A pinned list's look: the app's own (light or dark) card with an accent bar, so it
+/// isn't mistaken for a sticky note. (background, text, bar)
+fn card_colours(dark: bool) -> (Color32, Color32, Color32) {
+    if dark {
+        (Color32::from_rgb(0x26, 0x28, 0x2C), Color32::from_rgb(0xE6, 0xE6, 0xE6), Color32::from_rgb(0x25, 0x63, 0xEB))
+    } else {
+        (Color32::WHITE, Color32::from_rgb(0x1F, 0x29, 0x37), Color32::from_rgb(0x3B, 0x82, 0xF6))
+    }
+}
+
+/// A note's colours: (background, text, top bar, top bar's text).
+fn colours(ui_dark: bool, note: &StickyNote) -> (Color32, Color32, Color32, Color32) {
+    if note.list.is_some() {
+        let (bg, ink, bar) = card_colours(ui_dark);
+        (bg, ink, bar, Color32::WHITE)
+    } else {
+        let ink = c32(note.ink());
+        (c32(note.color), ink, c32(notes::header_color(note.color)), ink)
+    }
+}
+
+/// The card's title in its top bar: "📋 Groceries  3".
+fn card_title(ui: &mut egui::Ui, card: Option<&CardList>, color: Color32, size: f32) {
+    let text = match card {
+        Some(c) if c.open > 0 => format!("{} {}  {}", c.icon, c.name, c.open),
+        Some(c) => format!("{} {}", c.icon, c.name),
+        None => tr("📋 Pinned list").to_string(),
+    };
+    ui.add(egui::Label::new(RichText::new(text).size(size).strong().color(color)).truncate().selectable(false));
+}
+
+/// A pinned list's ⚙ menu.
+fn card_menu(ui: &mut egui::Ui, note: &mut StickyNote, action: &mut NoteAction, desktop: bool, sections: &[String]) {
+    ui.set_min_width(220.0);
+    ui.visuals_mut().override_text_color = None;
+    ui.horizontal(|ui| {
+        ui.label(tr("Size:"));
+        if ui.small_button("A−").on_hover_text(tr("Smaller")).clicked() {
+            note.text_size = (note.text_size - 2.0).max(MIN_TEXT_SIZE);
+        }
+        ui.add(egui::Slider::new(&mut note.text_size, MIN_TEXT_SIZE..=MAX_TEXT_SIZE).step_by(1.0).show_value(true));
+        if ui.small_button("A+").on_hover_text(tr("Bigger")).clicked() {
+            note.text_size = (note.text_size + 2.0).min(MAX_TEXT_SIZE);
+        }
+    });
+    ui.checkbox(&mut note.show_done, tr("Show completed tasks"));
+    ui.separator();
+    if desktop {
+        ui.checkbox(&mut note.on_top, tr("📌 Keep on top of other windows"));
+    } else {
+        ui.checkbox(&mut note.pinned, tr("📍  Pin to the top")).on_hover_text(tr("Keeps the note above the others on the wall"));
+        section_picker(ui, note, sections);
+    }
+    ui.separator();
+    if ui.button(tr("Unpin list")).on_hover_text(tr("Removes this card (the list and its tasks stay)")).clicked() {
+        *action = NoteAction::Delete;
+        ui.close_menu();
+    }
+}
+
+/// A pinned list's tasks: tick, star, and "+ Add a task".
+fn card_body(ui: &mut egui::Ui, note: &StickyNote, card: Option<&CardList>, actions: &mut Vec<CardAction>, ink: Color32) {
+    let Some((list, card)) = note.list.zip(card) else {
+        ui.label(RichText::new(tr("This list isn't on this device.")).color(ink));
+        return;
+    };
+    let size = note.text_size;
+    let add_id = Id::new(("card_add", note.id));
+    let mut text: String = ui.ctx().data_mut(|d| d.get_temp(add_id)).unwrap_or_default();
+    let r = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .id(Id::new(("card_add_edit", note.id)))
+            .hint_text(RichText::new(tr("+ Add a task")).color(ink.gamma_multiply(0.55)))
+            .font(FontId::proportional(size))
+            .text_color(ink)
+            .desired_width(f32::INFINITY),
+    );
+    if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !text.trim().is_empty() {
+        actions.push(CardAction::Add(list, text.trim().to_string()));
+        text.clear();
+        r.request_focus();
+    }
+    ui.ctx().data_mut(|d| d.insert_temp(add_id, text));
+    ui.add_space(4.0);
+    let today = chrono::Local::now().date_naive();
+    let star_color = Color32::from_rgb(0xF5, 0x9E, 0x0B);
+    let mut shown = 0;
+    for t in card.tasks.iter().filter(|t| !t.done || note.show_done) {
+        shown += 1;
+        ui.horizontal(|ui| {
+            // A round tick, like the task list's.
+            let d = (size + 4.0).max(18.0);
+            let (r, tick) = ui.allocate_exact_size(Vec2::splat(d), Sense::click());
+            let accent = Color32::from_rgb(0x3B, 0x82, 0xF6);
+            let c = r.center();
+            if t.done {
+                ui.painter().circle_filled(c, d / 2.0 - 1.0, accent);
+                ui.painter().text(c, egui::Align2::CENTER_CENTER, "✔", FontId::proportional(d * 0.6), Color32::WHITE);
+            } else {
+                let ring = if tick.hovered() { accent } else { ink.gamma_multiply(0.55) };
+                ui.painter().circle_stroke(c, d / 2.0 - 1.5, Stroke::new(1.5_f32, ring));
+            }
+            if tick.on_hover_text(if t.done { tr("Mark as not done") } else { tr("Mark as done") }).on_hover_cursor(CursorIcon::PointingHand).clicked() {
+                actions.push(CardAction::SetDone(t.id, !t.done));
+            }
+            let star_w = size + 10.0;
+            let width = (ui.available_width() - star_w).max(40.0);
+            let mut title = RichText::new(&t.title).size(size).color(if t.done { ink.gamma_multiply(0.5) } else { ink });
+            if t.done {
+                title = title.strikethrough();
+            }
+            ui.allocate_ui(Vec2::new(width, 0.0), |ui| {
+                ui.set_width(width);
+                ui.vertical(|ui| {
+                    ui.add(egui::Label::new(title).wrap().selectable(false));
+                    if let Some(due) = t.due.filter(|_| !t.done) {
+                        let color = if t.overdue { Color32::from_rgb(0xDC, 0x26, 0x26) } else { ink.gamma_multiply(0.6) };
+                        ui.label(RichText::new(crate::model::relative_date(due, today)).size((size - 3.0).max(10.0)).color(color));
+                    }
+                });
+            });
+            let (glyph, color) = if t.important { ("★", star_color) } else { ("☆", ink.gamma_multiply(0.5)) };
+            let star = ui.add(egui::Button::new(RichText::new(glyph).size(size + 2.0).color(color)).frame(false));
+            if star.on_hover_text(if t.important { tr("Remove importance") } else { tr("Mark as important") }).clicked() {
+                actions.push(CardAction::SetImportant(t.id, !t.important));
+            }
+        });
+    }
+    if shown == 0 {
+        ui.add_space(8.0);
+        ui.label(RichText::new(if card.tasks.is_empty() { tr("No tasks yet.") } else { tr("All done!") }).color(ink.gamma_multiply(0.6)));
+    }
+}
+
 fn now() -> chrono::NaiveDateTime {
     chrono::Local::now().naive_local()
 }
@@ -399,9 +588,11 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
 
     let note = s.notes.notes[index].clone();
     let sections = s.notes.sections();
-    let bg = c32(note.color);
-    let ink = c32(note.ink());
-    let header = c32(notes::header_color(note.color));
+    let (bg, ink, header, bar_ink) = colours(ctx.style().visuals.dark_mode, &note);
+    // A pinned list: its tasks, and what's done to them.
+    let is_card = note.list.is_some();
+    let card = note.list.and_then(|l| s.cards.get(&l).cloned());
+    let mut card_actions = Vec::new();
     let mut action = NoteAction::None;
     let mut edited = note.clone();
     let confirming = s.confirm_delete == Some(id);
@@ -437,20 +628,30 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                 .max_rect(bar.shrink2(Vec2::new(4.0, 2.0)))
                 .layout(Layout::left_to_right(Align::Center)),
         );
-        if bar_ui.add(egui::Button::new(RichText::new("+").size(18.0).color(ink)).frame(false)).on_hover_text(tr("New note")).clicked() {
+        if !is_card && bar_ui.add(egui::Button::new(RichText::new("+").size(18.0).color(ink)).frame(false)).on_hover_text(tr("New note")).clicked() {
             action = NoteAction::New;
         }
         bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui.add(egui::Button::new(RichText::new("✖").color(ink)).frame(false)).on_hover_text(tr("Hide note (it stays in RustDo's Sticky notes list)")).clicked() {
+            let hide_tip = if is_card { tr("Hide (the list stays pinned in RustDo's Sticky notes list)") } else { tr("Hide note (it stays in RustDo's Sticky notes list)") };
+            if ui.add(egui::Button::new(RichText::new("✖").color(bar_ink)).frame(false)).on_hover_text(hide_tip).clicked() {
                 action = NoteAction::Hide;
             }
-            ui.menu_button(RichText::new("🎨").color(ink), |ui| {
-                note_menu(ui, &mut edited, &mut action, true, &sections, false);
-            })
-            .response
-            .on_hover_text(tr("Colour, text and more"));
+            if is_card {
+                ui.menu_button(RichText::new("⚙").color(bar_ink), |ui| card_menu(ui, &mut edited, &mut action, true, &sections))
+                    .response
+                    .on_hover_text(tr("Text size, completed tasks and more"));
+            } else {
+                ui.menu_button(RichText::new("🎨").color(ink), |ui| {
+                    note_menu(ui, &mut edited, &mut action, true, &sections, false);
+                })
+                .response
+                .on_hover_text(tr("Colour, text and more"));
+            }
             if edited.on_top {
-                ui.label(RichText::new("📌").color(ink)).on_hover_text(tr("Kept on top of other windows"));
+                ui.label(RichText::new("📌").color(bar_ink)).on_hover_text(tr("Kept on top of other windows"));
+            }
+            if is_card {
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| card_title(ui, card.as_ref(), bar_ink, 15.0));
             }
         });
 
@@ -467,6 +668,10 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
                 if ui.button(RichText::new(tr("Cancel")).color(ink)).clicked() {
                     action = NoteAction::CancelDelete;
                 }
+            });
+        } else if is_card {
+            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(&mut body_ui, |ui| {
+                card_body(ui, &edited, card.as_ref(), &mut card_actions, ink);
             });
         } else {
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(&mut body_ui, |ui| {
@@ -506,6 +711,17 @@ fn note_window(ctx: &egui::Context, shared: &SharedNotes, id: Uuid) {
 
     if focus_text {
         s.focus = None;
+    }
+    if !card_actions.is_empty() {
+        if let Some(c) = note.list.and_then(|l| s.cards.get_mut(&l)) {
+            for a in &card_actions {
+                c.preview(a);
+            }
+        }
+        ctx.request_repaint();
+        s.card_actions.extend(card_actions);
+        // The owner (the main window or the companion) carries them out.
+        ctx.request_repaint_of(ViewportId::ROOT);
     }
     if edited != note {
         if edited.text != note.text {
@@ -881,9 +1097,14 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
         let mut rows: Vec<(usize, &StickyNote)> = s.notes.notes.iter().enumerate().filter(|(_, n)| !n.archived).collect();
         rows.sort_by_key(|(i, n)| (!n.pinned, n.section.is_none(), n.section.as_ref().map(|x| x.to_lowercase()), std::cmp::Reverse(*i)));
         for (_, note) in rows {
-            let bg = c32(note.color);
-            let ink = c32(note.ink());
+            let is_card = note.list.is_some();
+            let (bg, ink, _, _) = colours(ui.visuals().dark_mode, note);
+            let title = match note.list.and_then(|l| s.cards.get(&l)) {
+                Some(c) => format!("{} {}", c.icon, c.name),
+                None => note.title().to_string(),
+            };
             egui::Frame::new()
+                .stroke(if is_card { Stroke::new(1.0_f32, ui.visuals().weak_text_color().gamma_multiply(0.5)) } else { Stroke::NONE })
                 .fill(bg)
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(egui::Margin::same(10))
@@ -893,7 +1114,7 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                         if note.pinned {
                             ui.label(RichText::new("📍").color(ink));
                         }
-                        ui.label(RichText::new(note.title()).color(ink).strong());
+                        ui.label(RichText::new(title).color(ink).strong());
                         if let Some(sec) = &note.section {
                             ui.label(RichText::new(sec).color(ink.gamma_multiply(0.7)).small());
                         }
@@ -910,14 +1131,21 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                                 ui.label(RichText::new(tr("Delete this note?")).color(ink));
                                 return;
                             }
-                            if ui.button("🗑").on_hover_text(tr("Delete note")).clicked() {
-                                ask_delete = Some(note.id);
-                            }
-                            if ui.button("🗄").on_hover_text(tr("Archive")).clicked() {
-                                archive = Some(note.id);
-                            }
-                            if ui.button("✔").on_hover_text(tr("Turn into a task")).clicked() {
-                                page_action = PageAction::NoteToTask(note.id);
+                            if is_card {
+                                // A pinned list: unpinning loses nothing (the list stays).
+                                if ui.button(tr("Unpin")).on_hover_text(tr("Removes this card (the list and its tasks stay)")).clicked() {
+                                    delete = Some(note.id);
+                                }
+                            } else {
+                                if ui.button("🗑").on_hover_text(tr("Delete note")).clicked() {
+                                    ask_delete = Some(note.id);
+                                }
+                                if ui.button("🗄").on_hover_text(tr("Archive")).clicked() {
+                                    archive = Some(note.id);
+                                }
+                                if ui.button("✔").on_hover_text(tr("Turn into a task")).clicked() {
+                                    page_action = PageAction::NoteToTask(note.id);
+                                }
                             }
                             let label = if note.open { tr("Hide") } else { tr("Show") };
                             if ui.button(label).clicked() {
@@ -925,7 +1153,11 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
                             }
                         });
                     });
-                    let preview: String = note.text.lines().skip_while(|l| l.trim().is_empty()).skip(1).take(2).collect::<Vec<_>>().join("\n");
+                    let preview: String = if is_card {
+                        String::new()
+                    } else {
+                        note.text.lines().skip_while(|l| l.trim().is_empty()).skip(1).take(2).collect::<Vec<_>>().join("\n")
+                    };
                     if !preview.trim().is_empty() {
                         ui.label(RichText::new(preview).color(ink.gamma_multiply(0.8)).small());
                     }
@@ -1065,12 +1297,13 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
                     ui.label(RichText::new(title).strong().weak());
                 }
                 for id in ids {
-                    let Shared { notes, confirm_delete, focus, .. } = &mut *s;
+                    let Shared { notes, confirm_delete, focus, cards, card_actions, .. } = &mut *s;
                     let Some(note) = notes.get_mut(id) else { continue };
                     let height = note.size[1].clamp(140.0, 420.0);
                     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
                     let focus_this = *focus == Some(id);
-                    if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, false, &sections) {
+                    let card = note.list.and_then(|l| cards.get(&l));
+                    if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, false, &sections, card, card_actions) {
                         actions.push((id, a));
                     }
                     if focus_this {
@@ -1140,12 +1373,13 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
             let mut ids: Vec<Uuid> = s.notes.notes.iter().filter(|n| !n.archived && filter.matches(n)).map(|n| n.id).collect();
             ids.sort_by_key(|id| s.notes.get(*id).is_some_and(|n| n.pinned));
             for id in ids {
-                let Shared { notes, confirm_delete, focus, .. } = &mut *s;
+                let Shared { notes, confirm_delete, focus, cards, card_actions, .. } = &mut *s;
                 let Some(note) = notes.get_mut(id) else { continue };
                 let [x, y] = note.pos.unwrap_or([0.0, 0.0]);
                 let rect = egui::Rect::from_min_size(wall.min + Vec2::new(x, y), Vec2::from(note.size));
                 let focus_this = *focus == Some(id);
-                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, true, &sections) {
+                let card = note.list.and_then(|l| cards.get(&l));
+                if let Some(a) = wall_card(ui, note, rect, *confirm_delete == Some(id), focus_this, true, &sections, card, card_actions) {
                     actions.push((id, a));
                 }
                 if focus_this {
@@ -1207,6 +1441,7 @@ enum WallAction {
 
 /// One note on the wall (or, on a phone, in the column). `movable`: drag the top bar to
 /// move it and the corner to resize it.
+#[allow(clippy::too_many_arguments)]
 fn wall_card(
     ui: &mut egui::Ui,
     note: &mut StickyNote,
@@ -1215,11 +1450,12 @@ fn wall_card(
     focus_text: bool,
     movable: bool,
     sections: &[String],
+    list_card: Option<&CardList>,
+    card_actions: &mut Vec<CardAction>,
 ) -> Option<WallAction> {
     let id = note.id;
-    let bg = c32(note.color);
-    let ink = c32(note.ink());
-    let header = c32(notes::header_color(note.color));
+    let is_card = note.list.is_some();
+    let (bg, ink, header, bar_ink) = colours(ui.visuals().dark_mode, note);
     let mut action = None;
     let before = note.clone();
 
@@ -1264,26 +1500,32 @@ fn wall_card(
     );
     // Touch: bigger icons with finger-sized (44 pt) tap areas.
     let (icon_size, plus_size, tap) = if touch { (22.0, 26.0, Vec2::new(44.0, 40.0)) } else { (14.0, 17.0, Vec2::ZERO) };
-    if bar_ui.add(egui::Button::new(RichText::new("+").size(plus_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("New note")).clicked() {
+    if !is_card && bar_ui.add(egui::Button::new(RichText::new("+").size(plus_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("New note")).clicked() {
         action = Some(WallAction::New);
     }
     bar_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        if ui.add(egui::Button::new(RichText::new("🗑").size(icon_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("Delete note")).clicked() {
-            action = Some(WallAction::AskDelete);
-        }
         let mut menu_action = NoteAction::None;
         if touch {
             ui.spacing_mut().button_padding = Vec2::new(10.0, 6.0);
         }
-        ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false, sections, true))
-            .response
-            .on_hover_text(tr("Colour and text"));
+        if is_card {
+            ui.menu_button(RichText::new("⚙").size(icon_size).color(bar_ink), |ui| card_menu(ui, note, &mut menu_action, false, sections))
+                .response
+                .on_hover_text(tr("Text size, completed tasks and more"));
+        } else {
+            if ui.add(egui::Button::new(RichText::new("🗑").size(icon_size).color(ink)).frame(false).min_size(tap)).on_hover_text(tr("Delete note")).clicked() {
+                action = Some(WallAction::AskDelete);
+            }
+            ui.menu_button(RichText::new("🎨").size(icon_size).color(ink), |ui| note_menu(ui, note, &mut menu_action, false, sections, true))
+                .response
+                .on_hover_text(tr("Colour and text"));
+        }
         // The phone column: a ≡ handle drags the note up or down (the rest scrolls).
         if !movable {
             let size = if touch { tap } else { Vec2::new(24.0, 20.0) };
             let (r, handle) = ui.allocate_exact_size(size, Sense::drag());
             let handle = handle.on_hover_text(tr("Drag to move the note up or down")).on_hover_cursor(CursorIcon::Grab);
-            let color = if handle.dragged() { ink } else { ink.gamma_multiply(0.6) };
+            let color = if handle.dragged() { bar_ink } else { bar_ink.gamma_multiply(0.6) };
             for dy in [-5.0, 0.0, 5.0] {
                 ui.painter().hline((r.center().x - 8.0)..=(r.center().x + 8.0), r.center().y + dy, Stroke::new(2.0_f32, color));
             }
@@ -1291,8 +1533,12 @@ fn wall_card(
                 ui.ctx().data_mut(|d| d.insert_temp(Id::new("note_drag"), id));
             }
         }
+        if is_card {
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| card_title(ui, list_card, bar_ink, if touch { 17.0 } else { 14.0 }));
+        }
         match menu_action {
             NoteAction::AskDelete => action = Some(WallAction::AskDelete),
+            NoteAction::Delete => action = Some(WallAction::Delete),
             NoteAction::Archive => action = Some(WallAction::Archive),
             NoteAction::ToTask => action = Some(WallAction::ToTask),
             _ => {}
@@ -1346,6 +1592,10 @@ fn wall_card(
             if ui.button(RichText::new(tr("Cancel")).color(ink)).clicked() {
                 action = Some(WallAction::CancelDelete);
             }
+        });
+    } else if is_card {
+        egui::ScrollArea::vertical().id_salt(("wall_card", id)).auto_shrink([false; 2]).show(&mut body_ui, |ui| {
+            card_body(ui, note, list_card, card_actions, ink);
         });
     } else {
         egui::ScrollArea::vertical()

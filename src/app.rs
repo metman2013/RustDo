@@ -556,6 +556,49 @@ impl TodoApp {
     #[cfg(target_os = "android")]
     fn pick_keep_file(&mut self, _ctx: &egui::Context) {}
 
+    /// Whether a list has a card showing (on the desktop, or on the wall).
+    fn list_card_showing(&self, list: Uuid) -> bool {
+        notes_ui::lock(&self.notes).notes.card_for(list).is_some_and(|n| !n.archived && (n.open || notes::WALL))
+    }
+
+    /// 📌: pins a list (or shows its hidden card), or unpins it.
+    fn toggle_pin(&mut self, list: Uuid) {
+        let name = self.store.list_name(list).to_string();
+        if self.list_card_showing(list) {
+            notes_ui::unpin_list(&self.notes, list);
+            self.notify(trf("Unpinned “{list}”.", &[("list", &name)]));
+        } else {
+            notes_ui::pin_list(&self.notes, list, &name);
+            self.notify(if notes::WALL {
+                trf("Pinned “{list}” to your sticky notes.", &[("list", &name)])
+            } else {
+                trf("Pinned “{list}” to your desktop.", &[("list", &name)])
+            });
+        }
+    }
+
+    /// Pinned lists: carries out what was done on their cards (here, or in the background
+    /// companion's windows), and gives the cards the lists' current tasks.
+    fn pinned_tick(&mut self, ctx: &egui::Context, now: NaiveDateTime) {
+        if !notes::AVAILABLE {
+            return;
+        }
+        let (lists, actions) = {
+            let mut s = notes_ui::lock(&self.notes);
+            (s.notes.pinned_lists(), std::mem::take(&mut s.card_actions))
+        };
+        // Desktop: also what was done on the background companion's cards.
+        #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+        let actions = [actions, crate::pinned::handoff::take()].concat();
+        if !actions.is_empty() && crate::pinned::apply(&mut self.store, &actions, now) {
+            self.dirty = true;
+            // This frame's lists were drawn already: show the change now.
+            ctx.request_repaint();
+        }
+        let cards = crate::pinned::cards_from_store(&self.store, lists, now.date());
+        notes_ui::set_cards(ctx, &self.notes, cards);
+    }
+
     /// Windows: copies the notes from Microsoft Sticky Notes on this PC (or a `plum.sqlite`
     /// picked by hand, e.g. from another PC's backup).
     #[cfg(windows)]
@@ -3595,6 +3638,13 @@ impl TodoApp {
                                     self.show_nav = false;
                                     ui.close_menu();
                                 }
+                                if notes::AVAILABLE {
+                                    let label = if self.list_card_showing(id) { tr("📌  Unpin list") } else { tr("📌  Pin list") };
+                                    if ui.button(label).clicked() {
+                                        self.toggle_pin(id);
+                                        ui.close_menu();
+                                    }
+                                }
                                 if index > 0 && ui.button(tr("⬆  Move up")).clicked() {
                                     self.dirty |= self.store.move_list(id, index - 1);
                                     ui.close_menu();
@@ -3883,6 +3933,21 @@ impl TodoApp {
                     };
                     if ui.add(show).on_hover_text(tr("Show list: to read, print or share")).clicked() {
                         self.show_list = Some(self.view);
+                    }
+                }
+                // 📌 Pin: the list as a card on the desktop (or the sticky notes wall).
+                if let (View::List(list), false, true) = (self.view, searching, notes::AVAILABLE) {
+                    let pinned = self.list_card_showing(list);
+                    let pin = egui::Button::new(RichText::new("📌").size(if narrow { 20.0 } else { 16.0 }))
+                        .selected(pinned)
+                        .min_size(Vec2::splat(if touch { 44.0 } else if narrow { 32.0 } else { 0.0 }));
+                    let tip = match (pinned, notes::WALL) {
+                        (true, _) => tr("Unpin this list"),
+                        (false, true) => tr("Pin this list to your sticky notes"),
+                        (false, false) => tr("Pin this list to your desktop"),
+                    };
+                    if ui.add(pin).on_hover_text(tip).clicked() {
+                        self.toggle_pin(list);
                     }
                 }
                 // Planned is always grouped by date, so sorting doesn't apply there.
@@ -4979,6 +5044,7 @@ impl eframe::App for TodoApp {
 
         self.companion_tick(ctx);
         self.close_hint_check(ctx);
+        self.pinned_tick(ctx, now);
         // While the companion runs, it shows the notes (they stay up after this window closes).
         if !(self.store.settings.companion && self.companion_running) {
             notes_ui::show_windows(ctx, &self.notes);
