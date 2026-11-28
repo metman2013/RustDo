@@ -81,6 +81,8 @@ enum Action {
     MoveTask(Vec<Uuid>, Uuid, usize),
     /// Make a sticky note from a task (and remove the task).
     ToNote(Uuid),
+    /// Swiped right: tick it off (with Undo).
+    SwipeDone(Uuid),
 }
 
 enum AlertAction {
@@ -140,8 +142,18 @@ struct ShareDialog {
 
 struct Toast {
     text: String,
-    undo: Option<(usize, Task)>,
+    undo: Option<UndoOp>,
     at: Instant,
+}
+
+/// What a toast's Undo puts back.
+enum UndoOp {
+    /// A deleted task, at its old place.
+    Deleted(usize, Task),
+    /// A task ticked off (by a swipe), and the next repeat that made, if any.
+    Completed { id: Uuid, next: Option<Uuid> },
+    /// A sticky note put in the Archive.
+    Archived(Uuid),
 }
 
 pub struct TodoApp {
@@ -2505,6 +2517,19 @@ impl TodoApp {
         }
     }
 
+    /// A swipe ticked a task off: done, with Undo in the toast.
+    fn complete_with_undo(&mut self, id: Uuid) {
+        let Some(title) = self.store.task(id).filter(|t| !t.done).map(|t| t.title.clone()) else { return };
+        let next = self.store.set_done(id, true, Local::now().naive_local());
+        self.dirty = true;
+        let text = if next.is_some() {
+            trf("Completed “{title}”. The next one is scheduled.", &[("title", &title)])
+        } else {
+            trf("Completed “{title}”", &[("title", &title)])
+        };
+        self.toast = Some(Toast { text, undo: Some(UndoOp::Completed { id, next }), at: Instant::now() });
+    }
+
     fn notify(&mut self, text: impl Into<String>) {
         self.toast = Some(Toast { text: text.into(), undo: None, at: Instant::now() });
     }
@@ -3120,7 +3145,7 @@ impl TodoApp {
             self.alerts.retain(|a| *a != id);
             self.toast = Some(Toast {
                 text: trf("Deleted “{title}”", &[("title", &task.title)]),
-                undo: Some((idx, task)),
+                undo: Some(UndoOp::Deleted(idx, task)),
                 at: Instant::now(),
             });
             self.dirty = true;
@@ -3159,6 +3184,7 @@ impl TodoApp {
             }
             Action::Delete(id) => self.delete_task(id),
             Action::ToNote(id) => self.task_to_note(id),
+            Action::SwipeDone(id) => self.complete_with_undo(id),
             Action::MoveTask(shown, id, to) => {
                 self.dirty |= self.store.move_task(&shown, id, to);
             }
@@ -3682,6 +3708,14 @@ impl TodoApp {
                 notes_ui::PageAction::Restore => self.pick_notes_restore_file(ctx),
                 notes_ui::PageAction::ShowLists => self.show_nav = true,
                 notes_ui::PageAction::NoteToTask(id) => self.note_to_task(id),
+                notes_ui::PageAction::Archived(id) => {
+                    let title = notes_ui::lock(&self.notes).notes.get(id).map(|n| n.title().to_string()).unwrap_or_default();
+                    self.toast = Some(Toast {
+                        text: trf("“{title}” moved to the Archive", &[("title", &title)]),
+                        undo: Some(UndoOp::Archived(id)),
+                        at: Instant::now(),
+                    });
+                }
                 notes_ui::PageAction::None => {}
             }
         });
@@ -4671,11 +4705,28 @@ impl TodoApp {
                 });
             });
         if undo {
-            if let Some((idx, task)) = self.toast.take().and_then(|t| t.undo) {
-                let id = task.id;
-                self.store.restore_task(idx, task);
-                self.selected = Some(id);
-                self.dirty = true;
+            match self.toast.take().and_then(|t| t.undo) {
+                Some(UndoOp::Deleted(idx, task)) => {
+                    let id = task.id;
+                    self.store.restore_task(idx, task);
+                    if !is_touch_ctx(ctx) {
+                        self.selected = Some(id);
+                    }
+                    self.dirty = true;
+                }
+                Some(UndoOp::Completed { id, next }) => {
+                    // The next repeat goes again, and the task repeats as before.
+                    if let Some((_, next_task)) = next.and_then(|n| self.store.remove_task(n)) {
+                        if let Some(t) = self.store.task_mut(id) {
+                            t.recurrence = next_task.recurrence;
+                            t.repeat_every = next_task.repeat_every;
+                        }
+                    }
+                    self.store.set_done(id, false, Local::now().naive_local());
+                    self.dirty = true;
+                }
+                Some(UndoOp::Archived(id)) => notes_ui::lock(&self.notes).archive(id, false),
+                None => {}
             }
         } else if close {
             self.toast = None;
@@ -4860,6 +4911,10 @@ impl eframe::App for TodoApp {
 const TOUCH_ID: &str = "rustdo_touch_mode";
 
 /// Whether the finger-friendly layout is on (readable from any drawing function).
+fn is_touch_ctx(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
+}
+
 pub(crate) fn is_touch(ui: &egui::Ui) -> bool {
     ui.ctx().data(|d| d.get_temp::<bool>(Id::new(TOUCH_ID))).unwrap_or(false)
 }
@@ -5412,6 +5467,52 @@ fn task_row(
         let title_h = title.size().y;
         ui.painter().galley(Pos2::new(text_left, top), title, vis.text_color());
         ui.painter().galley(Pos2::new(text_left, top + title_h + 3.0), meta_galley, weak);
+    }
+
+    // Touch: swipe the row right to tick it off, left to delete (both with Undo). Only a
+    // clearly sideways move counts, and not one starting on the circle, star or handle.
+    if touch {
+        let swipe_id = Id::new(("task_swipe", t.id));
+        let (down, origin, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
+        let on_controls = |p: Pos2| {
+            check_rect.contains(p) || star_rect.contains(p) || handle.as_ref().is_some_and(|h| h.rect.contains(p)) || expand.as_ref().is_some_and(|e| e.rect.contains(p))
+        };
+        let started_here = origin.is_some_and(|o| rect.contains(o) && !on_controls(o));
+        let threshold = (rect.width() * 0.35).max(90.0);
+        if down && started_here {
+            if let (Some(o), Some(p)) = (origin, pos) {
+                let d = p - o;
+                if d.x.abs() > 24.0 && d.x.abs() > d.y.abs() * 1.5 {
+                    ui.ctx().data_mut(|m| m.insert_temp(swipe_id, d.x));
+                }
+            }
+        }
+        let dx: Option<f32> = ui.ctx().data(|m| m.get_temp(swipe_id));
+        if let Some(dx) = dx {
+            if down {
+                // What the swipe will do, growing from the side it moves away from.
+                let w = dx.abs().min(rect.width());
+                let ready = dx.abs() >= threshold;
+                let (strip, color, icon) = if dx > 0.0 {
+                    (Rect::from_min_size(rect.min, Vec2::new(w, rect.height())), Color32::from_rgb(0x2E, 0x9E, 0x5B), "✔")
+                } else {
+                    (Rect::from_min_max(Pos2::new(rect.right() - w, rect.top()), rect.max), DANGER, "🗑")
+                };
+                let color = if ready { color } else { color.gamma_multiply(0.6) };
+                ui.painter().rect_filled(strip, 6.0, color);
+                if w > 40.0 {
+                    ui.painter().text(strip.center(), Align2::CENTER_CENTER, icon, FontId::proportional(22.0), Color32::WHITE);
+                }
+                ui.ctx().request_repaint();
+            } else {
+                ui.ctx().data_mut(|m| m.remove::<f32>(swipe_id));
+                if dx >= threshold && !t.done {
+                    actions.push(Action::SwipeDone(t.id));
+                } else if dx <= -threshold {
+                    actions.push(Action::Delete(t.id));
+                }
+            }
+        }
     }
 
     let expand_clicked = expand.is_some_and(|e| {

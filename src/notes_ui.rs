@@ -746,6 +746,8 @@ pub enum PageAction {
     ShowLists,
     /// Make a task from this note (and remove the note).
     NoteToTask(Uuid),
+    /// A note was archived (the main window offers Undo).
+    Archived(Uuid),
 }
 
 /// What was pressed in the page's top row.
@@ -907,6 +909,7 @@ pub fn notes_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageA
     }
     if let Some(id) = archive {
         s.archive(id, true);
+        page_action = PageAction::Archived(id);
     }
     if let Some(id) = delete {
         s.delete(id);
@@ -1143,7 +1146,10 @@ fn wall_page(ui: &mut egui::Ui, shared: &SharedNotes, phone: bool) -> PageAction
             WallAction::AskDelete => s.confirm_delete = Some(id),
             WallAction::CancelDelete => s.confirm_delete = None,
             WallAction::Delete => s.delete(id),
-            WallAction::Archive => s.archive(id, true),
+            WallAction::Archive => {
+                s.archive(id, true);
+                page_action = PageAction::Archived(id);
+            }
             WallAction::ToTask => page_action = PageAction::NoteToTask(id),
         }
     }
@@ -1261,6 +1267,41 @@ fn wall_card(
     });
 
     let body = egui::Rect::from_min_max(rect.min + Vec2::new(0.0, header_h), rect.max);
+    // The phone column: swipe a note sideways (starting below its top bar) to archive it.
+    if !movable && touch {
+        let swipe_id = Id::new(("note_swipe", id));
+        let (down, origin, pos) = ui.input(|i| (i.pointer.primary_down(), i.pointer.press_origin(), i.pointer.interact_pos()));
+        let threshold = (rect.width() * 0.35).max(90.0);
+        if down && origin.is_some_and(|o| body.contains(o)) {
+            if let (Some(o), Some(p)) = (origin, pos) {
+                let d = p - o;
+                if d.x.abs() > 24.0 && d.x.abs() > d.y.abs() * 1.5 {
+                    ui.ctx().data_mut(|m| m.insert_temp(swipe_id, d.x));
+                }
+            }
+        }
+        if let Some(dx) = ui.ctx().data(|m| m.get_temp::<f32>(swipe_id)) {
+            if down {
+                let w = dx.abs().min(rect.width());
+                let strip = if dx > 0.0 {
+                    egui::Rect::from_min_size(rect.min, Vec2::new(w, rect.height()))
+                } else {
+                    egui::Rect::from_min_max(Pos2::new(rect.right() - w, rect.top()), rect.max)
+                };
+                let gray = if dx.abs() >= threshold { Color32::from_gray(90) } else { Color32::from_gray(140) };
+                ui.painter().rect_filled(strip, CornerRadius::same(6), gray);
+                if w > 40.0 {
+                    ui.painter().text(strip.center(), egui::Align2::CENTER_CENTER, "🗄", FontId::proportional(24.0), Color32::WHITE);
+                }
+                ui.ctx().request_repaint();
+            } else {
+                ui.ctx().data_mut(|m| m.remove::<f32>(swipe_id));
+                if dx.abs() >= threshold {
+                    action = Some(WallAction::Archive);
+                }
+            }
+        }
+    }
     let mut body_ui = card.new_child(UiBuilder::new().max_rect(body.shrink(10.0)).layout(Layout::top_down(Align::Min)));
     if confirming {
         body_ui.label(RichText::new(tr("Delete this note?")).strong().size(16.0));
